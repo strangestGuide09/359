@@ -47,14 +47,16 @@ function render() {
 function setPanel(html) { $("sync-panel").innerHTML = html; }
 function panelSignedOut() {
   $("sync-state").textContent = "Sign in required";
-  setPanel(`<div><p>SHARED ACCESS</p><h2>Sign in to your shared ledger</h2><small>We email a one-time sign-in link. It signs in the browser that opens it. To use a different browser, copy the email link and paste it into that browser’s address bar before opening it. No app password, receipt, payment detail, or address is stored.</small></div><form id="login-form"><label>Email<input id="login-email" type="email" required autocomplete="email"></label><button id="send-link">Send sign-in link</button></form><p id="auth-status" role="status" aria-live="polite"></p>`);
+  setPanel(`<div class="auth-intro"><p>SHARED ACCESS</p><h2>Sign in to your shared ledger</h2><small>A secure sign-in link goes to your email. Open it in this browser. To use another browser, copy the link there before opening it.</small></div><form id="login-form" class="auth-form"><label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button id="send-link">Send sign-in link</button></form><p id="auth-status" class="auth-status" role="status" aria-live="polite">Enter your email to receive a secure, one-time sign-in link.</p>`);
   $("login-form").onsubmit = async event => {
     event.preventDefault();
     const button = $("send-link"), email = $("login-email").value.trim();
-    button.disabled = true; button.textContent = "Sending…"; $("auth-status").textContent = "Sending a sign-in link…";
+    button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Sending…"; $("auth-status").className = "auth-status working"; $("auth-status").textContent = "Sending a secure sign-in link…";
     const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } });
-    button.disabled = false; button.textContent = "Send another link";
-    $("auth-status").textContent = error ? `Could not send link: ${error.message}` : `Sign-in link sent to ${email}. Check Inbox and Spam, then open it in this browser.`;
+    button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Send another link";
+    const rateLimited = error?.message?.toLowerCase().includes("email rate limit");
+    $("auth-status").className = `auth-status ${error ? "error" : "success"}`;
+    $("auth-status").textContent = error ? (rateLimited ? "Email sending is temporarily limited by Supabase Free. Use your newest unused link, or wait up to one hour before requesting another." : `Could not send link: ${error.message}`) : `Link sent to ${email}. Check Inbox and Spam, then open the newest link in this browser.`;
   };
 }
 function panelNoHousehold() {
