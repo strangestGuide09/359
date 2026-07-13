@@ -113,7 +113,7 @@ body(doc,'Required operator action: run the hardening migration once in Supabase
 
 heading(doc,'13 July 2026, 14:50 IST — Cross-browser email-code sign-in')
 body(doc,'Finding: magic links establish a session in the browser that consumes the link. That is normal passwordless-auth behaviour but fails the project requirement that either person should be able to choose any browser/device without a browser handoff.')
-body(doc,'What changed: replaced the web client’s magic-link-only screen with an email one-time-code flow. The user requests a code, then enters the six-digit code in the chosen browser; the client verifies it with Supabase Auth. Added supabase/email-otp-template.html for the Supabase Magic Link email template, which sends the code and a neutral link to open the website rather than a session-carrying link.')
+body(doc,'What changed: replaced the web client’s magic-link-only screen with an email one-time-code flow. The user requests a code, then enters the code in the chosen browser; the client verifies it with Supabase Auth. Added supabase/email-otp-template.html for the Supabase Magic Link email template, which sends the code and a neutral link to open the website rather than a session-carrying link.')
 body(doc,'Required operator action and verification limit: paste the supplied template into Supabase Authentication > Email Templates > Magic Link and save it, then send a new code on each Mac. The client code passes JavaScript syntax validation; live two-device sign-in, household join, purchase sync, and settlement sync must be verified after deployment.')
 doc.save(OUT)
 print(OUT)
