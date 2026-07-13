@@ -11,4 +11,6 @@
 .auth-status.working{background:#e9f0ed;color:#254e3d}
 .auth-status.success{background:#e6f2e9;color:#1d5b37;border:1px solid #b9d9c1}
 .auth-status.error{background:#fff0e9;color:#9c3f15;border:1px solid #f1c6ae;font-weight:600}
+.invite-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:16px 0;color:var(--muted);font-size:13px}
+.invite-actions span{margin-right:4px}
 @media(max-width:700px){.sync-panel{padding:21px 18px}.auth-form{display:grid}.auth-form button{width:100%}}
