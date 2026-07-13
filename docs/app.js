@@ -1,14 +1,16 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.mjs";
 const $ = id => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
 const money = n => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(n);
 const fmt = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${d}T12:00:00`));
 const categories = ["Groceries", "Food", "Wi-Fi", "Water", "Household", "Other"];
 let session, householdId, state = { purchases: [], settlements: [] }, channel;
-let mode = "expense";
+let mode = "expense", pendingPdfImport;
 const dialog = $("entry");
 $("date").value = today();
 
@@ -117,19 +119,56 @@ async function loadHousehold() {
   if (householdError) return note(householdError.message);
   panelReady(household.invite_code, data[0].role === "owner"); await loadLedger();
 }
-function open(next) { mode = next; $("dialog-title").textContent = next === "expense" ? "Add expense" : "Record payment"; $("expense-fields").classList.toggle("hide", next !== "expense"); $("settlement-fields").classList.toggle("hide", next !== "settlement"); $("label").required = next === "expense"; $("amount").value = ""; $("label").value = ""; $("date").value = today(); dialog.showModal(); }
+function open(next, defaults = {}, pdfImport) { mode = next; pendingPdfImport = pdfImport; $("dialog-title").textContent = next === "expense" ? (pdfImport ? "Review PDF import" : "Add expense") : "Record payment"; $("expense-fields").classList.toggle("hide", next !== "expense"); $("settlement-fields").classList.toggle("hide", next !== "settlement"); $("label").required = next === "expense"; $("amount").value = defaults.amount || ""; $("label").value = defaults.label || ""; $("date").value = defaults.date || today(); $("category").value = defaults.category || "Groceries"; $("tracked").checked = !!defaults.tracked; $("personal").checked = false; $("useby-label").classList.toggle("hide", !defaults.tracked); dialog.showModal(); }
 $("add").onclick = () => householdId ? open("expense") : note("Sign in and join a household first.");
 $("settle").onclick = () => householdId ? open("settlement") : note("Sign in and join a household first.");
 $("close").onclick = () => dialog.close("cancel"); $("cancel").onclick = () => dialog.close("cancel");
 $("tracked").onchange = event => $("useby-label").classList.toggle("hide", !event.target.checked);
 $("demo").onclick = () => note("Demo data is disabled for the shared ledger so it cannot overwrite household records.");
 dialog.addEventListener("close", async () => {
-  if (dialog.returnValue !== "default" || !householdId) return;
+  if (dialog.returnValue !== "default" || !householdId) { pendingPdfImport = undefined; return; }
   const amount = Number($("amount").value); if (!Number.isFinite(amount) || amount <= 0) return;
   const payload = mode === "expense" ? { household_id: householdId, label: $("label").value.trim(), category: $("category").value, amount, paid_by: session.user.id, purchased_on: $("date").value, is_personal: $("personal").checked, is_tracked_for_restock: $("tracked").checked && !$("personal").checked, estimated_use_by: $("tracked").checked ? $("useby").value || null : null } : { household_id: householdId, payer: session.user.id, receiver: "00000000-0000-0000-0000-000000000000", amount, settled_on: $("date").value };
   if (mode === "settlement") { const other = (await supabase.from("household_members").select("user_id").eq("household_id", householdId).neq("user_id", session.user.id).limit(1)).data?.[0]; if (!other) return note("Wait for the other member to join before recording a settlement."); payload.receiver = other.user_id; }
   if (mode === "expense" && !payload.label) return;
+  if (mode === "expense" && pendingPdfImport) {
+    const { error } = await supabase.rpc("import_purchase", { p_household_id: householdId, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_label: payload.label, p_category: payload.category, p_amount: payload.amount, p_purchased_on: payload.purchased_on, p_is_personal: payload.is_personal, p_is_tracked_for_restock: payload.is_tracked_for_restock, p_estimated_use_by: payload.estimated_use_by });
+    pendingPdfImport = undefined;
+    return note(error ? error.message : "PDF reviewed, saved, and shared. The PDF itself was discarded.");
+  }
   const { error } = await supabase.from(mode === "expense" ? "purchases" : "settlements").insert(payload); note(error ? error.message : `${mode === "expense" ? "Expense" : "Settlement"} saved and shared.`);
 });
+
+async function sha256(value) { const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value; return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join(""); }
+function pdfDefaults(text) {
+  const amounts = [...text.matchAll(/(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.[0-9]{2})/gi)].map(match => Number(match[1].replaceAll(",", ""))).filter(Number.isFinite);
+  const date = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\b/);
+  const parsedDate = date ? new Date(`${date[3].length === 2 ? `20${date[3]}` : date[3]}-${date[2].padStart(2, "0")}-${date[1].padStart(2, "0")}T12:00:00`) : null;
+  return { label: "Receipt import — review name", amount: amounts.length ? Math.max(...amounts).toFixed(2) : "", date: parsedDate && !Number.isNaN(parsedDate) ? parsedDate.toISOString().slice(0, 10) : today(), category: "Groceries" };
+}
+async function readPdfLocally(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const exactHash = await sha256(bytes);
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const pageText = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) { const page = await pdf.getPage(pageNumber); const content = await page.getTextContent(); pageText.push(content.items.map(item => item.str).join(" ")); }
+  await pdf.destroy();
+  const normalized = pageText.join(" ").toLowerCase().replace(/[^a-z0-9.,₹ ]/g, "").replace(/\s+/g, " ").trim();
+  return { exactHash, contentHash: await sha256(normalized), defaults: pdfDefaults(pageText.join(" ")) };
+}
+$("import-pdf").onclick = () => householdId ? $("pdf-file").click() : note("Sign in and join a household first.");
+$("pdf-file").onchange = async event => {
+  const file = event.target.files?.[0]; event.target.value = "";
+  if (!file || !householdId) return;
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) return note("Choose a PDF receipt or invoice.");
+  note("Reading the PDF locally. It will not be uploaded or stored.");
+  try {
+    const imported = await readPdfLocally(file);
+    const { data, error } = await supabase.from("invoice_imports").select("imported_at").eq("household_id", householdId).or(`exact_pdf_hash.eq.${imported.exactHash},content_hash.eq.${imported.contentHash}`).limit(1);
+    if (error) return note(error.message);
+    if (data.length) return note(`This bill was already imported on ${fmt(data[0].imported_at)}. No expense was added.`);
+    open("expense", imported.defaults, imported); note("PDF read locally. Review every field before saving; the file is discarded.");
+  } catch (error) { note(`Could not read this PDF locally: ${error.message}`); }
+};
 supabase.auth.onAuthStateChange((_event, nextSession) => { session = nextSession; if (!session) { householdId = undefined; state = { purchases: [], settlements: [] }; render(); return panelSignedOut(); } loadHousehold(); });
 const { data: auth } = await supabase.auth.getSession(); session = auth.session; if (session) await loadHousehold(); else panelSignedOut(); render();
