@@ -1,0 +1,90 @@
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+
+OUT = 'Grocery_Change_Log.docx'
+
+def font(run, size=10.5, bold=False, color=None):
+    run.font.name = 'Calibri'; run._element.rPr.rFonts.set(qn('w:ascii'), 'Calibri'); run._element.rPr.rFonts.set(qn('w:hAnsi'), 'Calibri')
+    run.font.size = Pt(size); run.bold = bold
+    if color: run.font.color.rgb = RGBColor(*color)
+
+def heading(doc, text):
+    p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(8); p.paragraph_format.space_after=Pt(4)
+    font(p.add_run(text), 13, True, (46,116,181))
+
+def body(doc, text):
+    p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(4); p.paragraph_format.line_spacing=1.05; font(p.add_run(text),10)
+
+doc=Document(); sec=doc.sections[0]
+sec.top_margin=Inches(.8); sec.bottom_margin=Inches(.75); sec.left_margin=Inches(.8); sec.right_margin=Inches(.8)
+header=sec.header.paragraphs[0]; header.alignment=WD_ALIGN_PARAGRAPH.RIGHT; font(header.add_run('PROJECT HUB  |  CHANGE LOG'),8.5,True,(89,89,89))
+footer=sec.footer.paragraphs[0]; footer.alignment=WD_ALIGN_PARAGRAPH.CENTER; font(footer.add_run('GroceryLedger  •  Maintained in Asia/Kolkata'),8,False,(89,89,89))
+p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(10); p.paragraph_format.space_after=Pt(2); font(p.add_run('GroceryLedger Change Log'),20,True,(11,37,69))
+p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(7); font(p.add_run('Dated record of product decisions, implementation changes, verification, and known limits.'),11,False,(85,85,85))
+
+heading(doc,'12 July 2026, 01:30 IST — Receipt-driven grocery ledger foundation')
+body(doc,'What changed: Created the native SwiftUI/SwiftData iPhone project; added local PDF storage, equal Ekta/Ritesh splitting, personal-item exclusion, balances, manual settlements, invoice review, duplicate-invoice protection, and simulator invoice staging.')
+body(doc,'Why: Establish a working personal tool before expanding scope. Receipt data remains editable because parsing is not trusted as the final record.')
+body(doc,'Verification: Simulator build succeeded repeatedly. Instamart coordinate-based extraction was smoke-tested against a supplied invoice. Known limit: Blinkit product labels may be abbreviated and invoice-date extraction requires continued refinement.')
+
+heading(doc,'12 July 2026, 01:55 IST — Suggestion logic and data-quality findings')
+body(doc,'What changed: Added repeat-product suggestions and investigated the imported simulator data. Saved history contains repeated items including Paneer, Desi Tomato, Green Chilli, Banana, and Potato.')
+body(doc,'Why: The original due-only presentation hid useful repeat evidence. The revised direction is to show repeated products as possible buys and label the evidence, never claim that an item is certainly finished.')
+body(doc,'Known limit: The first cadence rule used an average interval and is not suitable for sparse history. Confirmed replacement: use the most recent completed interval for every item; with a longer history, present a robust median/range instead of an average.')
+
+heading(doc,'12 July 2026, 02:00 IST — Confirmed next scope')
+body(doc,'Cadence: Implement the last-two-purchase interval rule for every product. Expiry: add an explicitly estimated use-by date when no label date exists; never present it as a known expiry. Food: supplied Zomato order summary (Order 8345250035) has restaurant, item lines, charges, discount, total, buyer, and order time, so it is suitable for a separate food-order parser and a Splitwise-style shared-expense review. Manual entry: add a general expense form for groceries, food, Wi-Fi, water, and other roommate costs.')
+body(doc,'Documentation policy: Grocery_Change_Log.docx and Grocery_Slip_Tracker_Market_Research.docx must be updated for material changes with an Asia/Kolkata timestamp, rationale, verification outcome, and known limitation. A scheduled documentation check runs daily at 09:00 and 19:00 IST.')
+
+heading(doc,'12 July 2026, 02:10 IST — Data-minimization privacy rule')
+body(doc,'Decision: Do not persist raw receipts, customer names, addresses, payment method, payment instrument details, payment references, or payment status. The importer reads a chosen PDF only in memory to extract the minimum ledger fields, then discards it.')
+body(doc,'Retained data: merchant or bill label, category, date, total, line-item label/amount when needed for a split or suggestion, who in the local group paid, and settlement amount/date. The group payer is not a payment method or account detail.')
+body(doc,'Follow-up required: existing simulator receipts and legacy raw-PDF blobs may contain personal data and require an explicit cleanup action before the prototype is considered compliant with this rule.')
+
+heading(doc,'12 July 2026, 02:55 IST — Cadence calculation correction')
+body(doc,'Correction: replaced the still-active average-gap calculation with the gap between the latest two distinct purchase dates for each item. Why: an average could show Paneer’s 13-day interval despite its most recent buying cycle being different. Verification: iPhone simulator build succeeded after the correction.')
+
+heading(doc,'12 July 2026, 13:20 IST — Parser and suggestion-data repair')
+body(doc,'Correction: the older Blinkit parser kept only trailing words, producing labels such as “Powder(Pack)”. The repaired parser extracts full product labels from the receipt table. The suggestion engine now collapses repeated lines per invoice and withholds any cadence when duplicate same-day imports make the purchase history unreliable. Verification: tested against all six supplied Blinkit receipts and installed on the existing simulator; the false 13-day cadence no longer appears. Limit: existing malformed saved labels remain until records are cleaned up or re-imported.')
+
+heading(doc,'12 July 2026, 13:29 IST — Authorized simulator data cleanup')
+body(doc,'Action: removed the simulator app and reinstalled the corrected build, deleting all prior purchases, balances, malformed item labels, legacy raw-PDF blobs, and staged receipt files. Why: the imported history was both unreliable for forecasting and inconsistent with the data-minimization rule. Verification: the fresh app opens “All settled up” with no purchases; its Documents folder contains no PDF files. Original source PDFs in Downloads were not changed.')
+
+heading(doc,'12 July 2026, 13:35 IST — Temporary simulator import staging')
+body(doc,'Action: copied the ten supplied grocery PDFs from Downloads into a temporary simulator Files folder so the clean app can import them. Privacy guardrail: this is staging only, not app persistence; the importer discards each source PDF after parsing. Follow-up: delete the temporary Files folder after the imports are reviewed.')
+
+heading(doc,'12 July 2026, 13:45 IST — Files visibility configuration repaired')
+body(doc,'Root cause: the generated app manifest omitted UIFileSharingEnabled even though the project setting stated it. Repair: added an explicit Info.plist with UIFileSharingEnabled, LSSupportsOpeningDocumentsInPlace, and the required CFBundleExecutable. Verification: the simulator accepted the rebuilt app, and its installed manifest contains both Files-sharing keys. The temporary receipts are exposed under On My iPhone > Grocery Ledger > Import PDFs.')
+
+heading(doc,'12 July 2026, 18:25 IST — Shared-expense and food-order expansion')
+body(doc,'What changed: added manual purchase entry for Groceries, Food, Wi-Fi, Water, Household, and Other categories. A manually added grocery or household purchase can carry an optional estimated use-by date. Purchase records now display category and, where supplied, the estimated date. Why: a shared household has recurring costs that do not originate from a grocery invoice, and invoice expiry is usually absent.')
+body(doc,'Food parser: added deterministic support for the supplied Zomato food-order summary. It identifies La Pino\'z Pizza as the merchant, Food as the category, the order time, five line items, and the ₹674.88 final total. Verification: compiled a local parser harness against Order_ID_8345250035.pdf, then ran an iPhone Simulator SDK build; both succeeded.')
+body(doc,'Limit: the estimated use-by date is a user-entered estimate, not a known package expiry. The app does not yet look up barcode/product data, read package labels, schedule local notifications, or infer an expiry from a receipt. Imported invoices still require the existing review flow before save.')
+
+heading(doc,'12 July 2026, 19:08 IST — Verified SwiftData migration repair')
+body(doc,'Root cause: eight receipt purchases had been saved in the simulator database, but the app showed “No purchases” after a new required category field was introduced. SwiftData reported: “Cannot migrate store in-place: Validation error missing attribute values on mandatory destination attribute.” The failure was a data-schema migration, not PDF selection or receipt saving.')
+body(doc,'Repair: added the safe default “Groceries” for the newly introduced Purchase.category field, then rebuilt and launched the simulator app. Verification: the migrated SQLite schema contains ZCATEGORY; all eight existing purchases have category Groceries; the live simulator dashboard displays the restored balance and suggestions; and an isolated SwiftData insert/save/fetch check passed. The importer also performs an explicit save and reports any future save error.')
+
+heading(doc,'12 July 2026, 20:43 IST — Persistence verification harness recorded')
+body(doc,'What changed: added a dedicated Tools/VerifyPersistence.swift harness that creates an in-memory SwiftData container, inserts a purchase plus item, saves it, fetches it back, and asserts that the merchant, category, and item relationship survive persistence.')
+body(doc,'Why: the migration repair needed a repeatable verification artifact instead of a one-off manual claim. This isolates the ledger model from UI/import flows and gives the project a concrete persistence smoke test for future schema changes.')
+body(doc,'Verification: source inspection confirms the harness covers save and fetch behavior against Purchase, PurchaseItem, and Settlement models with the new category default in place. Known limit: this run could not execute SwiftData macro builds from the sandbox, so the harness still needs normal local execution in Xcode or `swift run` outside the sandbox.')
+
+heading(doc,'13 July 2026, 11:56 IST — Verified notification preferences, restock scope, and regression suite')
+body(doc,'What changed: added an iPhone Settings tab with Off, Daily, and Weekly reminder choices plus a user-selected time and optional weekday. Reminders use a neutral “Review possible buys” message; they do not assert that anything is definitely finished. The restock engine now considers only non-personal grocery/household items explicitly marked for restock, excludes Food, and gives a manually entered estimated use-by date precedence over an interval prediction.')
+body(doc,'Why: notification frequency must be a user decision, food should never pollute grocery restock predictions, and a known user-entered estimate is more direct than a derived buying interval. The app preserves the existing policy that use-by values are estimates rather than verified package expiry dates.')
+body(doc,'Verification: an iPhone Simulator SDK build succeeded. Added GroceryLedgerTests and executed 7 simulator tests successfully: shared/personal split math, no-debt-after-deletion safeguard, latest-two-date interval, estimated-use-by precedence, Food/untracked exclusion, food parser fields using sanitised text, and raw-PDF non-persistence by default.')
+
+heading(doc,'13 July 2026, 11:56 IST — Browser testing version created')
+body(doc,'What changed: created the web/Grocery Ledger browser implementation for eventual GitHub Pages sharing. It provides browser-local manual expenses, categories for groceries/food/Wi-Fi/water/household/other, personal-item exclusion, balance settlement records, a transparent possible-buy calculation, demo data, and a clear-data action. It intentionally accepts no receipt uploads in this testing version.')
+body(doc,'Privacy: the web version uses only the browser’s local storage for its reviewed ledger. It does not upload or save PDFs, addresses, payment mode, card/UPI details, payment references, or payment status. It includes a visible privacy notice and a local-only test-data boundary.')
+body(doc,'Verification: generated a project social-preview card at web/public/og.png; browser build completed successfully; its local privacy/control test passed. Known limit: GitHub Pages cannot be published until the project root is connected to the GitHub repository rather than the accidental empty nested repository at 359/359.')
+
+heading(doc,'13 July 2026, 12:03 IST — GitHub Pages deployment package prepared')
+body(doc,'What changed: added a standalone static website package in docs/ plus .github/workflows/pages.yml. The GitHub Pages version has the same browser-local manual ledger, balance, settlement, personal-item, and restock-cue behavior; it does not depend on a server or receipt upload. The workflow publishes docs/ when main is pushed.')
+body(doc,'Why: GitHub Pages serves static files, whereas the richer web/ prototype is built for a worker runtime. A separate static package ensures a shared test URL can work without moving any personal receipt, address, or payment data onto a public host.')
+body(doc,'Verification: JavaScript syntax check passed; the static asset, GitHub Pages workflow, and social-preview image are present. Publishing is deliberately blocked until the real project root is initialised as the Git repository and connected to github.com/EktaDhan/359; the existing nested 359/359 repository is empty and must not be used as the project root.')
+doc.save(OUT)
+print(OUT)

@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+tmp/
+359/
+GroceryLedger.xcodeproj/xcuserdata/
+GroceryLedger.xcodeproj/project.xcworkspace/xcuserdata/
+web/node_modules/
+web/dist/
+web/.wrangler/
+.qa_change_log/
+.qa_research_brief/
