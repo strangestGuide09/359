@@ -57,6 +57,7 @@ alter table public.settlements enable row level security;
 
 -- Data API roles need table privileges as well as RLS policies. RLS below
 -- still decides which rows an authenticated person can access or change.
+grant usage on schema public to authenticated;
 grant select on table public.households, public.household_members, public.purchases, public.settlements to authenticated;
 grant insert, update, delete on table public.purchases to authenticated;
 grant insert, delete on table public.settlements to authenticated;
