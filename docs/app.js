@@ -7,7 +7,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const money = n => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(n);
 const fmt = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${d}T12:00:00`));
 const categories = ["Groceries", "Food", "Wi-Fi", "Water", "Household", "Other"];
-let session, householdId, state = { purchases: [], settlements: [] }, channel, pendingEmail = "";
+let session, householdId, state = { purchases: [], settlements: [] }, channel;
 let mode = "expense";
 const dialog = $("entry");
 $("date").value = today();
@@ -47,25 +47,8 @@ function render() {
 function setPanel(html) { $("sync-panel").innerHTML = html; }
 function panelSignedOut() {
   $("sync-state").textContent = "Sign in required";
-  setPanel(`<div><p>SHARED ACCESS</p><h2>Sign in to your shared ledger</h2><small>We email a one-time code. Enter it in whichever browser you want to use—no browser handoff, app password, receipt, payment detail, or address is stored.</small></div><form id="login-form"><label>Email<input id="login-email" type="email" required autocomplete="email" value="${escape(pendingEmail)}"></label><button>Send sign-in code</button></form>${pendingEmail ? `<form id="otp-form"><label>Sign-in code<input id="otp-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required></label><button>Verify code</button><button id="change-email" class="plain" type="button">Use another email</button></form>` : ""}`);
-  $("login-form").onsubmit = async event => {
-    event.preventDefault();
-    const email = $("login-email").value.trim().toLowerCase();
-    const { error } = await supabase.auth.signInWithOtp({ email });
-    if (error) return note(error.message);
-    pendingEmail = email;
-    panelSignedOut();
-    note("Check your email for the six-digit code, then enter it here.");
-  };
-  if (pendingEmail) {
-    $("otp-form").onsubmit = async event => {
-      event.preventDefault();
-      const token = $("otp-code").value.trim();
-      const { error } = await supabase.auth.verifyOtp({ email: pendingEmail, token, type: "email" });
-      note(error ? error.message : "Signed in.");
-    };
-    $("change-email").onclick = () => { pendingEmail = ""; panelSignedOut(); };
-  }
+  setPanel(`<div><p>SHARED ACCESS</p><h2>Sign in to your shared ledger</h2><small>We email a one-time sign-in link. It signs in the browser that opens it. To use a different browser, copy the email link and paste it into that browser’s address bar before opening it. No app password, receipt, payment detail, or address is stored.</small></div><form id="login-form"><label>Email<input id="login-email" type="email" required autocomplete="email"></label><button>Send sign-in link</button></form>`);
+  $("login-form").onsubmit = async event => { event.preventDefault(); const email = $("login-email").value.trim(); const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } }); note(error ? error.message : "Check your email. Copy the sign-in link into the browser you want to use, then open it."); };
 }
 function panelNoHousehold() {
   $("sync-state").textContent = "Signed in";
@@ -109,5 +92,5 @@ dialog.addEventListener("close", async () => {
   if (mode === "expense" && !payload.label) return;
   const { error } = await supabase.from(mode === "expense" ? "purchases" : "settlements").insert(payload); note(error ? error.message : `${mode === "expense" ? "Expense" : "Settlement"} saved and shared.`);
 });
-supabase.auth.onAuthStateChange((_event, nextSession) => { session = nextSession; if (!session) { householdId = undefined; state = { purchases: [], settlements: [] }; render(); return panelSignedOut(); } pendingEmail = ""; loadHousehold(); });
+supabase.auth.onAuthStateChange((_event, nextSession) => { session = nextSession; if (!session) { householdId = undefined; state = { purchases: [], settlements: [] }; render(); return panelSignedOut(); } loadHousehold(); });
 const { data: auth } = await supabase.auth.getSession(); session = auth.session; if (session) await loadHousehold(); else panelSignedOut(); render();
