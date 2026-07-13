@@ -86,5 +86,8 @@ heading(doc,'13 July 2026, 12:03 IST — GitHub Pages deployment package prepare
 body(doc,'What changed: added a standalone static website package in docs/ plus .github/workflows/pages.yml. The GitHub Pages version has the same browser-local manual ledger, balance, settlement, personal-item, and restock-cue behavior; it does not depend on a server or receipt upload. The workflow publishes docs/ when main is pushed.')
 body(doc,'Why: GitHub Pages serves static files, whereas the richer web/ prototype is built for a worker runtime. A separate static package ensures a shared test URL can work without moving any personal receipt, address, or payment data onto a public host.')
 body(doc,'Verification: JavaScript syntax check passed; the static asset, GitHub Pages workflow, and social-preview image are present. Publishing is deliberately blocked until the real project root is initialised as the Git repository and connected to github.com/EktaDhan/359; the existing nested 359/359 repository is empty and must not be used as the project root.')
+heading(doc,'13 July 2026, 12:54 IST — Public browser tester deployed')
+body(doc,'What changed: the real project repository was connected to GitHub using SSH, its local and remote histories were merged, and the static docs/ package was published from the main branch through GitHub Pages.')
+body(doc,'Verification: the live Grocery Ledger tester rendered successfully at https://ektadhan.github.io/359/. The rendered page shows the browser-only privacy promise, manual expense and settlement controls, a balance summary, and a restock cue. No receipt PDFs, addresses, payment modes, card information, or UPI details are part of the deployed static site.')
 doc.save(OUT)
 print(OUT)
