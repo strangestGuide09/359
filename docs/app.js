@@ -47,8 +47,15 @@ function render() {
 function setPanel(html) { $("sync-panel").innerHTML = html; }
 function panelSignedOut() {
   $("sync-state").textContent = "Sign in required";
-  setPanel(`<div><p>SHARED ACCESS</p><h2>Sign in to your shared ledger</h2><small>We email a one-time sign-in link. It signs in the browser that opens it. To use a different browser, copy the email link and paste it into that browser’s address bar before opening it. No app password, receipt, payment detail, or address is stored.</small></div><form id="login-form"><label>Email<input id="login-email" type="email" required autocomplete="email"></label><button>Send sign-in link</button></form>`);
-  $("login-form").onsubmit = async event => { event.preventDefault(); const email = $("login-email").value.trim(); const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } }); note(error ? error.message : "Check your email. Copy the sign-in link into the browser you want to use, then open it."); };
+  setPanel(`<div><p>SHARED ACCESS</p><h2>Sign in to your shared ledger</h2><small>We email a one-time sign-in link. It signs in the browser that opens it. To use a different browser, copy the email link and paste it into that browser’s address bar before opening it. No app password, receipt, payment detail, or address is stored.</small></div><form id="login-form"><label>Email<input id="login-email" type="email" required autocomplete="email"></label><button id="send-link">Send sign-in link</button></form><p id="auth-status" role="status" aria-live="polite"></p>`);
+  $("login-form").onsubmit = async event => {
+    event.preventDefault();
+    const button = $("send-link"), email = $("login-email").value.trim();
+    button.disabled = true; button.textContent = "Sending…"; $("auth-status").textContent = "Sending a sign-in link…";
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } });
+    button.disabled = false; button.textContent = "Send another link";
+    $("auth-status").textContent = error ? `Could not send link: ${error.message}` : `Sign-in link sent to ${email}. Check Inbox and Spam, then open it in this browser.`;
+  };
 }
 function panelNoHousehold() {
   $("sync-state").textContent = "Signed in";
