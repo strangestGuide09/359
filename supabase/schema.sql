@@ -55,8 +55,14 @@ alter table public.household_members enable row level security;
 alter table public.purchases enable row level security;
 alter table public.settlements enable row level security;
 
-create or replace function public.is_household_member(target_household uuid)
-returns boolean language sql stable security definer set search_path = public as $$
+-- This internal helper is deliberately outside the exposed public API. It is
+-- called from RLS policies only, not from the browser as an RPC.
+create schema if not exists private;
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
+
+create or replace function private.is_household_member(target_household uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
   select exists (
     select 1 from public.household_members
     where household_id = target_household and user_id = auth.uid()
@@ -65,7 +71,7 @@ $$;
 
 create or replace function public.create_household(household_name text)
 returns table(id uuid, invite_code uuid)
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = '' as $$
 declare new_household public.households;
 begin
   if auth.uid() is null then raise exception 'Sign in required'; end if;
@@ -78,7 +84,7 @@ end;
 $$;
 
 create or replace function public.join_household(code uuid)
-returns uuid language plpgsql security definer set search_path = public as $$
+returns uuid language plpgsql security definer set search_path = '' as $$
 declare target public.households;
 begin
   if auth.uid() is null then raise exception 'Sign in required'; end if;
@@ -90,18 +96,24 @@ begin
 end;
 $$;
 
+-- Functions otherwise receive EXECUTE by default. Make browser access opt-in:
+-- only signed-in users may call the two guarded public RPCs. The helper remains
+-- private and is reachable only from the policies below.
+revoke execute on all functions in schema public from public, anon, authenticated;
+revoke execute on all functions in schema private from public, anon, authenticated;
+alter default privileges for role postgres in schema public revoke execute on functions from public, anon, authenticated;
 grant execute on function public.create_household(text) to authenticated;
 grant execute on function public.join_household(uuid) to authenticated;
-grant execute on function public.is_household_member(uuid) to authenticated;
+grant execute on function private.is_household_member(uuid) to authenticated;
 
-create policy "members read households" on public.households for select using (public.is_household_member(id));
-create policy "members read memberships" on public.household_members for select using (public.is_household_member(household_id));
-create policy "members read purchases" on public.purchases for select using (public.is_household_member(household_id));
-create policy "members create purchases" on public.purchases for insert with check (public.is_household_member(household_id) and paid_by = auth.uid());
-create policy "members update purchases" on public.purchases for update using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
-create policy "members delete purchases" on public.purchases for delete using (public.is_household_member(household_id));
-create policy "members read settlements" on public.settlements for select using (public.is_household_member(household_id));
-create policy "members create settlements" on public.settlements for insert with check (public.is_household_member(household_id) and payer = auth.uid());
-create policy "members delete settlements" on public.settlements for delete using (public.is_household_member(household_id));
+create policy "members read households" on public.households for select using (private.is_household_member(id));
+create policy "members read memberships" on public.household_members for select using (private.is_household_member(household_id));
+create policy "members read purchases" on public.purchases for select using (private.is_household_member(household_id));
+create policy "members create purchases" on public.purchases for insert with check (private.is_household_member(household_id) and paid_by = auth.uid());
+create policy "members update purchases" on public.purchases for update using (private.is_household_member(household_id)) with check (private.is_household_member(household_id));
+create policy "members delete purchases" on public.purchases for delete using (private.is_household_member(household_id));
+create policy "members read settlements" on public.settlements for select using (private.is_household_member(household_id));
+create policy "members create settlements" on public.settlements for insert with check (private.is_household_member(household_id) and payer = auth.uid());
+create policy "members delete settlements" on public.settlements for delete using (private.is_household_member(household_id));
 
 alter publication supabase_realtime add table public.purchases, public.settlements, public.household_members;
