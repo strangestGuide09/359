@@ -128,6 +128,8 @@ body(doc,'Required operator action and verification limit: run the new grant rep
 
 heading(doc,'13 July 2026, 15:50 IST — Sign-in UI clarity pass')
 body(doc,'What changed: shortened the sign-in explanation, added a focused responsive sign-in layout, and gave the feedback state a clear visual hierarchy. The button now changes to Sending while disabled; success is a green message card; errors are an orange message card. The Supabase Free email-rate error is translated into an actionable wait/use-your-newest-link explanation instead of raw API wording.')
+heading(doc,'13 July 2026, 16:05 IST — Sign-in retry time')
+body(doc,'What changed: replaced the generic email-rate-limit explanation with a disabled retry button and a specific local time for the next request. The time is calculated from the one-hour Free-plan window after the browser receives a rate-limit response, is remembered across reloads in that browser, and re-enables automatically. It is explicitly a client-side estimate because the email service does not provide a reset timestamp.')
 body(doc,'Why: live screenshots showed that the original message was easy to miss and the unchanged button made a successful send feel unresponsive. This pass makes the authentication state visible at the point of action without changing the data, privacy, or permission model.')
 doc.save(OUT)
 print(OUT)
