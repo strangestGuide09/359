@@ -55,6 +55,12 @@ alter table public.household_members enable row level security;
 alter table public.purchases enable row level security;
 alter table public.settlements enable row level security;
 
+-- Data API roles need table privileges as well as RLS policies. RLS below
+-- still decides which rows an authenticated person can access or change.
+grant select on table public.households, public.household_members, public.purchases, public.settlements to authenticated;
+grant insert, update, delete on table public.purchases to authenticated;
+grant insert, delete on table public.settlements to authenticated;
+
 -- This internal helper is deliberately outside the exposed public API. It is
 -- called from RLS policies only, not from the browser as an RPC.
 create schema if not exists private;
