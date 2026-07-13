@@ -84,9 +84,18 @@ function panelNoHousehold() {
   $("join-household").onclick = async () => { const code = $("invite-code").value.trim(); const { error } = await supabase.rpc("join_household", { code }); if (error) return note(error.message); note("Joined shared household."); await loadHousehold(); };
   $("sign-out").onclick = () => supabase.auth.signOut();
 }
-function panelReady() {
+function panelReady(inviteCode, isOwner) {
   $("sync-state").textContent = "Shared sync on";
-  setPanel(`<div><p>SHARED ACCESS</p><h2>Live household ledger</h2><small>Updates sync to signed-in household members. Receipt PDFs and payment details are not synced.</small></div><button id="sign-out" class="secondary">Sign out</button>`);
+  const inviteActions = isOwner && inviteCode ? `<div class="invite-actions"><span>Invite Mac 1 without storing an email address here.</span><button id="email-invite" class="secondary" type="button">Email invite</button><button id="copy-invite" class="plain" type="button">Copy code</button></div>` : "";
+  setPanel(`<div><p>SHARED ACCESS</p><h2>Live household ledger</h2><small>Updates sync to signed-in household members. Receipt PDFs and payment details are not synced.</small></div>${inviteActions}<button id="sign-out" class="secondary">Sign out</button>`);
+  if (isOwner && inviteCode) {
+    const inviteText = `Join my Grocery Ledger household. Open ${location.origin}${location.pathname}, sign in, then enter this invite code:\n\n${inviteCode}`;
+    $("email-invite").onclick = () => { location.href = `mailto:?subject=${encodeURIComponent("Join my Grocery Ledger household")}&body=${encodeURIComponent(inviteText)}`; };
+    $("copy-invite").onclick = async () => {
+      try { await navigator.clipboard.writeText(inviteCode); note("Invite code copied. You can paste it into an email or Mac 1."); }
+      catch { note(`Copy is unavailable in this browser. Invite code: ${inviteCode}`); }
+    };
+  }
   $("sign-out").onclick = () => supabase.auth.signOut();
 }
 async function loadLedger() {
@@ -100,10 +109,13 @@ async function loadLedger() {
   channel = supabase.channel(`household-${householdId}`).on("postgres_changes", { event: "*", schema: "public", table: "purchases", filter: `household_id=eq.${householdId}` }, loadLedger).on("postgres_changes", { event: "*", schema: "public", table: "settlements", filter: `household_id=eq.${householdId}` }, loadLedger).subscribe();
 }
 async function loadHousehold() {
-  const { data, error } = await supabase.from("household_members").select("household_id").eq("user_id", session.user.id).limit(1);
+  const { data, error } = await supabase.from("household_members").select("household_id,role").eq("user_id", session.user.id).limit(1);
   if (error) return note(error.message);
   if (!data.length) { householdId = undefined; state = { purchases: [], settlements: [] }; render(); return panelNoHousehold(); }
-  householdId = data[0].household_id; panelReady(); await loadLedger();
+  householdId = data[0].household_id;
+  const { data: household, error: householdError } = await supabase.from("households").select("invite_code").eq("id", householdId).single();
+  if (householdError) return note(householdError.message);
+  panelReady(household.invite_code, data[0].role === "owner"); await loadLedger();
 }
 function open(next) { mode = next; $("dialog-title").textContent = next === "expense" ? "Add expense" : "Record payment"; $("expense-fields").classList.toggle("hide", next !== "expense"); $("settlement-fields").classList.toggle("hide", next !== "settlement"); $("label").required = next === "expense"; $("amount").value = ""; $("label").value = ""; $("date").value = today(); dialog.showModal(); }
 $("add").onclick = () => householdId ? open("expense") : note("Sign in and join a household first.");
