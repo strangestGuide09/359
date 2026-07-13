@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A browser-local shared household ledger for expenses and possible grocery buys.">
+    <meta property="og:title" content="Grocery Ledger">
+    <meta property="og:description" content="Shared bills. Smarter restocks.">
+    <meta property="og:image" content="og.png">
+    <title>Grocery Ledger — Shared bills, smarter restocks</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main>
+      <header><a class="brand" href="./"><b>GL</b> Grocery Ledger</a><span>Browser-only data</span></header>
+      <section class="hero"><div><p>SHARED HOME LEDGER</p><h1>Split the bill.<br><i>See what’s next.</i></h1><article>A small, private ledger for shared groceries, bills, and gentle restock cues. No receipt images or payment information are kept.</article></div><aside><small>Today’s balance</small><strong id="balance">All settled up</strong><small>Equal split between Ekta and Ritesh</small></aside></section>
+      <nav><button id="add">+ Add expense</button><button id="settle" class="secondary">↔ Record settlement</button><button id="demo" class="plain">Load demo data</button></nav>
+      <p id="status" role="status"></p>
+      <section class="grid"><article class="panel"><p>RESTOCK</p><h2>Possible buys</h2><div id="suggestions" class="empty">Mark a grocery or household item for restock twice on different dates. The latest two purchases set the first interval.</div></article><aside class="panel privacy"><p>PRIVACY PROMISE</p><h2>Only the reviewed ledger.</h2><ul><li>Receipt PDFs are not uploaded or saved here.</li><li>No address, payment mode, card or UPI details.</li><li>Use this web version for manual-entry testing.</li></ul></aside></section>
+      <section class="panel activity"><div class="heading"><div><p>ACTIVITY</p><h2>Recent expenses</h2></div><span id="count">0 saved</span></div><div id="expenses" class="empty">Try the demo first, or add a grocery, food order, Wi-Fi, water, or household bill.</div><button id="clear" class="plain hide">Clear this browser’s data</button></section>
+      <footer>Grocery Ledger web preview · local storage only · not a replacement for the iPhone app’s PDF review</footer>
+    </main>
+    <dialog id="entry"><form method="dialog"><div class="heading"><div><p>NEW ENTRY</p><h2 id="dialog-title">Add expense</h2></div><button aria-label="Close">×</button></div><div id="expense-fields"><label>What was bought?<input id="label" placeholder="e.g. Milk, Wi-Fi bill" required></label><div class="two"><label>Category<select id="category"><option>Groceries</option><option>Food</option><option>Wi-Fi</option><option>Water</option><option>Household</option><option>Other</option></select></label><label>Paid by<select id="payer"><option>Ekta</option><option>Ritesh</option></select></label></div><label class="check"><input id="tracked" type="checkbox"> Track this for restock</label><label id="useby-label" class="hide">Optional estimated use-by<input id="useby" type="date"></label><label class="check"><input id="personal" type="checkbox"> Personal item — exclude from split</label></div><div id="settlement-fields" class="hide"><label>Who paid?<select id="settler"><option>Ritesh</option><option>Ekta</option></select></label><p>No payment reference, payment mode, or bank detail is collected.</p></div><div class="two"><label>Amount (₹)<input id="amount" inputmode="decimal" placeholder="0.00" required></label><label>Date<input id="date" type="date" required></label></div><menu><button value="cancel" class="secondary">Cancel</button><button id="save" value="default">Save</button></menu></form></dialog>
+    <script src="app.js"></script>
+  </body>
+</html>
