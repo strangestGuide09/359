@@ -12,6 +12,7 @@ def font(run, size=10.5, bold=False, color=None):
 
 def heading(doc, text):
     p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(8); p.paragraph_format.space_after=Pt(4)
+    p.paragraph_format.keep_with_next = True
     font(p.add_run(text), 13, True, (46,116,181))
 
 def body(doc, text):
@@ -142,5 +143,18 @@ heading(doc,'13 July 2026, 16:50 IST — Local-only PDF import with atomic dupli
 body(doc,'What changed: the shared website now offers Import PDF after a person has joined a household. PDF.js reads a selected receipt entirely in that browser; the user must review and edit the proposed label, amount, date, category, personal flag, and restock flag before saving. The raw PDF and its extracted text are discarded, never uploaded to Supabase, and never put in the GitHub repository.')
 body(doc,'Duplicate safeguard: the browser derives two SHA-256 fingerprints locally—one from the PDF bytes and one from normalized extracted text. Supabase stores only those fingerprints in invoice_imports. A guarded import_purchase database function atomically reserves both fingerprints and creates the reviewed expense, so two members importing the same bill at the same time cannot double-count it. It also catches a re-exported/copy PDF when its readable receipt content is unchanged.')
 body(doc,'Limit and operator action: the first PDF pass can only suggest a date and likely total, so the review step is mandatory and it does not claim line-item accuracy. The owner must run supabase/add-local-pdf-imports.sql once before this feature can save imports. JavaScript syntax and local browser loading are verified; a full end-to-end upload must be performed after the migration on the live site.')
+
+heading(doc,'14 July 2026, 13:14 IST — Multi-household lifecycle and permission model agreed')
+body(doc,'Decision: one signed-in account may belong to multiple households. A visible household name is not unique and must never be used as identity; the existing UUID household ID and unique invite code identify the household, so different people may safely use the same name.')
+body(doc,'Approved roles: Owner manages everything; Owner or explicitly appointed Admin may add/remove members; Members may add, edit, or delete only entries they created and may request Admin access from the Owner. Owner alone controls role changes, archive, restore, and permanent deletion. A member with an unpaid balance must settle before removal so balances cannot become orphaned.')
+body(doc,'Lifecycle: archive is a read-only, recoverable household state; restore returns it to normal use. Permanent deletion follows a recovery period and must purge the household ledger rather than auth identities. The current test household has not been removed while the lifecycle design is under discussion.')
+body(doc,'Flow decision pending implementation: sign-in is a dedicated first screen. After authentication, users without a household see only Create or Join; users with households land in the last active household and use a household switcher. Dashboard, expenses, restock, settlements, and settings do not render behind authentication or onboarding.')
+body(doc,'Reference: current Splitwise help describes group-wide bill editing/deletion and no special admin roles, plus group removal/deletion/recovery flows. Grocery Ledger intentionally differs with Owner/Admin/Member controls and an activity audit trail, while retaining the clear group-settings and settled-before-removal concepts.')
+
+heading(doc,'14 July 2026, 14:05 IST — Approved multi-household lifecycle implemented for web handoff')
+body(doc,'What changed: added supabase/multi-household-lifecycle.sql as a new, idempotent migration for the existing project. It adds Owner/Admin/Member roles, multiple household membership per account, member admin requests, owner-only approval and ownership transfer, manager-controlled member removal after the member balance is settled, and a narrow activity table containing action names and opaque IDs only.')
+body(doc,'Lifecycle: a household may be archived only by its Owner when every active member balance is zero. Archive is read-only and sets a 30-day recovery deadline. Only the Owner can restore within that period; permanent deletion is deliberately unavailable until the deadline and purges the household ledger/memberships rather than an auth identity. Visible household names are explicitly non-unique.')
+body(doc,'Website flow: replaced the mixed sign-in/dashboard rendering with separate sign-in, household-picker, and selected-household dashboard states. A signed-in account can create, join, select, and switch among multiple households. The dashboard exposes local PDF import, entry archive/restore, household settings, invite actions, role requests, and archive/recovery controls according to role.')
+body(doc,'Verification and operator action: JavaScript syntax checks passed with the bundled Node runtime; four automated static tests passed, covering staged flow, role/recovery SQL, privacy PDF safeguards, and the prior web controls. The new migration has not yet run against the live Supabase project, so it must be run once in a new SQL Editor tab before the live Page can exercise these controls. Do not rerun schema.sql because its original policy names are intentionally one-time only.')
 doc.save(OUT)
 print(OUT)
