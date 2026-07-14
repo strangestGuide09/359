@@ -24,6 +24,9 @@ test("lifecycle migration enforces the approved role and recovery rules", async 
   assert.match(sql, /purge_after <= now\(\)/);
   assert.match(sql, /request_admin_access/);
   assert.match(sql, /managers or authors update purchases/);
+  assert.match(sql, /managers or authors update settlements/);
+  assert.match(sql, /grant update on table public\.settlements to authenticated/);
+  assert.match(sql, /to_regprocedure\(function_name\) is not null/);
   assert.match(sql, /create_household_invite/);
   assert.match(sql, /Invalid or inactive household invite code/);
 });

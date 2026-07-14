@@ -118,11 +118,19 @@ create policy "managers or authors delete purchases" on public.purchases for del
 drop policy if exists "members create settlements" on public.settlements;
 drop policy if exists "members delete settlements" on public.settlements;
 drop policy if exists "active members create settlements" on public.settlements;
+drop policy if exists "managers or authors update settlements" on public.settlements;
 drop policy if exists "managers or authors delete settlements" on public.settlements;
 create policy "active members create settlements" on public.settlements for insert
   with check (private.is_household_active_member(household_id) and payer = auth.uid());
+create policy "managers or authors update settlements" on public.settlements for update
+  using (private.is_household_active_member(household_id) and (payer = auth.uid() or private.is_household_manager(household_id)))
+  with check (private.is_household_active_member(household_id) and (payer = auth.uid() or private.is_household_manager(household_id)));
 create policy "managers or authors delete settlements" on public.settlements for delete
   using (private.is_household_active_member(household_id) and (payer = auth.uid() or private.is_household_manager(household_id)));
+
+-- The baseline grants settlements insert/delete only. Archive and restore are
+-- updates, so grant that narrow capability once the guarded policy above exists.
+grant update on table public.settlements to authenticated;
 
 drop policy if exists "members read admin requests" on public.admin_requests;
 drop policy if exists "members read activity" on public.ledger_activity;
@@ -299,13 +307,28 @@ begin
 end;
 $$;
 
-revoke execute on function public.request_admin_access(uuid) from public, anon, authenticated;
-revoke execute on function public.resolve_admin_request(uuid, boolean) from public, anon, authenticated;
-revoke execute on function public.transfer_household_ownership(uuid, uuid) from public, anon, authenticated;
-revoke execute on function public.remove_household_member(uuid, uuid) from public, anon, authenticated;
-revoke execute on function public.archive_household(uuid) from public, anon, authenticated;
-revoke execute on function public.restore_household(uuid) from public, anon, authenticated;
-revoke execute on function public.permanently_delete_household(uuid) from public, anon, authenticated;
+-- Some early test databases had a subset of these functions, sometimes with
+-- a different signature. Revoke only functions that actually exist so a
+-- harmless legacy difference cannot abort this whole migration.
+do $$
+declare function_name text;
+begin
+  foreach function_name in array array[
+    'public.request_admin_access(uuid)',
+    'public.resolve_admin_request(uuid,boolean)',
+    'public.transfer_household_ownership(uuid,uuid)',
+    'public.remove_household_member(uuid,uuid)',
+    'public.remove_household_member(uuid)',
+    'public.archive_household(uuid)',
+    'public.restore_household(uuid)',
+    'public.permanently_delete_household(uuid)'
+  ] loop
+    if to_regprocedure(function_name) is not null then
+      execute format('revoke execute on function %s from public, anon, authenticated', function_name);
+    end if;
+  end loop;
+end;
+$$;
 grant execute on function public.create_household(text), public.create_household_invite(uuid), public.join_household(uuid), public.import_purchase(uuid, text, text, text, text, numeric, date, boolean, boolean, date), public.request_admin_access(uuid), public.resolve_admin_request(uuid, boolean), public.transfer_household_ownership(uuid, uuid), public.remove_household_member(uuid), public.archive_household(uuid), public.restore_household(uuid), public.permanently_delete_household(uuid) to authenticated;
 grant execute on function private.household_role(uuid), private.is_household_active_member(uuid), private.is_household_manager(uuid), private.is_household_owner(uuid), private.member_balance(uuid, uuid), private.log_ledger_activity(uuid, text, uuid) to authenticated;
 
