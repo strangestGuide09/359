@@ -329,7 +329,7 @@ begin
   end loop;
 end;
 $$;
-grant execute on function public.create_household(text), public.create_household_invite(uuid), public.join_household(uuid), public.import_purchase(uuid, text, text, text, text, numeric, date, boolean, boolean, date), public.request_admin_access(uuid), public.resolve_admin_request(uuid, boolean), public.transfer_household_ownership(uuid, uuid), public.remove_household_member(uuid), public.archive_household(uuid), public.restore_household(uuid), public.permanently_delete_household(uuid) to authenticated;
+grant execute on function public.create_household(text), public.create_household_invite(uuid), public.join_household(uuid), public.import_purchase(uuid, text, text, text, text, numeric, date, boolean, boolean, date), public.request_admin_access(uuid), public.resolve_admin_request(uuid, boolean), public.transfer_household_ownership(uuid, uuid), public.remove_household_member(uuid, uuid), public.archive_household(uuid), public.restore_household(uuid), public.permanently_delete_household(uuid) to authenticated;
 grant execute on function private.household_role(uuid), private.is_household_active_member(uuid), private.is_household_manager(uuid), private.is_household_owner(uuid), private.member_balance(uuid, uuid), private.log_ledger_activity(uuid, text, uuid) to authenticated;
 
 notify pgrst, 'reload schema';
