@@ -13,6 +13,10 @@ test("shared web flow is staged rather than showing a ledger behind sign-in", as
   assert.match(app, /function renderHouseholdPicker/);
   assert.match(app, /function renderDashboard/);
   assert.match(app, /Names do not need to be unique/);
+  assert.match(app, /persistSession: true/);
+  assert.match(app, /autoRefreshToken: true/);
+  assert.match(app, /You can send invites after a household is open/);
+  assert.match(app, /class="panel account-gate"/);
 });
 
 test("lifecycle migration enforces the approved role and recovery rules", async () => {

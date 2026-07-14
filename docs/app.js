@@ -2,7 +2,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+// Keep the authenticated session in this browser so a normal reload, new tab,
+// or browser restart returns the person to their selected ledger. Only Sign out,
+// an expired session, or cleared browser site data requires another email link.
+const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage }
+});
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.mjs";
 const $ = id => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -49,7 +54,7 @@ function suggestions() {
 function renderSignedOut() {
   $("sync-state").textContent = "Sign in required";
   const retryAt = Number(localStorage.getItem(retryKey) || 0), waiting = retryAt > Date.now(), time = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  setScreen(`<section class="panel auth-screen"><p>SHARED ACCESS</p><h1>Sign in to your shared ledger</h1><article>Enter your email and we’ll send a secure, one-time link. New people are signed up automatically. Open the link in this browser.</article><form id="login-form" class="auth-form"><label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : "Continue with email"}</button></form><p id="auth-status" class="auth-status${waiting ? " error" : ""}">${waiting ? `Try again at ${time}.` : "No password, receipt, payment detail, or address is stored."}</p></section>`);
+  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1>Grocery Ledger</h1><article>Sign in or create your account to continue. We’ll send a secure, one-time link to this browser.</article><form id="login-form" class="auth-form"><label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : "Continue with email"}</button></form><p id="auth-status" class="auth-status${waiting ? " error" : ""}">${waiting ? `Try again at ${time}.` : "No password, receipt, payment detail, or address is stored."}</p></section>`);
   $("login-form").onsubmit = async event => {
     event.preventDefault(); if (waiting) return;
     const button = $("login-form").querySelector("button"), email = $("login-email").value.trim(); button.disabled = true; button.textContent = "Sending…";
@@ -63,7 +68,7 @@ function renderSignedOut() {
 function householdCard(item) { return `<button class="household-card ${item.id === current?.id ? "selected" : ""}" data-switch="${item.id}"><b>${esc(item.name)}</b><span>${item.archived_at ? `Archived · recovery until ${fmt(item.purge_after)}` : `${item.role[0].toUpperCase()}${item.role.slice(1)}`}</span></button>`; }
 function renderHouseholdPicker() {
   $("sync-state").textContent = "Signed in";
-  setScreen(`<section class="panel onboarding"><p>YOUR HOUSEHOLDS</p><h1>${households.length ? "Choose a household" : "Create or join a household"}</h1><article>Names do not need to be unique. Each household has its own private identity and invite code.</article>${households.length ? `<div class="household-list">${households.map(householdCard).join("")}</div>` : ""}<div class="two action-grid"><form id="create-form"><h2>Create</h2><label>Household name<input id="household-name" maxlength="80" required placeholder="e.g. Ekta & Ritesh"></label><button>Create household</button></form><form id="join-form"><h2>Join</h2><label>Invite code<input id="invite-code" required placeholder="Paste a household invite code"></label><button class="secondary">Join household</button></form></div><button id="sign-out" class="plain">Sign out</button></section>`);
+  setScreen(`<section class="panel account-gate household-gate"><p>ACCOUNT SETUP</p><h1>${households.length ? "Choose a household" : "Create or join a household"}</h1><article>${households.length ? "Choose the ledger you want to open." : "Create your first ledger or join one with an invite code. You can send invites after a household is open."} Names do not need to be unique.</article>${households.length ? `<div class="household-list">${households.map(householdCard).join("")}</div>` : ""}<div class="two action-grid"><form id="create-form"><h2>Create household</h2><label>Household name<input id="household-name" maxlength="80" required placeholder="e.g. Ekta & Ritesh"></label><button>Create and open</button></form><form id="join-form"><h2>Join household</h2><label>Invite code<input id="invite-code" required placeholder="Paste a household invite code"></label><button class="secondary">Join and open</button></form></div><button id="sign-out" class="plain">Sign out</button></section>`);
   document.querySelectorAll("[data-switch]").forEach(button => button.onclick = () => chooseHousehold(button.dataset.switch));
   $("create-form").onsubmit = async event => { event.preventDefault(); const { data, error } = await supabase.rpc("create_household", { household_name: $("household-name").value.trim() }); if (error) return note(error.message); localStorage.setItem(selectedKey(), data[0].id); note("Household created. Invite a member from Settings."); await loadHouseholds(); };
   $("join-form").onsubmit = async event => { event.preventDefault(); const { data, error } = await supabase.rpc("join_household", { code: $("invite-code").value.trim() }); if (error) return note(error.message); localStorage.setItem(selectedKey(), data); note("Joined household."); await loadHouseholds(); };
