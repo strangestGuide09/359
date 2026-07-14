@@ -4,7 +4,6 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.enum.style import WD_STYLE_TYPE
 
 OUT = 'Grocery_Slip_Tracker_Market_Research.docx'
 
@@ -21,25 +20,24 @@ def shade(cell, fill):
     tcPr = cell._tc.get_or_add_tcPr()
     shd = OxmlElement('w:shd'); shd.set(qn('w:fill'), fill); tcPr.append(shd)
 
-def margins(cell, top=80, start=120, bottom=80, end=120):
-    tc = cell._tc; tcPr = tc.get_or_add_tcPr(); node = tcPr.first_child_found_in('w:tcMar')
+def margins(cell, top=90, start=120, bottom=90, end=120):
+    tcPr = cell._tc.get_or_add_tcPr(); node = tcPr.first_child_found_in('w:tcMar')
     if node is None:
         node = OxmlElement('w:tcMar'); tcPr.append(node)
-    for side, value in [('top',top),('start',start),('bottom',bottom),('end',end)]:
+    for side, value in [('top', top), ('start', start), ('bottom', bottom), ('end', end)]:
         el = node.find(qn('w:' + side))
-        if el is None: el = OxmlElement('w:' + side); node.append(el)
+        if el is None:
+            el = OxmlElement('w:' + side); node.append(el)
         el.set(qn('w:w'), str(value)); el.set(qn('w:type'), 'dxa')
 
-def set_cell_text(cell, text, bold=False, color=None, size=9.5):
+def set_cell_text(cell, text, bold=False, color=None, size=9.2):
     cell.text = ''
     p = cell.paragraphs[0]; p.paragraph_format.space_after = Pt(0); p.paragraph_format.line_spacing = 1.05
     r = p.add_run(text); set_font(r, size=size, bold=bold, color=color)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER; margins(cell)
 
 def add_heading(doc, text, level=1):
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(14 if level == 1 else 9)
-    p.paragraph_format.space_after = Pt(5)
+    p = doc.add_paragraph(); p.paragraph_format.space_before = Pt(14 if level == 1 else 9); p.paragraph_format.space_after = Pt(5)
     p.paragraph_format.keep_with_next = True
     r = p.add_run(text); set_font(r, 16 if level == 1 else 12.5, True, (46,116,181) if level == 1 else (31,77,120))
     return p
@@ -51,174 +49,141 @@ def add_body(doc, text, bold_lead=None):
     r = p.add_run(text); set_font(r, 10.5)
     return p
 
-def add_bullet(doc, text, size=10.5):
-    p = doc.add_paragraph(style='List Bullet'); p.paragraph_format.space_after = Pt(3); p.paragraph_format.line_spacing = 1.1
-    r = p.add_run(text); set_font(r, size)
+def add_bullet(doc, text, size=10.2):
+    p = doc.add_paragraph(style='List Bullet'); p.paragraph_format.space_after = Pt(3); p.paragraph_format.line_spacing = 1.08
+    set_font(p.add_run(text), size)
 
 def add_table(doc, headers, rows, widths):
-    table = doc.add_table(rows=1, cols=len(headers)); table.alignment = WD_TABLE_ALIGNMENT.LEFT; table.autofit = False
-    table.style = 'Table Grid'
-    trPr = table.rows[0]._tr.get_or_add_trPr()
-    tblHeader = OxmlElement('w:tblHeader'); tblHeader.set(qn('w:val'), 'true'); trPr.append(tblHeader)
-    for i,h in enumerate(headers):
-        c = table.rows[0].cells[i]; c.width = Inches(widths[i]); shade(c, 'F2F4F7'); set_cell_text(c,h,True,(31,77,120),9)
+    table = doc.add_table(rows=1, cols=len(headers)); table.alignment = WD_TABLE_ALIGNMENT.LEFT; table.autofit = False; table.style = 'Table Grid'
+    for i, h in enumerate(headers):
+        cell = table.rows[0].cells[i]; cell.width = Inches(widths[i]); shade(cell, 'EAF1F8'); set_cell_text(cell, h, True, (31,77,120), 9)
     for row in rows:
         cells = table.add_row().cells
-        for i,v in enumerate(row):
-            cells[i].width=Inches(widths[i]); set_cell_text(cells[i], v, False, None, 9)
+        for i, value in enumerate(row):
+            cells[i].width = Inches(widths[i]); set_cell_text(cells[i], value)
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
     return table
 
-doc = Document()
-sec = doc.sections[0]; sec.top_margin=Inches(0.8); sec.bottom_margin=Inches(0.75); sec.left_margin=Inches(0.8); sec.right_margin=Inches(0.8)
-styles = doc.styles
-styles['Normal'].font.name='Calibri'; styles['Normal']._element.rPr.rFonts.set(qn('w:hAnsi'),'Calibri'); styles['Normal'].font.size=Pt(10.5)
+doc = Document(); sec = doc.sections[0]
+sec.top_margin = Inches(.8); sec.bottom_margin = Inches(.75); sec.left_margin = Inches(.8); sec.right_margin = Inches(.8)
+doc.styles['Normal'].font.name = 'Calibri'; doc.styles['Normal']._element.rPr.rFonts.set(qn('w:hAnsi'), 'Calibri'); doc.styles['Normal'].font.size = Pt(10.5)
 
-# Header/footer
-hp=sec.header.paragraphs[0]; hp.alignment=WD_ALIGN_PARAGRAPH.RIGHT; r=hp.add_run('PROJECT HUB  |  MARKET RESEARCH'); set_font(r,8.5,True,(89,89,89))
-fp=sec.footer.paragraphs[0]; fp.alignment=WD_ALIGN_PARAGRAPH.CENTER; r=fp.add_run('Grocery Slip & Shared Household Tracker  •  Research snapshot: 12 July 2026'); set_font(r,8,color=(89,89,89))
+header = sec.header.paragraphs[0]; header.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+set_font(header.add_run('PROJECT HUB  |  PRODUCT & DESIGN REFERENCE'), 8.5, True, (89,89,89))
+footer = sec.footer.paragraphs[0]; footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+set_font(footer.add_run('Grocery Slip & Shared Household Tracker  •  Decision reference'), 8, False, (89,89,89))
 
-p=doc.add_paragraph(); p.paragraph_format.space_before=Pt(16); p.paragraph_format.space_after=Pt(4)
-r=p.add_run('Grocery Slip & Shared Household Tracker'); set_font(r,23,True,(11,37,69))
-p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(14); r=p.add_run('Market research, confirmed v0 direction, and remaining decisions'); set_font(r,13,False,(85,85,85))
+p = doc.add_paragraph(); p.paragraph_format.space_before = Pt(16); p.paragraph_format.space_after = Pt(4)
+set_font(p.add_run('Grocery Slip & Shared Household Tracker'), 23, True, (11,37,69))
+p = doc.add_paragraph(); p.paragraph_format.space_after = Pt(12)
+set_font(p.add_run('Product research, requirements, architecture, and critical decisions'), 13, False, (85,85,85))
 
-meta=doc.add_paragraph(); meta.paragraph_format.space_after=Pt(12)
-for label,val in [('Status','v0 direction recorded and implementation updated'),('Scope','Personal tool for India; iPhone and Mac available'),('Date','12 July 2026')]:
-    rr=meta.add_run(label + ': '); set_font(rr,9.5,True,(31,77,120)); rr=meta.add_run(val + '   '); set_font(rr,9.5)
+add_table(doc, ['Document role', 'Rule'], [
+    ['This document', 'A durable reference for research, product scope, requirements, flows, data design, privacy, and approved decisions. It is updated when those decisions change.'],
+    ['GroceryLedger Change Log', 'The dated implementation record: code changes, migrations, tests, releases, verification outcomes, defects, and operational follow-up.'],
+], [1.75, 4.95])
 
-add_heading(doc,'Executive take',1)
-add_body(doc,'The concept solves a real shared-household problem, but it is not a blank market. Users can already get free bill splitting from Tricount, receipt/item splitting from Splitwise Pro, and stock/restock tracking from Grocy or Pantry Check. The defensible idea is the bridge: turn a grocery receipt into a shared, explainable household ledger and a replenishment plan without asking people to maintain inventory manually.')
-add_body(doc,'Do not begin by building a broad “AI grocery app.” Start by testing one specific promise: “photograph a grocery receipt; each housemate confirms what is shared; the app settles fairly and creates a low-confidence-to-high-confidence restock list.” The greatest product risk is not OCR—it is getting reliable consumption data with little household effort.', 'My honest recommendation: ')
+add_heading(doc, 'Executive view', 1)
+add_body(doc, 'The idea has genuine value for roommates, couples, and families who repeatedly buy mixed groceries: one receipt should create a fair shared balance and a useful “possible buys” list. The market is not empty—Tricount covers free group splitting, Splitwise covers receipt/item splitting as a paid feature, and Grocy/pantry apps cover stock, barcodes, expiry, and shopping lists. The opportunity is the integrated, privacy-conscious bridge from reviewed receipt to shared ledger to low-confidence replenishment cue.')
+add_body(doc, 'Do not market this as an all-knowing pantry AI. A receipt proves a purchase, not consumption or remaining stock. The product should be explicit about evidence, ask for lightweight confirmation, and describe outputs as possible buys or estimates.', 'Honest product constraint: ')
 
-add_heading(doc,'Decisions recorded — 11 July 2026',1)
-add_body(doc,'The project now has a concrete personal-tool direction. These are confirmed decisions from the project owner, not product assumptions.')
-add_table(doc,['Area','Confirmed direction'],[
-    ['First user','The project owner is the first customer and test subject.'],
-    ['Market','India; the first version should handle Indian grocery invoices and INR.'],
-    ['Project intent','Personal tool initially. It may later be open-sourced or monetized, but neither path drives v0 decisions.'],
-    ['Core problem','Avoid using one app to split a grocery bill and another to check what is missing from the fridge/pantry.'],
-    ['Replenishment promise','Show inventory and possible items to buy. Predictions may mature from history; they are suggestions, not definitive stock claims.'],
-    ['First receipt input','Existing PDF invoices only. The supplied samples establish Instamart and Blinkit/Zomato Hyperpure as the first invoice families to support. Camera images, email invoices, and retailer integrations are explicitly later scope.'],
-    ['Shared-item rule','Default split is equal between Ekta and Ritesh after import. The review screen must let either person later mark any line as personal/remove it from the shared split and recalculate the balance.'],
-    ['Confirmation model','Lightweight confirmations are acceptable for the single initial user.'],
-    ['Group money','Track balances for the Ekta/Ritesh group. Record manual Splitwise-style settlements (payer, receiver, amount, date, optional note) that reduce balances; no payment collection, UPI links, or payment reminders in v0.'],
-    ['Reminders','Push notifications and an in-app “what may be needed” view.'],
-    ['Devices and storage','iPhone-first v0. Store only the minimum local ledger data on the iPhone with no sync initially; parse invoices in memory and discard them. A Mac companion is not required for the initial release.'],
-], [1.45,5.25])
-add_body(doc,'A PDF invoice becomes an editable purchase record and is initially divided equally between Ekta and Ritesh. At any time, either person can mark a line as personal and remove it from the shared calculation. The app recalculates the balances, records settlements separately, optionally marks repeat items as inventory-tracked, and later accepts lightweight consumption/stock confirmations. It surfaces a ranked, explainable “possibly buy” list with a reason and confidence—not an automatic order.', 'V0 interpretation: ')
+add_heading(doc, 'Confirmed product scope', 1)
+add_table(doc, ['Area', 'Approved direction'], [
+    ['Initial users', 'Ekta and Ritesh in India. INR is the initial currency.'],
+    ['Surfaces', 'iPhone app and a browser version for multi-device shared use.'],
+    ['Primary jobs', 'Split shared groceries and household costs; track balances and settlements; review likely restocks.'],
+    ['Expense types', 'Groceries, Food, Wi-Fi, Water, Household, and Other. Food/bills affect balances but do not create grocery-restock evidence.'],
+    ['Receipt input', 'PDF first. PDFs are processed locally in the chosen browser/device; raw PDFs and extracted receipt text are not stored or synced.'],
+    ['Shared-item rule', 'Equal split is the default for a shared expense. A reviewed item/expense can be personal and excluded from the other member’s share.'],
+    ['Settlements', 'Record a Splitwise-style payment between members; do not collect money or retain payment instruments/references.'],
+    ['Prediction', 'Suggestions, not certainty. Use the latest two distinct purchase dates for a tracked item; later incorporate more confirmed evidence.'],
+    ['Notifications', 'User chooses frequency. Message is neutral (“review possible buys”), never a claim that an item is definitely exhausted.'],
+], [1.45, 5.25])
 
-add_heading(doc,'PDF validation — supplied invoice set',1)
-add_body(doc,'I inspected 10 supplied files: 9 unique invoices plus one exact duplicate (the two files for order 242060854872088). All invoices have selectable text and structured tables; v0 can use vendor-specific text/table extraction rather than OCR. The supplied set contains three unique Instamart invoices and six Blinkit/Zomato Hyperpure invoices, dated 29 June–10 July 2026.')
-add_table(doc,['Finding','V0 implication'],[
-    ['Reliable digital text','Start with deterministic parsing. Show every extracted field in an editable review screen, then discard the source PDF; do not rely on an opaque AI extraction step.'],
-    ['Multi-page invoices','Support 2–5 page documents and aggregate line items across pages before calculating the balance.'],
-    ['Instamart layout','Items appear in a fixed table with quantity, discount, net taxable value, CGST/SGST, total, invoice value, and handling fee. The parser needs an explicit invoice-level fee model.'],
-    ['Blinkit/Hyperpure layout','Each product can be followed by a “Delivery and other charges” row. Associate that charge with the preceding product internally, but do not list it as a grocery item in the review UI.'],
-    ['Discounts and tax','Both families expose discount and tax values. Use the invoice’s final item total as the splitting amount; make any fee allocation visible and editable.'],
-    ['Duplicate PDFs','Fingerprint PDFs/order IDs on import and warn before creating a second purchase record.'],
-    ['Privacy','These PDFs contain names, addresses, order IDs, and purchase history. For a personal v0, parse them in memory and keep only minimum ledger fields; cross-device sync is an explicit later decision.'],
-], [1.45,5.25])
-add_body(doc,'Validated parser output for each purchase: merchant/template, invoice/order ID, invoice date, currency (INR), raw line items, quantity/unit, product total, product-linked delivery charge where present, invoice-level fee, grand total, and an extraction confidence/review status. Tax breakdown can be retained for audit, but is not required in the primary splitting interface.', 'Recommended record: ')
+add_heading(doc, 'Privacy and data-minimisation policy', 1)
+add_body(doc, 'The system stores reviewed ledger information only. It intentionally does not store raw PDFs, raw extracted receipt text, street address, payment method, payment reference, payment status, bank/card/UPI information, or a recipient email for household invites. Authentication identity is handled by Supabase Auth; an email address is not copied into the ledger tables.')
+add_table(doc, ['May be retained', 'Must not be retained'], [
+    ['Household UUID/name; membership role; reviewed merchant/label; category; amount; date; payer identity; personal/restock flags; estimate date; settlement amount/date; opaque duplicate fingerprints; audit action/type/time.', 'Receipt files or receipt text; customer/address information; payment method or transaction reference; bank/card/UPI information; payment status; email invite recipient or email body.'],
+], [3.35, 3.35])
+add_body(doc, 'Local PDF duplicate protection uses hashes of the selected file and normalized local receipt text. The database keeps only the two hashes and the reviewed purchase; this prevents a second member importing the same bill from double-counting it without uploading the source receipt.', 'Duplicate rule: ')
 
-add_heading(doc,'What exists today',1)
-add_table(doc,['Product','Strong overlap','Free?','Critical gap versus your idea'],[
-    ['Tricount','Shared household expenses; equal, percentage, and custom splits; settle-up suggestions.','Yes—claims no fees, ads, or limits.','No item-level grocery record or consumption/replenishment intelligence.'],
-    ['Splitwise','Receipt image scanning and detected line items assigned among people.','Core app free; receipt scanning/itemization is Pro.','Tracks debts, not household inventory or use rate.'],
-    ['Grocy','Open-source, self-hosted pantry/stock, minimum-stock shopping list, expiry, barcode lookup, recipes.','Software is free/open source; self-hosting effort remains.','No native shared-expense/receipt-splitting focus; data entry remains a hurdle.'],
-    ['Pantry Check','Barcode-led inventory, expiry alerts, restock suggestions, price tally.','Free tier: up to 200 inventory items.','No shared-bill settlement or receipt-driven household allocation.'],
-    ['NoWaste','Pantry/fridge/freezer lists, expiry tracking, barcode/photo recognition, shopping/meal planning.','Free status/limits not established from its public site.','No shared payment ledger or item responsibility model.'],
-], [1.1,2.25,1.1,2.25])
-add_body(doc,'The workflow is fragmented, not absent. A user can pair Tricount with Grocy today, but that creates duplicate entry and no single audit trail from receipt → ownership → stock → consumption → next purchase.', 'Interpretation: ')
+add_heading(doc, 'Market research and positioning', 1)
+add_table(doc, ['Product', 'What it already solves', 'Gap Grocery Ledger should address'], [
+    ['Tricount', 'Free shared expenses, custom splits, settle-up.', 'No receipt-to-inventory/replenishment workflow.'],
+    ['Splitwise', 'Group debts and paid receipt itemisation.', 'No household restock intelligence; broad group-edit model is unsuitable for the selected permission model.'],
+    ['Grocy', 'Open-source inventory, stock thresholds, barcodes, expiry.', 'High entry effort and no receipt-led shared-balance focus.'],
+    ['Pantry Check / NoWaste', 'Inventory, expiry and shopping list cues.', 'No integrated roommate settlement or personal-item allocation.'],
+], [1.25, 2.4, 3.05])
+add_body(doc, 'Position the product as a “shared household ledger with gentle restock cues.” The differentiator is not receipt parsing alone. It is a transparent, low-effort loop: receipt/manual entry → review and ownership correction → balance → repeat-item evidence → suggested next buy.', 'Recommended thesis: ')
 
-add_heading(doc,'Where the idea can win—and where it will struggle',1)
-add_table(doc,['Assessment','Evidence-based view'],[
-    ['Real user value','High for roommates, couples, or families who repeatedly buy mixed/shared groceries and argue over fairness or forget staples. The receipt is a natural “moment of truth” for expense entry.'],
-    ['Differentiation','Moderate only if the workflow is integrated. “Receipt OCR + splitting” alone is already a paid Splitwise feature. “Inventory + restock alerts” is covered by Grocy and pantry apps.'],
-    ['Hard problem','Consumption is largely invisible. A receipt proves a purchase, not who used it, how fast it is consumed, whether it was discarded, or whether it was a one-off. Predictions must begin as suggestions with confidence and confirmation.'],
-    ['Adoption risk','High if every purchase requires item cleanup, quantities, units, ownership, and stock location. The product must allow a fast path and only request corrections that improve later recommendations.'],
-    ['Privacy/trust','Receipts expose store, date, payment totals, purchases, and household behavior. Data minimization, clear sharing controls, and an explicit correction history are product requirements—not later polish.'],
-], [1.45,5.25])
+add_heading(doc, 'Experience flow', 1)
+add_body(doc, 'The site deliberately uses stages so that authentication and household management do not compete with the ledger.')
+add_table(doc, ['Stage', 'What the user sees', 'Primary action'], [
+    ['1. Account gate', 'Only sign up/sign in and the privacy promise.', 'Request a passwordless email link and open it in the intended browser.'],
+    ['2. Household picker', 'Only the account’s active households plus Create / Join.', 'Create a new household or join with an invite code.'],
+    ['3. Selected ledger', 'Balances, expenses, settlements, restock cues, and an active-household switcher.', 'Add/review an expense, import a local PDF, settle, or switch household.'],
+    ['4. Household settings', 'Members, roles, invite actions, admin requests, archive/recovery controls.', 'Invite, copy code, manage membership or lifecycle according to role.'],
+], [1.25, 3.3, 2.15])
+add_body(doc, 'A successful browser sign-in persists through reloads, tab switches, and normal browser reopening. Sign-in is required again only after explicit sign-out, cleared site data, or an expired/revoked session. This is safer and less frustrating than forcing a sign-in whenever a tab closes.', 'Session decision: ')
 
-add_heading(doc,'A sharper product thesis',1)
-add_body(doc,'“The shared pantry and expense ledger for a household.” It is not primarily an expense app, and not primarily a pantry app. Its job is to make the recurring shared-grocery loop fair and automatic enough that people actually keep using it.', 'Suggested positioning: ')
-add_bullet(doc,'Receipt-first capture: upload a photo/PDF; extract merchant, date, totals, tax/discounts, and line items; always show an editable review screen.')
-add_bullet(doc,'Item-level split rules: private, shared equally, shared by selected people, or a saved household rule. Allocate discount/tax/fees transparently and keep an editable ledger record, not the original receipt.')
-add_bullet(doc,'Inventory only for repeatable shared staples at first—not every item. Let a household mark an item “track for restock” after it appears more than once.')
-add_bullet(doc,'Prediction as a recommendation, never a silent automatic order: “Milk is likely due in 3–5 days; add to list?” Show why and let users confirm, snooze, or dismiss.')
-add_bullet(doc,'A shared, exportable audit trail: purchase, split, settlement status, inventory adjustment, and recommendation outcome.')
+add_heading(doc, 'Household roles and lifecycle', 1)
+add_table(doc, ['Role', 'Permissions'], [
+    ['Owner', 'Manages all household settings, members, role decisions, archive/restore, recovery, ownership transfer, and permanent deletion after the recovery period.'],
+    ['Admin', 'May invite/add/remove members and manage household membership. An Admin is appointed by Owner approval.'],
+    ['Member', 'May add, edit, archive, restore, or delete only their own expenses/settlements; may request Admin access.'],
+], [1.2, 5.5])
+add_bullet(doc, 'Visible household names are not unique. Household UUIDs and invite codes are the identifiers, so different users may safely use the same name.')
+add_bullet(doc, 'One account may belong to multiple households and can switch between them.')
+add_bullet(doc, 'A member cannot be removed while their balance is unsettled; this prevents orphaned debt.')
+add_bullet(doc, 'Archive makes a household read-only. The Owner can restore it during a 30-day recovery period; permanent deletion is allowed only afterwards and never deletes an authentication identity.')
 
-add_heading(doc,'Recommended discovery scope (not a build plan)',1)
-add_table(doc,['Phase','Smallest useful test','What it tells you'],[
-    ['1. Problem interviews','Speak to 8–12 households in one chosen segment. Ask them to walk through their last two grocery purchases and show their current workaround.','Whether the pain is frequent, costly, and shared—not merely interesting.'],
-    ['2. Concierge trial','Manually process 20–30 receipts for 3–5 households into a simple shared ledger and send proposed restock messages.','Which receipt fields, split rules, and reminders people correct or value.'],
-    ['3. Narrow prototype','Receipt review + item-level split + household balance + manually curated shared staples. No forecasting promise yet.','Whether the input workflow earns repeat usage.'],
-    ['4. Evidence-based reminders','For items with enough confirmed history, show a predicted purchase window and capture outcomes.','Whether prediction improves shopping behavior enough to retain users.'],
-], [1.1,2.85,2.75])
+add_heading(doc, 'ERD — approved logical model', 1)
+add_body(doc, 'This is the logical data model. It records only reviewed ledger data and supporting access/lifecycle records; it is not a receipt-storage model.')
+add_table(doc, ['Entity', 'Key relationships'], [
+    ['Auth user', 'Supabase Auth identity. One user has many household memberships; no duplicate profile/email table is required for the ledger.'],
+    ['Household', 'One household has many members, invites, purchases, settlements, import fingerprints, and activity records.'],
+    ['Household member', 'Joins one user to one household and assigns Owner, Admin, or Member role.'],
+    ['Purchase', 'Belongs to one household and is created by one member. Carries reviewed split/restock/category fields; may reference one local-only import reservation.'],
+    ['Settlement', 'Belongs to one household; records payer, receiver, amount and date.'],
+    ['Household invite', 'Belongs to one household; created by Owner/Admin; code-based join without storing an invitee email.'],
+    ['Admin request / activity', 'Belongs to one household; captures a role request or minimal action trail using opaque IDs, not receipt content.'],
+    ['Invoice import', 'Belongs to one household and keeps file/content fingerprints only; enforces one reviewed import per bill.'],
+], [1.65, 5.05])
 
-add_heading(doc,'Non-negotiable product principles',1)
-add_bullet(doc,'Receipt extraction is a draft, never the source of truth. Preserve line-item confidence and require review for low-confidence fields.')
-add_bullet(doc,'Keep “who paid” separate from “who consumed/owns.” These are often different for groceries.')
-add_bullet(doc,'Make discounts, tax, delivery, bags, deposits, and rounding explainable at line-item level. Hidden allocation will break trust.')
-add_bullet(doc,'Support a “do not track inventory” choice per item. Produce is consumed/variable; detergent is a better early replenishment candidate.')
-add_bullet(doc,'Notifications should be opt-in, rate-limited, and household-aware. One person should not be pinged for an item another person just bought.')
+add_heading(doc, 'DRD — essential record definitions', 1)
+add_table(doc, ['Record', 'Required attributes / purpose'], [
+    ['Household', 'id (UUID), name (non-unique), created_by, created_at, archive/recovery fields.'],
+    ['Membership', 'household_id, user_id, role, joined_at. Unique by household + user.'],
+    ['Purchase', 'id, household_id, created_by, label/merchant, category, amount, purchase date, paid_by, is_personal, track_for_restock, optional estimated_use_by, created/archived metadata.'],
+    ['Settlement', 'id, household_id, created_by, payer, receiver, amount, settled date, archived metadata. No payment mode/reference field.'],
+    ['Invite', 'id, household_id, code, created_by, created/expires/used metadata. No recipient email field.'],
+    ['Import fingerprint', 'household_id, file_hash, content_hash, purchase_id. Hashes support duplicate protection only; no file/text payload.'],
+], [1.55, 5.15])
 
-add_heading(doc,'Implementation status — 12 July 2026',1)
-add_body(doc,'A native SwiftUI iPhone project named GroceryLedger now exists in this project hub. It uses SwiftData for local storage, PDFKit for selectable-text PDF reading, and a three-tab interface for the dashboard, purchases, and balances. The iPhone SDK build completed successfully with the local project source.')
-add_bullet(doc,'Implemented: PDF selection; Instamart and Blinkit/Zomato Hyperpure detection; invoice-buyer detection (Ekta or Ritesh); local ledger storage without raw receipt retention; equal Ekta/Ritesh split; per-item personal-item exclusion; a local balance calculation; and manual settlement records.', 9.5)
-add_bullet(doc,'The importer reads a chosen PDF in memory, extracts product candidates, and asks the user to verify them before saving. It does not silently create purchases from receipt text, does not retain the source PDF, and disables saving when the detected invoice number already exists.', 9.5)
-add_bullet(doc,'Implemented correction: each repeat item uses the interval between its latest two distinct purchase dates, rather than averaging sparse history. If duplicate same-day imports are detected, forecasting is withheld until the history is cleaned up. With enough clean purchases, a later version can show a robust range/median, labelled as an estimate. Repeated items are surfaced as “possible buys” immediately; they are not claims that stock has run out.', 9)
-add_bullet(doc,'Implemented estimate field: invoices rarely contain expiry dates, so manual grocery/household purchases may carry an optional estimated use-by date. It is visibly labelled as an estimate and is not inferred from the receipt. Barcode/product-data lookup and package-label scanning remain later sources; fresh produce is especially uncertain.', 9)
-add_bullet(doc,'Implemented shared-expense expansion: manual entry now supports Groceries, Food, Wi-Fi, Water, Household, and Other; it uses the same local Ekta/Ritesh ledger and personal-item correction model. The supplied Zomato summary is parsed as a Food purchase: La Pino\'z Pizza, the order time, five line items, and ₹674.88 were verified by the parser harness.', 9)
-add_bullet(doc,'Documentation: Grocery_Change_Log.docx records dated changes, rationale, verification, and limits. Both project documents are updated whenever a material change is made; no automatic documentation schedule is active.', 9)
-add_bullet(doc,'Privacy decision: do not store raw PDFs, addresses, customer names, payment method/instrument details, payment references, or payment status. PDFs are read in memory only during import; retain only the local ledger fields needed for splitting and suggestions. The legacy simulator data was cleared on 12 July 2026; the original source PDFs remain in Downloads. Any simulator Files copies are temporary import staging and must be removed after review. The explicit iOS Files-sharing manifest is verified enabled for this staging path.', 9)
-add_bullet(doc,'Reliability correction: the v0 SwiftData model now gives the later-added purchase category a migration default of “Groceries.” This preserves existing local records when the app schema changes. The repair was verified with the eight stored simulator purchases, a migrated database schema inspection, the live dashboard, and an isolated save/fetch check.', 9)
-add_bullet(doc,'Run on iPhone: open GroceryLedger.xcodeproj in Xcode, select the GroceryLedger target, choose your Apple Development Team under Signing & Capabilities, select your connected iPhone, then press Run. The app is intentionally not configured to collect money or sync data.', 9.5)
-add_body(doc,'The automated compile used the iPhone SDK. Simulator launch could not be exercised from this sandbox because its local simulator service is unavailable here; validate the interface on your connected iPhone in Xcode.', 'Verification note: ')
-add_heading(doc,'Implementation update — 12 July 2026, 20:43 IST',2)
-add_body(doc,'A dedicated SwiftData persistence harness now exists at Tools/VerifyPersistence.swift. It spins up an in-memory model container, saves a purchase with an item, fetches it back, and asserts that the new category field and item relationship persist correctly.', 'What changed: ')
-add_body(doc,'This matters because the project is evolving its local ledger schema quickly. A small, explicit persistence check is better evidence than relying only on UI behavior after a migration fix, and it gives future documentation updates a concrete verification reference.', 'Why it matters: ')
-add_body(doc,'The harness source is present and aligned with the migration-default repair. This automation run could not execute the SwiftData macro toolchain from the sandbox, so the harness remains a verified artifact by inspection and still needs normal local execution outside this environment.', 'Verification and limit: ')
+add_heading(doc, 'Restock and expiry design', 1)
+add_bullet(doc, 'A grocery/household item must be explicitly tracked for restock; Food and personal items are excluded.')
+add_bullet(doc, 'The first cadence estimate is the interval between the latest two distinct purchase dates. Same-day duplicate evidence withholds a prediction.')
+add_bullet(doc, 'With longer confirmed history, present a robust median/range rather than a simplistic average, together with the evidence count.')
+add_bullet(doc, 'A user-entered estimated use-by date takes precedence over cadence. It is always labelled “estimated,” not a known package expiry.')
+add_bullet(doc, 'Later enrichment may use barcode/product catalog information or package-label scans, but it must be opt-in and must distinguish generic shelf-life guidance from the item’s actual expiry date.')
 
-add_heading(doc,'Implementation update — 13 July 2026, 11:56 IST',2)
-add_body(doc,'The native app now has configurable local restock reminders: Off, Daily, or Weekly, with a user-chosen time and weekday. The message is deliberately generic (“review possible buys”), because the app cannot truthfully state that an item has definitely run out. User-entered estimated use-by dates are labelled estimates and take precedence over a derived purchase interval.', 'Reminder and prediction policy: ')
-add_body(doc,'The restock calculation is now constrained to explicitly tracked, non-personal Grocery or Household items. Food orders are retained for shared balances but are excluded from grocery restock evidence. The latest two distinct buying dates remain the first cadence cue; repeated same-day records withhold forecasting.', 'Data-quality improvement: ')
-add_body(doc,'A real XCTest target now verifies seven edge cases on iPhone Simulator: personal-item split exclusion, settlement safety when purchases are absent, last-two-date cadence, estimated-use-by precedence, Food/untracked exclusion, sanitised food-order parsing, and no raw-PDF persistence by default. Both the iOS app build and the full simulator test run passed on 13 July 2026.', 'Verification: ')
-add_body(doc,'A browser-local testing version now exists under web/. It supports manual shared expenses, personal-item exclusion, balances, settlements, possible-buy cues, demo data, and clear-local-data. It deliberately does not accept receipt uploads: GitHub Pages is a static public test surface and the privacy rule prohibits storing raw receipts there. The web build and privacy/control test passed.', 'Web testing version: ')
-add_body(doc,'A GitHub Pages deployment package is now prepared under docs/ with an Actions workflow under .github/workflows/pages.yml. This standalone static build provides the same manual-ledger test path and stores data only in each tester’s browser. It is ready to publish after the actual project root is connected to the GitHub repository; the accidental empty nested repository must not receive the project files.', 'Sharing path: ')
-add_body(doc,'The static tester is now live at https://ektadhan.github.io/359/. It is intentionally a manual-entry test surface: it gives external testers a safe way to exercise balance, settlement, personal-item, and restock-cue behaviour without uploading a receipt or sharing financial/address information. The repository is public only because GitHub Pages required it on the account plan in use; the deployed implementation remains browser-local.', 'Live testing status: ')
-add_body(doc,'A browser-validation defect was found during live testing: the settlement form retained the hidden required purchase label, causing the browser to block Save. The static implementation now toggles that requirement by entry type. The repaired flow was verified with a Rs 300 settlement against demo data, reducing the displayed outstanding balance from Rs 367 to Rs 67. This fix is pending its follow-up commit and Pages redeployment.', 'Post-deployment correction: ')
-add_body(doc,'The same native validation path also blocked Close and Cancel. Both controls now bypass submission explicitly. Local verification opened the settlement dialog, closed it, reopened it, and cancelled it; each action dismissed the dialog successfully. This closes the core browser-dialog defect before the next public deployment.', 'Dialog resilience: ')
-add_body(doc,'The product now requires multi-device shared use: Ekta and Ritesh must see and update the same ledger from their own devices. The selected path is Supabase Free behind the GitHub Pages client, using passwordless email magic links or one-time codes and a shared-household access model. A static site alone cannot satisfy this requirement because browser-local data cannot synchronise.', 'Shared sync decision: ')
-add_body(doc,'The backend data contract is intentionally narrow: auth identity, household membership, reviewed purchases, personal-item flags, settlements, and restock settings. Excluded data: raw invoices, address, payment mode, card/UPI/bank detail, and payment references. Row Level Security is mandatory; a public client may use only the publishable/anon key, never a service-role key.', 'Security boundary: ')
-add_body(doc,'A first-pass Supabase schema is prepared in supabase/schema.sql. It uses an invite-code household join flow, membership-scoped Row Level Security policies, and Supabase Realtime registration for purchases, settlements, and membership changes. It must be applied in the owner-controlled SQL Editor before the public website receives its project URL and publishable key configuration.', 'Implementation readiness: ')
-add_body(doc,'The static web client is now configured for the provisioned Supabase project using only its publishable browser key. It offers magic-link email sign-in, household creation or invite-code joining, backend-backed purchases and settlements, and Realtime refresh. The client never receives a database password or service-role key. Authentication redirect configuration and two-device signed-in verification remain the pre-publication gate.', 'Shared client status: ')
-add_body(doc,'Security Advisor correctly flagged PostgreSQL’s default function EXECUTE grants. The follow-up hardening migration removes public/anonymous execution, moves the membership helper to a non-exposed private schema, uses fixed empty search paths with fully-qualified table references, and grants browser invocation only to authenticated household-create and invite-join RPCs. Security Advisor may still note those two guarded SECURITY DEFINER RPCs because they must be callable by signed-in people; their use is bounded by auth identity, explicit permissions, and RLS. The project owner must run supabase/harden-function-permissions.sql once and recheck the Advisor before the two-device test.', 'Security hardening update — 13 July 2026, 14:28 IST: ')
-add_body(doc,'The project selected the default magic-link flow because the Supabase Free project does not permit editing the default email template without custom SMTP. A magic link creates a session in the browser that consumes it; this is an authentication boundary, not a ledger restriction. The sign-in UI now explicitly tells the user to copy the unconsumed email link and paste it into the address bar of the chosen browser before opening it. This supports any browser without SMTP cost, passwords, or extra stored data. A code-entry flow remains a later option only if the project explicitly adopts a custom SMTP provider.', 'Cross-browser sign-in update — 13 July 2026, 15:15 IST: ')
-add_body(doc,'Live two-Mac testing exposed two implementation gaps: the sign-in request lacked visible in-context feedback, and the authenticated role lacked table-level privileges needed for the Data API to begin RLS evaluation of household membership. The repair gives the sign-in panel clear Sending/Sent/error feedback and grants only the minimum authenticated table operations for membership reads, reviewed-purchase reads/writes, and settlement reads/writes. Row Level Security remains the row-level enforcement layer; no anonymous access, receipt data, payment data, addresses, or additional profile fields are introduced. The owner must run supabase/grant-ledger-table-access.sql before repeating the shared test.', 'Live shared-sync repair — 13 July 2026, 15:35 IST: ')
-add_body(doc,'The sign-in UI now treats status as part of the primary interaction rather than a message elsewhere on the page: it displays Sending, Sent, and error cards next to the email form, disables the button during a request, and gives a plain-language explanation when the Free-plan email limit is reached. The layout remains responsive for a Mac browser or narrow iPhone screen. This is a usability-only change; it does not alter authentication, data scope, or RLS.', 'Sign-in UX update — 13 July 2026, 15:50 IST: ')
-add_body(doc,'When the email service rejects a request as rate-limited, the website now disables the request button and shows the estimated local clock time when the next request can be made. The estimate uses the documented one-hour Free-plan window starting when the browser receives the error, persists only in that browser, and clears automatically when the time passes. The client does not claim this is an authoritative provider reset time because the provider does not expose one.', 'Rate-limit retry clarity — 13 July 2026, 16:05 IST: ')
-add_body(doc,'A SQL “Success” result for the table grants did not resolve a live second-Mac membership-read failure, so it is not treated as verification. The grant repair now includes public-schema usage, a PostgREST schema reload notification, and an effective-privilege query that must return true for schema usage, membership read, purchase access, and settlement access. RLS remains the restriction on rows. Only after this result and a successful second-Mac read can the shared-sync path be considered verified.', 'Data API verification correction — 13 July 2026, 16:15 IST: ')
-add_body(doc,'The privilege checks returned true and the second Mac subsequently reached the signed-in, no-household screen without the previous membership-table permission error. This verifies that signed-in membership reads can reach the Data API. The next required live sequence is deliberately separate: create one household on the first Mac, join it on the second with the generated invite code, save an expense, and confirm it appears on the other device.', 'Second-Mac access verification — 13 July 2026, 16:25 IST: ')
-add_body(doc,'The household owner can now launch a prefilled native email draft containing the project URL and household invite code, or copy the code manually. This supports creating on one Mac and inviting the other while retaining the privacy boundary: the web app does not collect a recipient email address, deliver email itself, or store a message body. The recipient still signs in with their own account before joining.', 'Owner email invite — 13 July 2026, 16:35 IST: ')
-add_body(doc,'The browser website now supports a local-only PDF intake path for a signed-in household member. PDF.js reads the selected PDF inside that browser, offers only editable draft fields, and discards the raw PDF and extracted text. Supabase receives neither the file nor text; it receives only two SHA-256 duplicate fingerprints plus the user-reviewed ledger entry. An atomic database import function reserves the fingerprints and writes the purchase in one transaction, preventing concurrent or repeat imports of the same receipt from double-counting. The first parser intentionally proposes only a likely total/date and requires review; it is not item-level invoice accounting yet. The owner must apply supabase/add-local-pdf-imports.sql before the new control can save an imported expense.', 'Local-only PDF import and duplicate prevention — 13 July 2026, 16:50 IST: ')
-add_body(doc,'The approved shared-use direction is a multi-household account: an account can hold several independently named ledgers, while UUID/invite-code identity—not the visible name—prevents collisions. The website must use a staged flow: dedicated sign-in; then Create/Join only if no active household; then a selected-household dashboard with a switcher for other households. Owner/Admin/Member controls are deliberately stricter than Splitwise: Owner manages all settings and roles; Owner or appointed Admin manages membership; Members manage only their own entries and can request Admin access. Archived households are read-only and recoverable; permanent deletion follows a recovery window. Splitwise’s own help documents a contrasting wiki-style model in which group members can edit/delete bills and it has no special admin permissions, while also using group settings, settlement-before-removal, and deleted-group recovery patterns. Grocery Ledger should borrow the navigation/lifecycle clarity but not the broad edit permission.', 'Multi-household flow and Splitwise comparison — 14 July 2026, 13:14 IST: ')
-add_body(doc,'The approved implementation now makes those design choices concrete: the browser begins with sign-in only, follows with a multi-household picker, then renders one selected ledger. The access model is Owner/Admin/Member rather than Splitwise’s wiki-style group permissions. A household is recoverably archived for 30 days only after all balances are settled; permanent removal is delayed until the recovery window ends. Members can archive/restore their own entries, while an Owner/Admin can manage another member’s entry. The server migration is idempotent and must be run once after the earlier schema migrations; the original schema should not be re-run because its policy definitions are intentionally not repeatable.', 'Implemented web lifecycle direction — 14 July 2026, 14:05 IST: ')
-add_body(doc,'A live apply revealed that compatibility matters even for a “new” migration: an earlier environment did not have one legacy member-removal function signature, so an unconditional REVOKE stopped the run. The migration now conditionally revokes only functions that exist, making reruns safe across the project’s already-created database state. Settlement archive/restore also requires a guarded UPDATE policy plus table grant; those are now explicit. This does not widen row access: RLS still limits members to their own entries and managers to household management.', 'Migration safety correction — 14 July 2026, 14:25 IST: ')
-add_body(doc,'The first retry then identified a second function-signature mismatch in the final authenticated grant: member removal takes household UUID and member UUID, not one UUID. The corrected migration now grants the exact two-argument signature and has an automated assertion for it. The safe operator rule remains: replace the complete migration in one SQL Editor tab and run it as a unit; do not rerun the baseline schema.', 'Migration grant-signature correction — 14 July 2026, 14:38 IST: ')
-add_body(doc,'The staged-flow decision is now reflected in the browser interface: the unsigned route is a dedicated, compact account gate with no ledger hidden behind it. On successful authentication the app resolves the saved session and shows either the household picker or the previously selected ledger; invitation controls are kept inside the active household settings. Supabase persistence and token refresh are explicit, so reloads, tab switches, and normal browser reopening retain the session. A new sign-in is required only after explicit sign-out, cleared site data, or an expired/revoked session. Local JavaScript, static tests, and a browser visual check passed; deployment is pending the next GitHub push.', 'Sign-in-to-ledger flow verification — 14 July 2026, 16:15 IST: ')
+add_heading(doc, 'Open design questions', 1)
+add_table(doc, ['Question', 'Current direction'], [
+    ['How should invite delivery work?', 'Use copy-code and a prefilled device mail draft; the app does not send/store recipient email.'],
+    ['How should barcode lookup be introduced?', 'Only after a consented product-data provider is selected, with a source/last-updated label and no claim that it provides the actual package expiry.'],
+    ['What should notification defaults be?', 'No default frequency. Each user chooses Off, Daily, or Weekly and a time.'],
+    ['When should item-level parsing be trusted?', 'Never silently. Parsing remains a reviewed draft; low-confidence labels/totals need explicit confirmation.'],
+], [2.55, 4.15])
 
-doc.add_page_break()
-add_heading(doc,'Source notes',1)
-add_body(doc,'Research checked on 11 July 2026 and implementation status refreshed through 12 July 2026. Product claims below are drawn from vendors’/projects’ official public pages and may change; pricing/feature availability should be rechecked when selecting competitors for implementation.')
-sources=[
-    ('Expense splitting — Tricount', 'https://tricount.com/en-in/ | https://tricount.com/expense-tracker-features', 'Free shared-expense positioning; household use and custom splits.'),
-    ('Receipt splitting — Splitwise', 'https://www.splitwise.com/pro | https://www.splitwise.com/subscriptions/new', 'Receipt scan/itemization and its Pro subscription positioning.'),
-    ('Household inventory — Grocy', 'https://grocy.info/', 'Open-source stock, minimum-stock shopping lists, barcodes, recipes, and expiry workflows.'),
-    ('Consumer pantry apps — Pantry Check & NoWaste', 'https://pantrycheck.com/ | https://pantrycheck.com/kb/add-items-screen/ | https://www.nowasteapp.com/', 'Inventory/expiry/restock capabilities and Pantry Check’s stated 200-item free tier.'),
-]
-for name,url,note in sources:
-    p=doc.add_paragraph(); p.paragraph_format.space_after=Pt(3); p.paragraph_format.line_spacing=1.0
-    r=p.add_run(name + ' — '); set_font(r,7.5,True,(31,77,120)); r=p.add_run(note + ' ' + url); set_font(r,7.5,False,(70,70,70))
+add_heading(doc, 'Sources', 1)
+for name, url, note in [
+    ('Tricount', 'https://tricount.com/en-in/ | https://tricount.com/expense-tracker-features', 'Shared-expense positioning and split features.'),
+    ('Splitwise', 'https://www.splitwise.com/pro | https://www.splitwise.com/subscriptions/new', 'Receipt scanning/itemisation and subscription positioning.'),
+    ('Grocy', 'https://grocy.info/', 'Open-source stock, barcode, expiry, and shopping-list functionality.'),
+    ('Pantry Check / NoWaste', 'https://pantrycheck.com/ | https://www.nowasteapp.com/', 'Consumer pantry and expiry/restock approaches.'),
+]:
+    p = doc.add_paragraph(); p.paragraph_format.space_after = Pt(3); p.paragraph_format.line_spacing = 1.0
+    set_font(p.add_run(name + ' — '), 8.5, True, (31,77,120)); set_font(p.add_run(note + ' ' + url), 8.5, False, (70,70,70))
 
 doc.save(OUT)
 print(OUT)
