@@ -1,0 +1,107 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const root = new URL("../../", import.meta.url);
+const read = path => readFile(new URL(path, root), "utf8");
+
+test("shared web flow has explicit safe loading and recovery states", async () => {
+  const [page, app] = await Promise.all([read("docs/index.html"), read("docs/app.js")]);
+  assert.match(page, /id="screen"/);
+  assert.doesNotMatch(page, /id="screen" aria-live/);
+  assert.match(app, /function renderLoading/);
+  assert.match(app, /function renderLoadError/);
+  assert.match(app, /Your balance is hidden until current ledger data loads/);
+  assert.doesNotMatch(app, /return renderDashboard\(\);/);
+  assert.match(app, /function renderSignedOut/);
+  assert.match(app, /function renderHouseholdSetup/);
+  assert.match(app, /function renderPartnerInvite/);
+  assert.match(app, /function renderDashboard/);
+  assert.match(app, /persistSession: true/);
+  assert.match(app, /autoRefreshToken: true/);
+  assert.match(app, /open it in this same laptop browser/);
+  assert.match(app, /emailRedirectTo: `\$\{location\.origin\}\$\{location\.pathname\}\$\{location\.search\}`/);
+  assert.match(app, /addEventListener\("offline"/);
+  assert.match(app, /addEventListener\("online"/);
+});
+
+test("production UI is owner and partner only and gates shared actions", async () => {
+  const app = await read("docs/app.js");
+  assert.match(app, /function hasPartner\(\)/);
+  assert.match(app, /Shared expenses, balances, settlements, and restock history stay locked/);
+  assert.match(app, /Your partner must join before saving a shared expense/);
+  assert.match(app, /Your partner must join before recording a settlement/);
+  assert.doesNotMatch(app, /request_admin_access/);
+  assert.doesNotMatch(app, /resolve_admin_request/);
+  assert.doesNotMatch(app, /Request admin access/);
+  assert.doesNotMatch(app, /Choose a household/);
+  assert.match(app, /function inviteCodeFromUrl/);
+  assert.match(app, /Copy invite link/);
+  assert.match(app, /\?invite=\$\{encodeURIComponent\(code\)\}/);
+  assert.match(app, /clearInviteFromUrl\(\)/);
+});
+
+test("clean bootstrap enforces the approved two-person lifecycle", async () => {
+  const sql = await read("supabase/migrations/20260715000000_clean_bootstrap.sql");
+  assert.match(sql, /role in \('owner', 'partner'\)/);
+  assert.match(sql, /A household can have at most two active members/);
+  assert.match(sql, /An account can belong to only one active household/);
+  assert.match(sql, /A partner must join before adding shared expenses/);
+  assert.match(sql, /A partner must join before recording settlements/);
+  assert.match(sql, /interval '30 days'/);
+  assert.match(sql, /Transfer ownership before removing the owner/);
+  assert.match(sql, /Settle every member''s balance before archiving this household/);
+  assert.match(sql, /purge_after<=now\(\)/);
+  assert.match(sql, /create function public\.create_household_invite/);
+  assert.match(sql, /Invalid or inactive household invite code/);
+  assert.doesNotMatch(sql, /admin_requests|request_admin_access|resolve_admin_request/);
+});
+
+test("local PDF privacy and duplicate safeguards remain present", async () => {
+  const [app, sql] = await Promise.all([read("docs/app.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql")]);
+  assert.match(app, /Reading this PDF locally\. It will not be uploaded or stored/);
+  assert.match(app, /exactHash/);
+  assert.match(app, /contentHash/);
+  assert.match(app, /import_reviewed_purchase/);
+  assert.match(app, /p_items: items/);
+  assert.match(app, /purchase_items\(\*\)/);
+  assert.match(app, /for \(const item of purchase\.purchase_items \|\| \[\]\)/);
+  assert.match(app, /is_personal: !!item\.is_personal/);
+  assert.match(app, /display_order/);
+  assert.match(app, /Reviewed item totals must match the receipt total/);
+  assert.doesNotMatch(app, /p_(?:pdf|raw|extracted|receipt_text)/i);
+  assert.match(sql, /unique \(household_id, exact_pdf_hash\)/);
+  assert.match(sql, /unique \(household_id, content_hash\)/);
+});
+
+test("production client uses the validated hosted project public credentials", async () => {
+  const config = await read("docs/supabase-config.js");
+  assert.match(config, /https:\/\/yhcucqzikcqrlhgjwywe\.supabase\.co/);
+  assert.match(config, /sb_publishable_u86CrClAiFcaxFHINCr4Jw_fTFKq7Il/);
+  assert.doesNotMatch(config, /service_role|sb_secret_/);
+});
+
+test("mixed reviewed receipts use shared item totals for balances and restock", async () => {
+  const app = await read("docs/app.js");
+  assert.match(app, /function sharedPurchaseAmount/);
+  assert.match(app, /item\.is_personal \? 0/);
+  assert.match(app, /if \(item\.is_personal \|\| !item\.is_tracked_for_restock\) continue/);
+});
+
+test("itemized review is editable and retains failed drafts", async () => {
+  const [page, app] = await Promise.all([read("docs/index.html"), read("docs/app.js")]);
+  assert.match(page, /id="item-rows"/);
+  assert.match(page, /id="add-item"/);
+  assert.match(page, /Only these reviewed fields will sync/);
+  assert.match(app, /class="plain remove-item"/);
+  assert.match(app, /Your draft is still here/);
+  assert.match(app, /if \(error\) \{ errorBox\.textContent/);
+});
+
+test("repository declares docs as the production web client", async () => {
+  const [readme, prototypeReadme] = await Promise.all([read("README.md"), read("web/README.md")]);
+  assert.match(readme, /`docs\/` is the production web client/);
+  assert.match(readme, /limited to exactly two active members/);
+  assert.match(prototypeReadme, /retired browser-local prototype/);
+  assert.match(prototypeReadme, /Do not deploy this directory/);
+});
