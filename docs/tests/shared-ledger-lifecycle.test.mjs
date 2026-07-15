@@ -6,7 +6,7 @@ const root = new URL("../../", import.meta.url);
 const read = path => readFile(new URL(path, root), "utf8");
 
 test("shared web flow has explicit safe loading and recovery states", async () => {
-  const [page, app] = await Promise.all([read("docs/index.html"), read("docs/app.js")]);
+  const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
   assert.match(page, /id="screen"/);
   assert.doesNotMatch(page, /id="screen" aria-live/);
   assert.match(app, /function renderLoading/);
@@ -23,6 +23,10 @@ test("shared web flow has explicit safe loading and recovery states", async () =
   assert.match(app, /emailRedirectTo: `\$\{location\.origin\}\$\{location\.pathname\}\$\{location\.search\}`/);
   assert.match(app, /addEventListener\("offline"/);
   assert.match(app, /addEventListener\("online"/);
+  assert.match(style, /h1\[tabindex="-1"\]:focus \{ outline:none; \}/);
+  assert.match(style, /button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible/);
+  assert.match(style, /\.account-gate \.auth-form input,\.account-gate \.auth-form button \{ height:43px; \}/);
+  assert.match(style, /\.account-gate \.auth-status \{ width:100%; \}/);
 });
 
 test("production UI is owner and partner only and gates shared actions", async () => {
