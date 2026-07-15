@@ -2,156 +2,430 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 
-// Keep the authenticated session in this browser so a normal reload, new tab,
-// or browser restart returns the person to their selected ledger. Only Sign out,
-// an expired session, or cleared browser site data requires another email link.
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage }
 });
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.mjs";
+
 const $ = id => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
-const money = n => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(n);
+const money = n => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(Number(n) || 0);
 const fmt = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${d}T12:00:00`));
 const esc = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 const retryKey = "grocery-ledger-email-retry-at";
-let session, households = [], current, members = [], ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSettlements: [] }, requests = [], channel, mode = "expense", pendingPdfImport;
-const dialog = $("entry"); $("date").value = today();
+const dialog = $("entry");
+
+let session;
+let current;
+let members = [];
+let ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSettlements: [] };
+let channel;
+let mode = "expense";
+let pendingPdfImport;
+let reviewedItems = [];
 
 function note(text) { $("status").textContent = text || ""; }
+function inviteCodeFromUrl() {
+  const code = new URLSearchParams(location.search).get("invite")?.trim() || "";
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(code) ? code : "";
+}
+function clearInviteFromUrl() {
+  const url = new URL(location.href);
+  url.searchParams.delete("invite");
+  history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
 function active() { return current && !current.archived_at; }
 function isOwner() { return current?.role === "owner"; }
-function isManager() { return ["owner", "admin"].includes(current?.role); }
-function memberName(id) { return id === session?.user?.id ? "You" : "Another member"; }
-function selectedKey() { return "grocery-ledger-active-household"; }
-function setScreen(html) { $("screen").innerHTML = html; }
-function currentMemberCount() { return Math.max(members.length, 1); }
+function hasPartner() { return members.length === 2; }
+function partner() { return members.find(member => member.user_id !== session?.user?.id); }
+function memberName(id) { return id === session?.user?.id ? "You" : "Your partner"; }
+function setScreen(html, { busy = false, focus = true } = {}) {
+  const screen = $("screen");
+  screen.innerHTML = html;
+  screen.setAttribute("aria-busy", String(busy));
+  if (focus) requestAnimationFrame(() => screen.querySelector("h1,h2")?.focus({ preventScroll: true }));
+}
+function statePanel(kicker, title, body, action = "") {
+  return `<section class="panel state-panel"><p>${kicker}</p><h1 tabindex="-1">${title}</h1><article>${body}</article>${action}</section>`;
+}
+function renderLoading(message = "Opening your household ledger…") {
+  $("sync-state").textContent = "Loading…";
+  setScreen(statePanel("PLEASE WAIT", "Opening Grocery Ledger", `<span class="spinner" aria-hidden="true"></span>${esc(message)}`), { busy: true });
+  note("");
+}
+function renderLoadError(title, detail, retry) {
+  $("sync-state").textContent = "Could not sync";
+  setScreen(statePanel("CONNECTION PROBLEM", esc(title), `${esc(detail)} Your balance is hidden until current ledger data loads.`, `<button id="retry-load">Try again</button>`));
+  $("retry-load").onclick = retry;
+}
+function roleName() { return isOwner() ? "Owner" : "Partner"; }
+function sharedPurchaseAmount(purchase) {
+  const items = purchase.purchase_items || [];
+  if (!items.length) return purchase.is_personal ? 0 : Number(purchase.amount);
+  return items.reduce((total, item) => total + (item.is_personal ? 0 : Number(item.line_total) || 0), 0);
+}
 function balanceFor(userId) {
-  const share = currentMemberCount(); let total = 0;
-  for (const item of ledger.purchases) if (!item.is_personal) total += item.paid_by === userId ? Number(item.amount) * (1 - 1 / share) : -Number(item.amount) / share;
-  for (const item of ledger.settlements) total += item.payer === userId ? Number(item.amount) : item.receiver === userId ? -Number(item.amount) : 0;
+  if (!hasPartner()) return 0;
+  let total = 0;
+  for (const purchase of ledger.purchases) {
+    const sharedAmount = sharedPurchaseAmount(purchase);
+    total += purchase.paid_by === userId ? sharedAmount / 2 : -sharedAmount / 2;
+  }
+  for (const settlement of ledger.settlements) total += settlement.payer === userId ? Number(settlement.amount) : settlement.receiver === userId ? -Number(settlement.amount) : 0;
   return total;
 }
 function row(item, type) {
   const own = type === "purchase" ? item.paid_by === session.user.id : item.payer === session.user.id;
-  const canManage = own || isManager();
+  const canManage = own || isOwner();
   const heading = type === "purchase" ? esc(item.label) : `${memberName(item.payer)} paid ${memberName(item.receiver)}`;
-  const sub = type === "purchase" ? `${item.category} · paid by ${memberName(item.paid_by)} · ${fmt(item.purchased_on)}${item.is_personal ? " · personal" : ""}` : fmt(item.settled_on);
+  const count = type === "purchase" && item.purchase_items?.length ? ` · ${item.purchase_items.length} reviewed item${item.purchase_items.length === 1 ? "" : "s"}` : "";
+  const sub = type === "purchase" ? `${esc(item.category)} · paid by ${memberName(item.paid_by)} · ${fmt(item.purchased_on)}${item.is_personal ? " · personal" : ""}${count}` : fmt(item.settled_on);
   return `<div class="expense"><div><b>${heading}</b><span>${sub}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
 function suggestions() {
   const groups = {};
-  ledger.purchases.filter(i => !i.is_personal && i.is_tracked_for_restock && ["Groceries", "Household"].includes(i.category)).forEach(i => (groups[i.label.trim().toLowerCase()] ??= []).push(i));
-  return Object.values(groups).map(items => {
-    items.sort((a,b) => a.purchased_on.localeCompare(b.purchased_on));
-    const dates = [...new Set(items.map(i => i.purchased_on))]; if (dates.length < 2) return null;
-    const [previous, last] = dates.slice(-2); const days = Math.max(1, Math.round((Date.parse(`${last}T12:00:00`) - Date.parse(`${previous}T12:00:00`)) / 86400000)); const latest = items.at(-1);
+  for (const purchase of ledger.purchases) {
+    for (const item of purchase.purchase_items || []) {
+      if (item.is_personal || !item.is_tracked_for_restock) continue;
+      const key = item.name.trim().toLowerCase();
+      (groups[key] ??= []).push({ ...item, purchased_on: purchase.purchased_on });
+    }
+  }
+  const cards = Object.values(groups).map(items => {
+    items.sort((a, b) => a.purchased_on.localeCompare(b.purchased_on));
+    const dates = [...new Set(items.map(item => item.purchased_on))];
+    if (dates.length < 2) return null;
+    const [previous, last] = dates.slice(-2);
+    const days = Math.max(1, Math.round((Date.parse(`${last}T12:00:00`) - Date.parse(`${previous}T12:00:00`)) / 86400000));
+    const latest = items.at(-1);
     const due = latest.estimated_use_by || new Date(Date.parse(`${last}T12:00:00`) + days * 86400000).toISOString().slice(0, 10);
-    return `<div class="suggestion"><div><b>${esc(latest.label)}</b><span>${latest.estimated_use_by ? "Estimated use-by" : `Latest interval: ${days} days`} · seen ${dates.length} times</span></div><time class="${due <= today() ? "due" : ""}">${due <= today() ? "Review now" : `Around ${fmt(due)}`}</time></div>`;
-  }).filter(Boolean).join("") || "Mark a grocery or household item for restock twice on different dates.";
+    return `<div class="suggestion"><div><b>${esc(latest.name)}</b><span>${latest.estimated_use_by ? "Reviewed use-by" : `Latest interval: ${days} days`} · bought ${dates.length} times</span></div><time class="${due <= today() ? "due" : ""}">${due <= today() ? "Review now" : `Around ${fmt(due)}`}</time></div>`;
+  }).filter(Boolean);
+  return cards.join("") || "Track a reviewed receipt item twice on different dates to see a suggestion.";
 }
 
 function renderSignedOut() {
   $("sync-state").textContent = "Sign in required";
-  const retryAt = Number(localStorage.getItem(retryKey) || 0), waiting = retryAt > Date.now(), time = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1>Grocery Ledger</h1><article>Sign in or create your account to continue. We’ll send a secure, one-time link to this browser.</article><form id="login-form" class="auth-form"><label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : "Continue with email"}</button></form><p id="auth-status" class="auth-status${waiting ? " error" : ""}">${waiting ? `Try again at ${time}.` : "No password, receipt, payment detail, or address is stored."}</p></section>`);
+  const retryAt = Number(localStorage.getItem(retryKey) || 0);
+  const waiting = retryAt > Date.now();
+  const time = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>Sign in or create your account. We’ll email a secure one-time link; open it in this same laptop browser.</article><form id="login-form" class="auth-form"><label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : "Continue with email"}</button></form><p id="auth-status" class="auth-status${waiting ? " error" : ""}">${waiting ? `Try again at ${time}.` : "No password, receipt, payment detail, or address is stored."}</p></section>`);
   $("login-form").onsubmit = async event => {
-    event.preventDefault(); if (waiting) return;
-    const button = $("login-form").querySelector("button"), email = $("login-email").value.trim(); button.disabled = true; button.textContent = "Sending…";
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${location.origin}${location.pathname}` } });
-    if (error?.message?.toLowerCase().includes("email rate limit")) { const next = Date.now() + 3600000; localStorage.setItem(retryKey, next); return renderSignedOut(); }
+    event.preventDefault();
+    if (waiting) return;
+    const button = $("login-form").querySelector("button");
+    const email = $("login-email").value.trim();
+    button.disabled = true;
+    button.textContent = "Sending…";
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${location.origin}${location.pathname}${location.search}` } });
+    if (error?.message?.toLowerCase().includes("email rate limit")) {
+      localStorage.setItem(retryKey, Date.now() + 3600000);
+      return renderSignedOut();
+    }
     $("auth-status").className = `auth-status ${error ? "error" : "success"}`;
-    $("auth-status").textContent = error ? "Could not send the link. Check the address and try again later." : `Link sent to ${email}. Check Inbox and Spam, then open the newest link here.`;
-    button.disabled = false; button.textContent = "Send another link";
+    $("auth-status").textContent = error ? "Could not send the link. Check your connection and try again." : `Link sent to ${email}. Check Inbox and Spam, then open the newest link in this browser.`;
+    button.disabled = false;
+    button.textContent = "Send another link";
   };
 }
-function householdCard(item) { return `<button class="household-card ${item.id === current?.id ? "selected" : ""}" data-switch="${item.id}"><b>${esc(item.name)}</b><span>${item.archived_at ? `Archived · recovery until ${fmt(item.purge_after)}` : `${item.role[0].toUpperCase()}${item.role.slice(1)}`}</span></button>`; }
-function renderHouseholdPicker() {
+function renderHouseholdSetup() {
   $("sync-state").textContent = "Signed in";
-  setScreen(`<section class="panel account-gate household-gate"><p>ACCOUNT SETUP</p><h1>${households.length ? "Choose a household" : "Create or join a household"}</h1><article>${households.length ? "Choose the ledger you want to open." : "Create your first ledger or join one with an invite code. You can send invites after a household is open."} Names do not need to be unique.</article>${households.length ? `<div class="household-list">${households.map(householdCard).join("")}</div>` : ""}<div class="two action-grid"><form id="create-form"><h2>Create household</h2><label>Household name<input id="household-name" maxlength="80" required placeholder="e.g. Ekta & Ritesh"></label><button>Create and open</button></form><form id="join-form"><h2>Join household</h2><label>Invite code<input id="invite-code" required placeholder="Paste a household invite code"></label><button class="secondary">Join and open</button></form></div><button id="sign-out" class="plain">Sign out</button></section>`);
-  document.querySelectorAll("[data-switch]").forEach(button => button.onclick = () => chooseHousehold(button.dataset.switch));
-  $("create-form").onsubmit = async event => { event.preventDefault(); const { data, error } = await supabase.rpc("create_household", { household_name: $("household-name").value.trim() }); if (error) return note(error.message); localStorage.setItem(selectedKey(), data[0].id); note("Household created. Invite a member from Settings."); await loadHouseholds(); };
-  $("join-form").onsubmit = async event => { event.preventDefault(); const { data, error } = await supabase.rpc("join_household", { code: $("invite-code").value.trim() }); if (error) return note(error.message); localStorage.setItem(selectedKey(), data); note("Joined household."); await loadHouseholds(); };
+  const invited = inviteCodeFromUrl();
+  setScreen(`<section class="panel account-gate household-gate"><p>ACCOUNT SETUP</p><h1 tabindex="-1">${invited ? "Join your partner’s household" : "Start your two-person ledger"}</h1><article>${invited ? "Your invite link is ready. Confirm the code below to join the shared ledger." : "Create your household, or join your partner with their invite code."}</article><div class="two action-grid"><form id="create-form"><h2>Create household</h2><label>Household name<input id="household-name" maxlength="80" required placeholder="e.g. Ekta & Ritesh"></label><button>Create household</button></form><form id="join-form"><h2>Join your partner</h2><label>Invite code<input id="invite-code" required value="${esc(invited)}" placeholder="Paste invite code"></label><button class="secondary">Join household</button></form></div><button id="sign-out" class="plain">Sign out</button></section>`);
+  $("create-form").onsubmit = async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button");
+    button.disabled = true;
+    button.textContent = "Creating…";
+    const { error } = await supabase.rpc("create_household", { household_name: $("household-name").value.trim() });
+    if (error) { note(error.message); button.disabled = false; button.textContent = "Create household"; return; }
+    await loadHousehold();
+  };
+  $("join-form").onsubmit = async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button");
+    button.disabled = true;
+    button.textContent = "Joining…";
+    const { error } = await supabase.rpc("join_household", { code: $("invite-code").value.trim() });
+    if (error) { note(error.message); button.disabled = false; button.textContent = "Join household"; return; }
+    clearInviteFromUrl();
+    await loadHousehold();
+  };
   $("sign-out").onclick = () => supabase.auth.signOut();
+}
+function renderPartnerInvite() {
+  $("sync-state").textContent = "Waiting for partner";
+  setScreen(`<section class="panel account-gate partner-gate"><p>HOUSEHOLD CREATED</p><h1 tabindex="-1">Invite your partner</h1><article>${esc(current.name)} becomes a shared ledger after your partner joins. Shared expenses, balances, settlements, and restock history stay locked until then.</article><div class="invite-box"><h2>Send a one-time invite</h2><p>Create a new invite link, then send it privately to your partner. They can also paste the code shown in the link.</p><div class="settings-actions"><button id="copy-invite">Copy invite link</button><button id="email-invite" class="secondary">Email invite</button></div></div><div class="settings-actions"><button id="add-personal" class="secondary">Add personal expense</button><button id="refresh-partner" class="plain">Check if partner joined</button><button id="sign-out" class="plain">Sign out</button></div></section>`);
+  $("copy-invite").onclick = () => shareInvite("copy");
+  $("email-invite").onclick = () => shareInvite("email");
+  $("add-personal").onclick = () => openEntry("expense", { personal: true });
+  $("refresh-partner").onclick = loadLedger;
+  $("sign-out").onclick = () => supabase.auth.signOut();
+}
+async function issueInvite() {
+  const { data, error } = await supabase.rpc("create_household_invite", { p_household_id: current.id });
+  if (error) { note(error.message); return null; }
+  return data;
+}
+async function shareInvite(kind) {
+  const code = await issueInvite();
+  if (!code) return;
+  const inviteUrl = `${location.origin}${location.pathname}?invite=${encodeURIComponent(code)}`;
+  const body = `Open this private Grocery Ledger invite link, sign in, and confirm the invite code to join my household:\n\n${inviteUrl}`;
+  if (kind === "email") location.href = `mailto:?subject=${encodeURIComponent("Join my Grocery Ledger household")}&body=${encodeURIComponent(body)}`;
+  else try { await navigator.clipboard.writeText(inviteUrl); note("New invite link copied."); } catch { note(`Copy is unavailable. Invite code: ${code}`); }
 }
 function renderDashboard() {
-  const yourBalance = balanceFor(session.user.id), archived = !!current.archived_at;
-  $("sync-state").textContent = archived ? "Archived · read only" : "Shared sync on";
-  const purchases = ledger.purchases.sort((a,b) => b.purchased_on.localeCompare(a.purchased_on)).map(i => row(i, "purchase")).join("") || "No shared expenses yet.";
-  const settlements = ledger.settlements.sort((a,b) => b.settled_on.localeCompare(a.settled_on)).map(i => row(i, "settlement")).join("") || "No settlements recorded.";
-  const roleRequest = current.role === "member" ? `<button id="request-admin" class="plain">Request admin access</button>` : "";
-  const invites = isManager() && !archived ? `<button id="email-invite" class="secondary">Email invite</button><button id="copy-invite" class="plain">Copy invite code</button>` : "";
-  const permanentlyDeletable = archived && new Date(current.purge_after) <= new Date();
-  const ownerControls = isOwner() ? `<div class="settings-actions">${archived ? `<button id="restore-household" class="secondary">Restore household</button>${permanentlyDeletable ? `<button id="delete-household" class="danger">Permanently delete</button>` : `<small>Permanent deletion becomes available after ${fmt(current.purge_after)}.</small>`}` : `<button id="archive-household" class="danger">Archive household</button><small>Every member’s balance must be ₹0.00 first.</small>`}</div>` : "";
-  const archivedEntries = [...ledger.archivedPurchases.map(i => ({ ...i, type: "purchase" })), ...ledger.archivedSettlements.map(i => ({ ...i, type: "settlement" }))];
-  setScreen(`<section class="household-bar"><button id="household-picker" class="secondary">${esc(current.name)} ▾</button><span>${current.role[0].toUpperCase()}${current.role.slice(1)}</span></section><section class="hero"><div><p>SHARED HOME LEDGER</p><h1>Split the bill.<br><i>See what’s next.</i></h1><article>${archived ? `This household is archived and read-only until ${fmt(current.purge_after)}.` : "A private ledger for shared groceries, bills, and gentle restock cues."}</article></div><aside><small>Today’s balance</small><strong>${Math.abs(yourBalance) < .005 ? "All settled up" : yourBalance > 0 ? `Others owe you ${money(yourBalance)}` : `You owe ${money(-yourBalance)}`}</strong><small>${members.length} member${members.length === 1 ? "" : "s"} · equal split</small></aside></section>${archived ? "" : `<nav><button id="add">+ Add expense</button><button id="import-pdf" class="secondary">⇧ Import PDF</button><button id="settle" class="secondary">↔ Record settlement</button></nav>`}<section class="grid"><article class="panel"><p>RESTOCK</p><h2>Possible buys</h2><div>${suggestions()}</div></article><aside class="panel privacy"><p>PRIVACY PROMISE</p><h2>Only the reviewed ledger.</h2><ul><li>PDFs are processed locally, not uploaded.</li><li>No address, payment mode, card or UPI details.</li><li>Only reviewed ledger entries sync.</li></ul></aside></section><section class="panel activity"><div class="heading"><div><p>ACTIVITY</p><h2>Expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div>${purchases}</div></section><section class="panel activity"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div><div>${settlements}</div></section><section class="panel settings"><p>HOUSEHOLD SETTINGS</p><h2>Members & access</h2><div class="member-list">${members.map(m => `<div class="expense"><div><b>${memberName(m.user_id)}</b><span>${m.role}</span></div>${isManager() && m.role !== "owner" && active() ? `<button class="plain action" data-remove-member="${m.user_id}">Remove</button>` : ""}</div>`).join("")}</div>${requests.filter(r => r.status === "pending").length && isOwner() ? `<h3>Admin requests</h3>${requests.filter(r => r.status === "pending").map(r => `<div class="expense"><b>Member requests admin access</b><span><button data-resolve="${r.id}" data-approve="true">Approve</button><button data-resolve="${r.id}" data-approve="false" class="secondary">Reject</button></span></div>`).join("")}` : ""}<div class="settings-actions">${invites}${roleRequest}${ownerControls}<button id="sign-out" class="plain">Sign out</button></div>${archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(i => `<div class="expense"><div><b>${i.type === "purchase" ? esc(i.label) : "Archived settlement"}</b><span>${money(i.amount)}</span></div>${active() && (isManager() || (i.type === "purchase" ? i.paid_by : i.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${i.type}" data-id="${i.id}">Restore</button>` : ""}</div>`).join("")}</details>` : ""}</section>`);
-  bindDashboard();
+  const balance = balanceFor(session.user.id);
+  const archived = !!current.archived_at;
+  $("sync-state").textContent = archived ? "Archived · read only" : "Synced";
+  const purchases = [...ledger.purchases].sort((a, b) => b.purchased_on.localeCompare(a.purchased_on)).map(item => row(item, "purchase")).join("") || "No shared expenses yet.";
+  const settlements = [...ledger.settlements].sort((a, b) => b.settled_on.localeCompare(a.settled_on)).map(item => row(item, "settlement")).join("") || "No settlements recorded.";
+  const balanceText = Math.abs(balance) < .005 ? "You’re settled" : balance > 0 ? `Your partner owes you ${money(balance)}` : `You owe your partner ${money(-balance)}`;
+  const recoveryOpen = archived && new Date(current.purge_after) > new Date();
+  const ownerControls = isOwner() ? archived ? `<div class="settings-actions">${recoveryOpen ? `<button id="restore-household" class="secondary">Restore household</button><small>Recovery is available until ${fmt(current.purge_after)}.</small>` : `<button id="delete-household" class="danger">Permanently delete</button><small>The 30-day recovery period has ended.</small>`}</div>` : `<div class="settings-actions"><button id="archive-household" class="danger"${Math.abs(balance) >= .005 ? " disabled" : ""}>Close household</button><small>${Math.abs(balance) >= .005 ? "Settle the balance before closing." : "Closing starts a 30-day recovery period."}</small></div>` : "";
+  const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
+  setScreen(`<section class="household-bar"><b>${esc(current.name)}</b><span>${roleName()}</span></section><section class="hero"><div><p>SHARED HOME LEDGER</p><h1 tabindex="-1">Split the bill.<br><i>See what’s next.</i></h1><article>${archived ? `This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}` : "A private ledger for two partners, reviewed expenses, and gentle restock cues."}</article></div><aside><small>Today’s balance</small><strong>${balanceText}</strong><small>2 partners · equal split</small></aside></section>${archived ? "" : `<nav aria-label="Ledger actions"><button id="import-pdf">⇧ Import receipt PDF</button><button id="add" class="secondary">+ Add expense</button>${balance < -.005 ? `<button id="settle" class="secondary">↔ Settle ${money(-balance)}</button>` : ""}</nav>`}<section class="grid"><article class="panel"><p>RESTOCK</p><h2>Possible buys</h2><div>${suggestions()}</div></article><aside class="panel privacy"><p>PRIVACY PROMISE</p><h2>Only reviewed items sync.</h2><ul><li>PDFs and extracted text stay in this browser session.</li><li>No address, payment mode, card or UPI details.</li><li>Only fields you review and save are shared.</li></ul></aside></section><section class="panel activity"><div class="heading"><div><p>ACTIVITY</p><h2>Expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div>${purchases}</div></section><section class="panel activity"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div><div>${settlements}</div></section><section class="panel settings"><p>SETTINGS</p><h2>Household & recovery</h2><div class="member-list"><div class="expense"><div><b>You</b><span>${roleName()}</span></div></div><div class="expense"><div><b>Your partner</b><span>${isOwner() ? "Partner" : "Owner"}</span></div></div></div>${ownerControls}<div class="settings-actions"><button id="sign-out" class="plain">Sign out</button></div>${archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? esc(item.label) : "Archived settlement"}</b><span>${money(item.amount)}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">Restore</button>` : ""}</div>`).join("")}</details>` : ""}</section>`);
+  bindDashboard(balance);
 }
-function bindDashboard() {
-  $("household-picker").onclick = () => { current = undefined; renderHouseholdPicker(); };
-  $("add") && ($("add").onclick = () => open("expense"));
-  $("settle") && ($("settle").onclick = () => open("settlement"));
+function bindDashboard(balance) {
+  $("add") && ($("add").onclick = () => openEntry("expense"));
+  $("settle") && ($("settle").onclick = () => openEntry("settlement", { amount: (-balance).toFixed(2) }));
   $("import-pdf") && ($("import-pdf").onclick = () => $("pdf-file").click());
   $("sign-out").onclick = () => supabase.auth.signOut();
-  $("request-admin") && ($("request-admin").onclick = async () => rpcNote("request_admin_access", { p_household_id: current.id }, "Admin request sent to the owner."));
-  $("email-invite") && ($("email-invite").onclick = async () => { const code = await issueInvite(); if (code) location.href = `mailto:?subject=${encodeURIComponent("Join my Grocery Ledger household")}&body=${encodeURIComponent(`Open ${location.origin}${location.pathname}, sign in, and join with this invite code:\n\n${code}`)}`; });
-  $("copy-invite") && ($("copy-invite").onclick = async () => { const code = await issueInvite(); if (!code) return; try { await navigator.clipboard.writeText(code); note("New invite code copied."); } catch { note("Copy is unavailable. Use Email invite instead."); } });
-  $("archive-household") && ($("archive-household").onclick = async () => { if (confirm("Archive this household? It becomes read-only for 30 days and only the owner can restore it.")) await rpcNote("archive_household", { p_household_id: current.id }, "Household archived."); });
-  $("restore-household") && ($("restore-household").onclick = async () => rpcNote("restore_household", { p_household_id: current.id }, "Household restored."));
-  $("delete-household") && ($("delete-household").onclick = async () => { if (confirm("Permanently delete this household and all of its ledger data? This cannot be undone.")) await rpcNote("permanently_delete_household", { p_household_id: current.id }, "Household permanently deleted."); });
-  document.querySelectorAll("[data-remove-member]").forEach(b => b.onclick = async () => { if (confirm("Remove this member? Their balance must be settled first.")) await rpcNote("remove_household_member", { p_household_id: current.id, p_member_id: b.dataset.removeMember }, "Member removed."); });
-  document.querySelectorAll("[data-resolve]").forEach(b => b.onclick = async () => rpcNote("resolve_admin_request", { p_request_id: b.dataset.resolve, p_approve: b.dataset.approve === "true" }, b.dataset.approve === "true" ? "Admin access approved." : "Admin request rejected."));
-  document.querySelectorAll("[data-archive]").forEach(b => b.onclick = () => archiveEntry(b.dataset.archive, b.dataset.id));
-  document.querySelectorAll("[data-restore-entry]").forEach(b => b.onclick = () => restoreEntry(b.dataset.restoreEntry, b.dataset.id));
+  $("archive-household") && ($("archive-household").onclick = async () => { if (confirm("Close this household? It becomes read-only and can be restored for 30 days.")) await rpcReload("archive_household", { p_household_id: current.id }, "Household closed."); });
+  $("restore-household") && ($("restore-household").onclick = () => rpcReload("restore_household", { p_household_id: current.id }, "Household restored."));
+  $("delete-household") && ($("delete-household").onclick = async () => { if (confirm("Permanently delete this household and its reviewed ledger data? This cannot be undone.")) await rpcReload("permanently_delete_household", { p_household_id: current.id }, "Household permanently deleted."); });
+  document.querySelectorAll("[data-archive]").forEach(button => button.onclick = () => archiveEntry(button.dataset.archive, button.dataset.id));
+  document.querySelectorAll("[data-restore-entry]").forEach(button => button.onclick = () => restoreEntry(button.dataset.restoreEntry, button.dataset.id));
 }
-async function rpcNote(name, args, success) { const { error } = await supabase.rpc(name, args); note(error ? error.message : success); if (!error) await loadHouseholds(); }
-async function issueInvite() { const { data, error } = await supabase.rpc("create_household_invite", { p_household_id: current.id }); if (error) { note(error.message); return null; } return data; }
-async function chooseHousehold(id) { localStorage.setItem(selectedKey(), id); await loadHouseholds(); }
-async function loadHouseholds() {
+async function rpcReload(name, args, success) {
+  const { error } = await supabase.rpc(name, args);
+  note(error ? error.message : success);
+  if (!error) await loadHousehold();
+}
+async function loadHousehold() {
   if (!session) return renderSignedOut();
+  renderLoading("Loading your household…");
   const { data: memberships, error } = await supabase.from("household_members").select("household_id,role").eq("user_id", session.user.id);
-  if (error) { note(`Could not load households: ${error.message}`); return renderHouseholdPicker(); }
-  const result = await Promise.all(memberships.map(async m => { const { data } = await supabase.from("households").select("id,name,archived_at,purge_after").eq("id", m.household_id).maybeSingle(); return data && { ...data, role: m.role }; }));
-  households = result.filter(Boolean).sort((a,b) => a.name.localeCompare(b.name));
-  const saved = localStorage.getItem(selectedKey()); current = households.find(h => h.id === saved) || households.find(h => !h.archived_at) || households[0];
-  if (!current) return renderHouseholdPicker(); await loadLedger();
+  if (error) return renderLoadError("We couldn’t load your household.", error.message, loadHousehold);
+  if (!memberships.length) { current = undefined; return renderHouseholdSetup(); }
+  const membership = memberships[0];
+  const { data: household, error: householdError } = await supabase.from("households").select("id,name,archived_at,purge_after").eq("id", membership.household_id).maybeSingle();
+  if (householdError || !household) return renderLoadError("We couldn’t open your household.", householdError?.message || "Household not found.", loadHousehold);
+  current = { ...household, role: membership.role };
+  await loadLedger();
 }
 async function loadLedger() {
-  const [memberResult, purchaseResult, settlementResult, archivedPurchaseResult, archivedSettlementResult, requestResult] = await Promise.all([
+  if (!current) return loadHousehold();
+  renderLoading("Syncing reviewed expenses and items…");
+  const [memberResult, purchaseResult, settlementResult, archivedPurchaseResult, archivedSettlementResult] = await Promise.all([
     supabase.from("household_members").select("user_id,role").eq("household_id", current.id),
-    supabase.from("purchases").select("*").eq("household_id", current.id).is("archived_at", null),
+    supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).is("archived_at", null),
     supabase.from("settlements").select("*").eq("household_id", current.id).is("archived_at", null),
-    supabase.from("purchases").select("*").eq("household_id", current.id).not("archived_at", "is", null),
-    supabase.from("settlements").select("*").eq("household_id", current.id).not("archived_at", "is", null),
-    supabase.from("admin_requests").select("*").eq("household_id", current.id)
+    supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).not("archived_at", "is", null),
+    supabase.from("settlements").select("*").eq("household_id", current.id).not("archived_at", "is", null)
   ]);
-  const error = memberResult.error || purchaseResult.error || settlementResult.error || archivedPurchaseResult.error || archivedSettlementResult.error || requestResult.error;
-  if (error) { note(`Could not load household: ${error.message}`); return renderDashboard(); }
-  members = memberResult.data; ledger = { purchases: purchaseResult.data, settlements: settlementResult.data, archivedPurchases: archivedPurchaseResult.data, archivedSettlements: archivedSettlementResult.data }; requests = requestResult.data; renderDashboard();
-  channel?.unsubscribe(); channel = supabase.channel(`household-${current.id}`).on("postgres_changes", { event: "*", schema: "public", table: "purchases", filter: `household_id=eq.${current.id}` }, loadLedger).on("postgres_changes", { event: "*", schema: "public", table: "settlements", filter: `household_id=eq.${current.id}` }, loadLedger).on("postgres_changes", { event: "*", schema: "public", table: "household_members", filter: `household_id=eq.${current.id}` }, loadHouseholds).subscribe();
+  const error = memberResult.error || purchaseResult.error || settlementResult.error || archivedPurchaseResult.error || archivedSettlementResult.error;
+  if (error) return renderLoadError("We couldn’t load the current ledger.", error.message, loadLedger);
+  members = memberResult.data;
+  ledger = { purchases: purchaseResult.data, settlements: settlementResult.data, archivedPurchases: archivedPurchaseResult.data, archivedSettlements: archivedSettlementResult.data };
+  if (members.length < 2 && !current.archived_at) renderPartnerInvite(); else renderDashboard();
+  channel?.unsubscribe();
+  channel = supabase.channel(`household-${current.id}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "purchases", filter: `household_id=eq.${current.id}` }, loadLedger)
+    .on("postgres_changes", { event: "*", schema: "public", table: "settlements", filter: `household_id=eq.${current.id}` }, loadLedger)
+    .on("postgres_changes", { event: "*", schema: "public", table: "household_members", filter: `household_id=eq.${current.id}` }, loadLedger)
+    .on("postgres_changes", { event: "*", schema: "public", table: "purchase_items" }, loadLedger)
+    .subscribe(status => { if (["CHANNEL_ERROR", "TIMED_OUT"].includes(status)) $("sync-state").textContent = "Reconnecting…"; });
 }
-function open(next, defaults = {}, pdfImport) { mode = next; pendingPdfImport = pdfImport; $("dialog-title").textContent = next === "expense" ? (pdfImport ? "Review PDF import" : "Add expense") : "Record settlement"; $("expense-fields").classList.toggle("hide", next !== "expense"); $("settlement-fields").classList.toggle("hide", next !== "settlement"); $("label").required = next === "expense"; $("amount").value = defaults.amount || ""; $("label").value = defaults.label || ""; $("date").value = defaults.date || today(); $("category").value = defaults.category || "Groceries"; $("tracked").checked = !!defaults.tracked; $("personal").checked = false; $("useby-label").classList.toggle("hide", !defaults.tracked); dialog.showModal(); }
-$("close").onclick = () => dialog.close("cancel"); $("cancel").onclick = () => dialog.close("cancel"); $("tracked").onchange = e => $("useby-label").classList.toggle("hide", !e.target.checked);
-dialog.addEventListener("close", async () => {
-  if (dialog.returnValue !== "default" || !active()) { pendingPdfImport = undefined; return; }
-  const amount = Number($("amount").value); if (!Number.isFinite(amount) || amount <= 0) return note("Enter an amount above zero.");
+
+function emptyReviewedItem(values = {}) {
+  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: !!values.is_personal, is_tracked_for_restock: !!values.is_tracked_for_restock, estimated_use_by: values.estimated_use_by || "" };
+}
+function renderItemRows() {
+  $("item-rows").innerHTML = reviewedItems.map((item, index) => `<fieldset class="item-row" data-item="${index}"><legend>Item ${index + 1}</legend><label>Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><div class="item-numbers"><label>Quantity<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-options"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal item</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock ? " checked" : ""}${item.is_personal ? " disabled" : ""}> Track for restock</label><label>Optional use-by<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove</button></div></fieldset>`).join("");
+  bindItemRows();
+  updateItemTotal();
+}
+function bindItemRows() {
+  document.querySelectorAll("[data-item]").forEach(rowElement => {
+    const index = Number(rowElement.dataset.item);
+    rowElement.querySelectorAll("[data-field]").forEach(input => input.oninput = () => {
+      const field = input.dataset.field;
+      reviewedItems[index][field] = input.type === "checkbox" ? input.checked : input.value;
+      if (field === "is_personal" && input.checked) reviewedItems[index].is_tracked_for_restock = false;
+      if (field === "is_personal") renderItemRows();
+      updateItemTotal();
+    });
+    rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); renderItemRows(); };
+  });
+}
+function updateItemTotal() {
+  const sum = reviewedItems.reduce((total, item) => total + (Number(item.line_total) || 0), 0);
+  const receiptTotal = Number($("amount").value) || 0;
+  const difference = receiptTotal - sum;
+  $("item-total").textContent = `Reviewed items: ${money(sum)} · Receipt total: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Difference: ${money(difference)}` : " · Totals match"}`;
+}
+function openEntry(next, defaults = {}, pdfImport) {
+  mode = next;
+  pendingPdfImport = pdfImport;
+  reviewedItems = (pdfImport?.items || []).map(emptyReviewedItem);
+  $("dialog-title").textContent = next === "settlement" ? "Record settlement" : pdfImport ? "Review PDF import" : defaults.personal ? "Add personal expense" : "Add expense";
+  $("dialog-kicker").textContent = pdfImport ? "LOCAL PDF DRAFT" : "NEW ENTRY";
+  $("dialog-help").textContent = pdfImport ? "The PDF and extracted text remain local and are discarded when this draft closes. Review every field before saving." : "";
+  $("expense-fields").classList.toggle("hide", next === "settlement");
+  $("pdf-items").classList.toggle("hide", !pdfImport);
+  $("settlement-fields").classList.toggle("hide", next !== "settlement");
+  $("label").required = next !== "settlement";
+  $("label").value = defaults.label || "";
+  $("category").value = defaults.category || "Groceries";
+  $("personal").checked = !!defaults.personal;
+  $("personal").disabled = !!pdfImport;
+  $("amount").value = defaults.amount || "";
+  $("date").value = defaults.date || today();
+  $("dialog-error").textContent = "";
+  $("save").disabled = false;
+  $("save").textContent = "Save";
+  if (pdfImport) renderItemRows();
+  dialog.showModal();
+  requestAnimationFrame(() => (next === "settlement" ? $("amount") : $("label")).focus());
+}
+function closeEntry() {
+  if (pendingPdfImport && !confirm("Discard this local PDF draft? The PDF and extracted text will not be stored.")) return;
+  pendingPdfImport = undefined;
+  reviewedItems = [];
+  dialog.close();
+}
+$("close").onclick = closeEntry;
+$("cancel").onclick = closeEntry;
+dialog.addEventListener("cancel", event => { event.preventDefault(); closeEntry(); });
+$("add-item").onclick = () => { reviewedItems.push(emptyReviewedItem()); renderItemRows(); };
+$("amount").oninput = updateItemTotal;
+$("entry-form").onsubmit = async event => {
+  event.preventDefault();
+  if (!active()) return;
+  const errorBox = $("dialog-error");
+  const amount = Number($("amount").value);
+  if (!Number.isFinite(amount) || amount <= 0) { errorBox.textContent = "Enter an amount above zero."; return; }
+  const button = $("save");
+  button.disabled = true;
+  button.textContent = "Saving…";
   let error;
-  if (mode === "expense") {
-    const payload = { household_id: current.id, label: $("label").value.trim(), category: $("category").value, amount, paid_by: session.user.id, purchased_on: $("date").value, is_personal: $("personal").checked, is_tracked_for_restock: $("tracked").checked && !$("personal").checked, estimated_use_by: $("tracked").checked ? $("useby").value || null : null };
-    if (!payload.label) return note("Add a label before saving.");
-    if (pendingPdfImport) ({ error } = await supabase.rpc("import_purchase", { p_household_id: current.id, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_label: payload.label, p_category: payload.category, p_amount: payload.amount, p_purchased_on: payload.purchased_on, p_is_personal: payload.is_personal, p_is_tracked_for_restock: payload.is_tracked_for_restock, p_estimated_use_by: payload.estimated_use_by }));
-    else ({ error } = await supabase.from("purchases").insert(payload));
-  } else {
-    const receiver = members.find(m => m.user_id !== session.user.id); if (!receiver) return note("A second member must join before recording a settlement.");
+  if (mode === "settlement") {
+    const receiver = partner();
+    if (!receiver) { errorBox.textContent = "Your partner must join before recording a settlement."; button.disabled = false; button.textContent = "Save"; return; }
     ({ error } = await supabase.from("settlements").insert({ household_id: current.id, payer: session.user.id, receiver: receiver.user_id, amount, settled_on: $("date").value }));
+  } else {
+    const label = $("label").value.trim();
+    if (!label) { errorBox.textContent = "Add a merchant or description."; button.disabled = false; button.textContent = "Save"; return; }
+    const personal = $("personal").checked;
+    if (!personal && !hasPartner()) { errorBox.textContent = "Your partner must join before saving a shared expense."; button.disabled = false; button.textContent = "Save"; return; }
+    if (pendingPdfImport) {
+      const items = reviewedItems.map((item, display_order) => ({ name: item.name.trim(), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: !item.is_personal && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
+      if (!items.length || items.some(item => !item.name)) { errorBox.textContent = "Every reviewed item needs a name."; button.disabled = false; button.textContent = "Save"; return; }
+      if (items.some(item => item.line_total == null)) { errorBox.textContent = "Every reviewed item needs a line total."; button.disabled = false; button.textContent = "Save"; return; }
+      if (items.some(item => item.quantity != null && (!Number.isFinite(item.quantity) || item.quantity <= 0))) { errorBox.textContent = "Item quantities must be above zero."; button.disabled = false; button.textContent = "Save"; return; }
+      if (items.some(item => [item.unit_price, item.line_total].some(value => value != null && (!Number.isFinite(value) || value < 0)))) { errorBox.textContent = "Item prices and line totals cannot be negative."; button.disabled = false; button.textContent = "Save"; return; }
+      const reviewedTotal = items.reduce((total, item) => total + (item.line_total || 0), 0);
+      if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Reviewed item totals must match the receipt total before saving."; button.disabled = false; button.textContent = "Save"; return; }
+      const allPersonal = items.every(item => item.is_personal);
+      ({ error } = await supabase.rpc("import_reviewed_purchase", { p_household_id: current.id, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_label: label, p_category: $("category").value, p_amount: amount, p_purchased_on: $("date").value, p_is_personal: allPersonal, p_items: items }));
+    } else {
+      ({ error } = await supabase.from("purchases").insert({ household_id: current.id, label, category: $("category").value, amount, paid_by: session.user.id, purchased_on: $("date").value, is_personal: personal, is_tracked_for_restock: false, estimated_use_by: null }));
+    }
   }
-  pendingPdfImport = undefined; note(error ? error.message : `${mode === "expense" ? "Expense" : "Settlement"} saved and shared.`); if (!error) await loadLedger();
+  if (error) { errorBox.textContent = `${error.message || "Could not save."} Your draft is still here; check your connection and retry.`; button.disabled = false; button.textContent = "Try saving again"; return; }
+  pendingPdfImport = undefined;
+  reviewedItems = [];
+  dialog.close();
+  note(`${mode === "settlement" ? "Settlement" : "Expense"} saved and shared.`);
+  await loadLedger();
+};
+
+async function archiveEntry(type, id) {
+  if (!confirm("Archive this entry? It will stop affecting balances and restock suggestions.")) return;
+  const table = type === "purchase" ? "purchases" : "settlements";
+  const { error } = await supabase.from(table).update({ archived_at: new Date().toISOString(), archived_by: session.user.id }).eq("id", id);
+  note(error ? error.message : "Entry archived.");
+  if (!error) await loadLedger();
+}
+async function restoreEntry(type, id) {
+  const table = type === "purchase" ? "purchases" : "settlements";
+  const { error } = await supabase.from(table).update({ archived_at: null, archived_by: null }).eq("id", id);
+  note(error ? error.message : "Entry restored; balances and suggestions were recalculated.");
+  if (!error) await loadLedger();
+}
+async function sha256(value) {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+function receiptDate(text) {
+  const match = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\b/);
+  if (!match) return today();
+  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+  const candidate = `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+  return Number.isNaN(Date.parse(`${candidate}T12:00:00`)) ? today() : candidate;
+}
+function parseReceipt(lines) {
+  const clean = lines.map(line => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const amounts = clean.flatMap(line => [...line.matchAll(/(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.\d{2})/gi)].map(match => Number(match[1].replaceAll(",", "")))).filter(Number.isFinite);
+  const items = [];
+  for (const line of clean) {
+    if (/\b(total|subtotal|tax|gst|discount|change|cash|card|upi|amount)\b/i.test(line)) continue;
+    const match = line.match(/^(.{2,120}?)\s+(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.\d{2})\s*$/i);
+    if (!match || !/[a-z]/i.test(match[1])) continue;
+    items.push(emptyReviewedItem({ name: match[1].replace(/^\d+(?:\.\d+)?\s*[x×]?\s*/i, "").trim(), line_total: Number(match[2].replaceAll(",", "")) }));
+  }
+  const merchant = clean.find(line => /[a-z]{3}/i.test(line) && !/invoice|receipt|tax/i.test(line)) || "Receipt import — review merchant";
+  return { defaults: { label: merchant.slice(0, 160), amount: amounts.length ? Math.max(...amounts).toFixed(2) : "", date: receiptDate(clean.join(" ")), category: "Groceries" }, items: items.length ? items : [emptyReviewedItem()] };
+}
+async function readPdfLocally(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const exactHash = await sha256(bytes);
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const lines = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    note(`Reading page ${pageNumber} of ${pdf.numPages} locally…`);
+    const content = await (await pdf.getPage(pageNumber)).getTextContent();
+    const rows = new Map();
+    for (const item of content.items) {
+      const y = Math.round(item.transform?.[5] || 0);
+      rows.set(y, `${rows.get(y) || ""} ${item.str}`.trim());
+    }
+    lines.push(...[...rows.entries()].sort((a, b) => b[0] - a[0]).map(([, text]) => text));
+  }
+  await pdf.destroy();
+  const extractedText = lines.join("\n");
+  const normalized = extractedText.toLowerCase().replace(/[^a-z0-9.,₹\n ]/g, "").replace(/[ \t]+/g, " ").trim();
+  return { exactHash, contentHash: await sha256(normalized), ...parseReceipt(lines) };
+}
+$("pdf-file").onchange = async event => {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file || !active() || !hasPartner()) return;
+  if (!file.name.toLowerCase().endsWith(".pdf")) return note("Choose a PDF receipt or invoice.");
+  try {
+    note("Reading this PDF locally. It will not be uploaded or stored.");
+    const imported = await readPdfLocally(file);
+    const { data, error } = await supabase.from("invoice_imports").select("imported_at").eq("household_id", current.id).or(`exact_pdf_hash.eq.${imported.exactHash},content_hash.eq.${imported.contentHash}`).limit(1);
+    if (error) return note(`Could not check for duplicates: ${error.message}`);
+    if (data.length) return note(`This bill was already imported on ${fmt(data[0].imported_at)}. No expense was added.`);
+    openEntry("expense", imported.defaults, imported);
+    note("Local draft ready. Review every item before saving.");
+  } catch (error) {
+    note(`Could not read this PDF locally: ${error.message}. Nothing was uploaded.`);
+  }
+};
+
+renderLoading("Checking your saved session…");
+window.addEventListener("offline", () => { $("sync-state").textContent = "Offline"; note("You’re offline. Unsaved form and PDF review fields remain in this browser; reconnect before saving."); });
+window.addEventListener("online", () => { $("sync-state").textContent = "Back online"; note("Connection restored. Retry the last action when you’re ready."); });
+supabase.auth.onAuthStateChange((_event, nextSession) => {
+  session = nextSession;
+  if (!session) { current = undefined; members = []; ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSettlements: [] }; channel?.unsubscribe(); renderSignedOut(); }
+  else loadHousehold();
 });
-async function archiveEntry(type, id) { if (!confirm("Archive this entry? It will stop affecting balances and restock suggestions.")) return; const table = type === "purchase" ? "purchases" : "settlements"; const { error } = await supabase.from(table).update({ archived_at: new Date().toISOString(), archived_by: session.user.id }).eq("id", id); note(error ? error.message : "Entry archived."); if (!error) await loadLedger(); }
-async function restoreEntry(type, id) { const table = type === "purchase" ? "purchases" : "settlements"; const { error } = await supabase.from(table).update({ archived_at: null, archived_by: null }).eq("id", id); note(error ? error.message : "Entry restored."); if (!error) await loadLedger(); }
-async function sha256(value) { const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value; return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(b => b.toString(16).padStart(2, "0")).join(""); }
-function pdfDefaults(text) { const amounts = [...text.matchAll(/(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.[0-9]{2})/gi)].map(m => Number(m[1].replaceAll(",", ""))).filter(Number.isFinite); return { label: "Receipt import — review name", amount: amounts.length ? Math.max(...amounts).toFixed(2) : "", date: today(), category: "Groceries" }; }
-async function readPdfLocally(file) { const bytes = new Uint8Array(await file.arrayBuffer()), exactHash = await sha256(bytes), pdf = await pdfjsLib.getDocument({ data: bytes }).promise, texts = []; for (let n = 1; n <= pdf.numPages; n += 1) { const content = await (await pdf.getPage(n)).getTextContent(); texts.push(content.items.map(i => i.str).join(" ")); } await pdf.destroy(); const text = texts.join(" "), normalized = text.toLowerCase().replace(/[^a-z0-9.,₹ ]/g, "").replace(/\s+/g, " ").trim(); return { exactHash, contentHash: await sha256(normalized), defaults: pdfDefaults(text) }; }
-$("pdf-file").onchange = async event => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !active()) return; if (!file.name.toLowerCase().endsWith(".pdf")) return note("Choose a PDF receipt or invoice."); try { note("Reading this PDF locally. It will not be uploaded or stored."); const imported = await readPdfLocally(file); const { data, error } = await supabase.from("invoice_imports").select("imported_at").eq("household_id", current.id).or(`exact_pdf_hash.eq.${imported.exactHash},content_hash.eq.${imported.contentHash}`).limit(1); if (error) return note(error.message); if (data.length) return note(`This bill was already imported on ${fmt(data[0].imported_at)}. No expense was added.`); open("expense", imported.defaults, imported); note("Review every field before saving; the PDF is discarded."); } catch (error) { note(`Could not read this PDF locally: ${error.message}`); } };
-supabase.auth.onAuthStateChange((_event, next) => { session = next; if (!session) { current = undefined; households = []; ledger = { purchases: [], settlements: [] }; renderSignedOut(); } else loadHouseholds(); });
-const { data } = await supabase.auth.getSession(); session = data.session; if (session) loadHouseholds(); else renderSignedOut();
+const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+if (sessionError) renderLoadError("We couldn’t check your session.", sessionError.message, () => location.reload());
+else { session = sessionData.session; if (session) loadHousehold(); else renderSignedOut(); }
