@@ -27,6 +27,10 @@ test("shared web flow has explicit safe loading and recovery states", async () =
   assert.match(style, /button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible/);
   assert.match(style, /\.account-gate \.auth-form input,\.account-gate \.auth-form button \{ height:43px; \}/);
   assert.match(style, /\.account-gate \.auth-status \{ width:100%; \}/);
+  assert.match(style, /button \{ min-height:43px;/);
+  assert.match(style, /input,select \{ width:100%; min-height:43px;/);
+  assert.match(style, /dialog form>div:first-child button \{ width:44px; height:44px;/);
+  assert.match(style, /\.state-panel button \{ margin-top:20px; \}/);
 });
 
 test("production UI is owner and partner only and gates shared actions", async () => {
@@ -93,13 +97,15 @@ test("mixed reviewed receipts use shared item totals for balances and restock", 
 });
 
 test("itemized review is editable and retains failed drafts", async () => {
-  const [page, app] = await Promise.all([read("docs/index.html"), read("docs/app.js")]);
+  const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
   assert.match(page, /id="item-rows"/);
   assert.match(page, /id="add-item"/);
   assert.match(page, /Only these reviewed fields will sync/);
   assert.match(app, /class="plain remove-item"/);
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{ errorBox\.textContent/);
+  assert.match(style, /\.item-options \{ display:grid; grid-template-columns:1fr 1fr 1fr auto;/);
+  assert.match(style, /\.item-row \{[^}]*background:#fffaf0;/);
 });
 
 test("repository declares docs as the production web client", async () => {

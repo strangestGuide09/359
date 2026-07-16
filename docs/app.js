@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
+import { classifySignInError } from "./auth-errors.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage }
@@ -118,12 +119,20 @@ function renderSignedOut() {
     button.disabled = true;
     button.textContent = "Sending…";
     const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${location.origin}${location.pathname}${location.search}` } });
-    if (error?.message?.toLowerCase().includes("email rate limit")) {
-      localStorage.setItem(retryKey, Date.now() + 3600000);
-      return renderSignedOut();
+    if (error) {
+      const diagnostic = classifySignInError(error);
+      if (diagnostic.kind === "rate_limit") {
+        localStorage.setItem(retryKey, Date.now() + 3600000);
+        return renderSignedOut();
+      }
+      $("auth-status").className = "auth-status error";
+      $("auth-status").textContent = diagnostic.message;
+      button.disabled = false;
+      button.textContent = "Try again";
+      return;
     }
-    $("auth-status").className = `auth-status ${error ? "error" : "success"}`;
-    $("auth-status").textContent = error ? "Could not send the link. Check your connection and try again." : `Link sent to ${email}. Check Inbox and Spam, then open the newest link in this browser.`;
+    $("auth-status").className = "auth-status success";
+    $("auth-status").textContent = `Link sent to ${email}. Check Inbox and Spam, then open the newest link in this browser.`;
     button.disabled = false;
     button.textContent = "Send another link";
   };
