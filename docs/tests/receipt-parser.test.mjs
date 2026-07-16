@@ -75,6 +75,20 @@ test("payable total uses the amount beside its semantic label, not a later numbe
   assert.equal(parsed.parserWarning, "");
 });
 
+test("semantic total chooses the plausible payable column after an isolated fee value", () => {
+  const parsed = parseReceipt([[
+    { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 700, text: "Milk 1 NOS 0401 100.00" },
+    { y: 680, text: "Rice 1 NOS 1006 127.43" },
+    { y: 640, text: "Delivery fee 1 NOS 9968 1.56" },
+    { y: 120, text: "Grand Total items 13.00 paid ₹228.99" }
+  ]], "2026-07-16");
+
+  assert.equal(parsed.defaults.amount, "228.99");
+  assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 228.99);
+  assert.equal(parsed.totalConfidence, "high");
+});
+
 test("receipt-level discount is allocated across items to the final payable total", () => {
   const parsed = parseReceipt([[
     { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
@@ -90,11 +104,67 @@ test("receipt-level discount is allocated across items to the final payable tota
   assert.equal(parsed.parserWarning, "");
 });
 
+test("Instamart operational charges remain explicit untracked lines and summary rows are filtered", () => {
+  const parsed = parseReceipt([[
+    { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 720, text: "Fresh Milk 500 ml" },
+    { y: 700, text: "1 NOS 0401 100.00" },
+    { y: 660, text: "Basmati Rice 2 kg" },
+    { y: 640, text: "1 NOS 1006 127.43" },
+    { y: 600, text: "- Delivery and other - - - 1.56 0.00 0.00 0.00 0 0.00" },
+    { y: 580, text: "1 NOS 9968 1.56" },
+    { y: 540, text: "CGST summary 0.00 0.00 0.00 0.00" },
+    { y: 520, text: "1 NOS 0000 0.00" },
+    { y: 140, text: "Total Discount 13.00" },
+    { y: 120, text: "Amount Paid ₹228.99" }
+  ]], "2026-07-16");
+
+  assert.equal(parsed.defaults.amount, "228.99");
+  assert.deepEqual(parsed.items.map(item => item.name), ["Fresh Milk 500 ml", "Basmati Rice 2 kg", "Delivery and other charges"]);
+  assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 228.99);
+  const charge = parsed.items.find(item => item.name === "Delivery and other charges");
+  assert.equal(charge.line_total, 1.56);
+  assert.equal(charge.is_tracked_for_restock, false);
+  assert.doesNotMatch(charge.name, /1\.56|0\.00/);
+  assert.ok(parsed.items.filter(item => item !== charge).every(item => item.is_tracked_for_restock));
+  assert.equal(parsed.parserWarning, "");
+});
+
+test("a total-discount column cannot become the payable total", () => {
+  const parsed = parseReceipt([[
+    { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 700, text: "Milk 1 NOS 0401 100.00" },
+    { y: 660, text: "Rice 1 NOS 1006 127.43" },
+    { y: 620, text: "- Delivery and other - - - 1.56 0.00 0.00 0.00 0 0.00" },
+    { y: 600, text: "1 NOS 9968 1.56" },
+    { y: 120, text: "Total Discount 13.00" }
+  ]], "2026-07-16");
+
+  assert.notEqual(parsed.defaults.amount, "13.00");
+  assert.equal(parsed.totalConfidence, "low");
+  assert.match(parsed.parserWarning, /delivery, fee, discount, or tax rows/i);
+});
+
+test("Blinkit and generic charge lines remain explicit and never restock", () => {
+  const parsed = parseReceipt([[
+    { y: 200, text: "Blink Commerce Pvt Ltd - Blinkit" },
+    { y: 180, text: "Apples 100.00" },
+    { y: 160, text: "Platform fee 13.00" },
+    { y: 120, text: "Total Paid 113.00" }
+  ]], "2026-07-16");
+
+  assert.equal(parsed.defaults.label, "Blinkit");
+  assert.equal(parsed.defaults.amount, "113.00");
+  assert.deepEqual(parsed.items.map(item => item.name), ["Apples", "Platform fee"]);
+  assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 113);
+  assert.equal(parsed.items[1].is_tracked_for_restock, false);
+});
+
 test("unlabelled numeric fallback is explicitly low confidence", () => {
   const parsed = parseReceipt([[{ y: 100, text: "Corner Shop" }, { y: 80, text: "Rice 120.00" }]], "2026-07-16");
   assert.equal(parsed.defaults.amount, "120.00");
   assert.equal(parsed.totalConfidence, "low");
-  assert.match(parsed.parserWarning, /could not identify a labelled payable total/i);
+  assert.match(parsed.parserWarning, /could not confidently identify the final paid or payable total/i);
 });
 
 test("generic receipts still support name and price rows", () => {
