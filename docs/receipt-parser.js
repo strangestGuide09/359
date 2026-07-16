@@ -22,7 +22,7 @@ const reviewedItem = values => ({
   unit_price: values.unit_price ?? null,
   line_total: values.line_total ?? null,
   is_personal: false,
-  is_tracked_for_restock: false,
+  is_tracked_for_restock: true,
   estimated_use_by: ""
 });
 

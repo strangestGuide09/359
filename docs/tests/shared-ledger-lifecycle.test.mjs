@@ -125,11 +125,32 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(app, /class="plain remove-item"/);
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{ errorBox\.textContent/);
-  assert.match(style, /\.item-row \{ display:grid; grid-template-columns:minmax\(220px,1\.25fr\)/);
-  assert.match(style, /\.item-options \{ grid-column:1\/-1; display:grid;/);
+  assert.match(app, /is_tracked_for_restock: personal \? false : values\.is_tracked_for_restock \?\? true/);
+  assert.match(app, /if \(field === "is_personal"\) reviewedItems\[index\]\.is_tracked_for_restock = !input\.checked/);
+  assert.match(app, /<summary>More details<\/summary>/);
+  assert.match(style, /\.item-primary \{ display:grid;/);
+  assert.match(style, /\.item-details>div \{ display:grid;/);
   assert.match(style, /\.item-total \{ position:sticky;/);
   assert.match(style, /\.pdf-review-dialog menu \{ position:sticky;/);
   assert.match(style, /\.item-row \{[^}]*background:#fffaf0;/);
+});
+
+test("authenticated dashboard prioritizes household work and one main landmark", async () => {
+  const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
+  assert.equal((page.match(/<main>/g) || []).length, 1);
+  assert.equal((app.match(/function renderDashboard\(\)/g) || []).length, 1);
+  assert.equal((app.match(/bindDashboard\(balance\);/g) || []).length, 1);
+  assert.match(app, /class="dashboard-head"/);
+  assert.match(app, /class="dashboard-grid"/);
+  assert.match(app, /<section class="dashboard-main">/);
+  assert.doesNotMatch(app, /<main class="dashboard-main">/);
+  assert.match(app, /class="primary-actions"/);
+  assert.match(app, /class="privacy-disclosure"/);
+  assert.match(app, /<details class="panel settings">/);
+  assert.doesNotMatch(app, /Split the bill\.<br><i>See what’s next/);
+  assert.match(style, /\.dashboard-grid \{ display:grid; grid-template-columns:minmax\(0,1\.65fr\)/);
+  assert.doesNotMatch(style, /\.activity,\.settings \{ margin-top:/);
+  assert.match(style, /\.expenses-panel,\.compact-card \{ margin:0; \}/);
 });
 
 test("repository declares docs as the production web client", async () => {
