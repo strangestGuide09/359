@@ -24,6 +24,7 @@ test("Instamart visual rows produce reviewed products and a clean merchant", () 
   ]);
   assert.deepEqual(parsed.items.map(item => item.line_total), [65, 80]);
   assert.deepEqual(parsed.items.map(item => item.quantity), [1, 2]);
+  assert.ok(parsed.items.every(item => item.is_tracked_for_restock), "parsed non-personal items default to restock tracking");
   assert.ok(parsed.items.every(item => item.name.trim()), "review draft never contains a blank item");
 });
 
