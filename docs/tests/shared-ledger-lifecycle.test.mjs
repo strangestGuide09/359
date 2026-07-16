@@ -21,6 +21,11 @@ test("shared web flow has explicit safe loading and recovery states", async () =
   assert.match(app, /autoRefreshToken: true/);
   assert.match(app, /open it in this same laptop browser/);
   assert.match(app, /emailRedirectTo: `\$\{location\.origin\}\$\{location\.pathname\}\$\{location\.search\}`/);
+  assert.match(app, /shouldCreateUser: creating/);
+  assert.match(app, /options\.data = \{ display_name: displayName \}/);
+  assert.match(app, /id="show-signin"/);
+  assert.match(app, /id="show-signup"/);
+  assert.match(app, /id="signup-name"/);
   assert.match(app, /addEventListener\("offline"/);
   assert.match(app, /addEventListener\("online"/);
   assert.match(style, /h1\[tabindex="-1"\]:focus \{ outline:none; \}/);
@@ -34,7 +39,7 @@ test("shared web flow has explicit safe loading and recovery states", async () =
 });
 
 test("production UI is owner and partner only and gates shared actions", async () => {
-  const app = await read("docs/app.js");
+  const [page, app] = await Promise.all([read("docs/index.html"), read("docs/app.js")]);
   assert.match(app, /function hasPartner\(\)/);
   assert.match(app, /Shared expenses, balances, settlements, and restock history stay locked/);
   assert.match(app, /Your partner must join before saving a shared expense/);
@@ -47,6 +52,17 @@ test("production UI is owner and partner only and gates shared actions", async (
   assert.match(app, /Copy invite link/);
   assert.match(app, /\?invite=\$\{encodeURIComponent\(code\)\}/);
   assert.match(app, /clearInviteFromUrl\(\)/);
+  assert.match(app, /select\("user_id,role,display_name"\)/);
+  assert.match(app, /function memberDisplayName/);
+  assert.match(app, /function needsDisplayName/);
+  assert.match(app, /function renderDisplayNameGate/);
+  assert.match(app, /set_my_display_name/);
+  assert.match(app, /p_display_name: setupName\(\)/);
+  assert.match(app, /id="display-name-form"/);
+  assert.match(app, /p_paid_by: paidBy/);
+  assert.match(app, /paid_by: paidBy/);
+  assert.match(page, /<select id="paid-by" required/);
+  assert.match(page, /Choose who actually paid/);
 });
 
 test("clean bootstrap enforces the approved two-person lifecycle", async () => {
@@ -61,6 +77,9 @@ test("clean bootstrap enforces the approved two-person lifecycle", async () => {
   assert.match(sql, /Settle every member''s balance before archiving this household/);
   assert.match(sql, /purge_after<=now\(\)/);
   assert.match(sql, /create function public\.create_household_invite/);
+  assert.match(sql, /create function public\.create_household\(household_name text, p_display_name text\)/);
+  assert.match(sql, /create function public\.join_household\(code uuid, p_display_name text\)/);
+  assert.match(sql, /create function public\.set_my_display_name\(p_display_name text\)/);
   assert.match(sql, /Invalid or inactive household invite code/);
   assert.doesNotMatch(sql, /admin_requests|request_admin_access|resolve_admin_request/);
 });
