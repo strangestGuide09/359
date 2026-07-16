@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseReceipt, receiptDate } from "../receipt-parser.js";
+import { cleanInstamartItemName, parseReceipt, receiptDate } from "../receipt-parser.js";
 
 test("Instamart visual rows produce reviewed products and a clean merchant", () => {
   const parsed = parseReceipt([[
@@ -40,6 +40,25 @@ test("Instamart combined product and quantity rows retain the product name", () 
   assert.equal(parsed.defaults.date, "2026-07-15");
   assert.deepEqual(parsed.items.map(item => item.name), ["Amul Gold Full Cream Milk 1 L"]);
   assert.deepEqual(parsed.items.map(item => item.line_total), [65]);
+});
+
+test("Instamart table columns are removed from nearby item names", () => {
+  const parsed = parseReceipt([[
+    { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 710, text: "5512 Desi Tomato ( Pack ) 15.00 0.00 1 15.00 0.00 0.00 0.00 0.00 0.00 0.00" },
+    { y: 700, text: "1 NOS 0702 15.00" },
+    { y: 120, text: "Invoice Value 15.00" }
+  ]], "2026-07-16");
+
+  assert.deepEqual(parsed.items.map(item => item.name), ["Desi Tomato (Pack)"]);
+});
+
+test("Instamart name cleanup removes list numbering but preserves product numbers and sizes", () => {
+  assert.equal(cleanInstamartItemName("1. Boondi, Made in"), "Boondi, Made in");
+  assert.equal(cleanInstamartItemName("2. Calm Chamomile Tea"), "Calm Chamomile Tea");
+  assert.equal(cleanInstamartItemName("Fresh Milk 500 ml"), "Fresh Milk 500 ml");
+  assert.equal(cleanInstamartItemName("Basmati Rice 2 kg"), "Basmati Rice 2 kg");
+  assert.equal(cleanInstamartItemName("7UP 750 ml"), "7UP 750 ml");
 });
 
 test("payable total uses the amount beside its semantic label, not a later number", () => {

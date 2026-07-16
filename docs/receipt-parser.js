@@ -1,6 +1,16 @@
 const amountPattern = /(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/gi;
 
 const cleanText = value => String(value ?? "").replace(/\s+/g, " ").trim();
+export function cleanInstamartItemName(value) {
+  return cleanText(value)
+    .replace(/^\d{1,2}\.\s+(?=[A-Za-z])/i, "")
+    .replace(/^\d{4,8}\s+(?=[A-Za-z])/i, "")
+    .replace(/(?:\s+-?\d+(?:,\d{3})*(?:\.\d+)?){2,}\s*$/, "")
+    .replace(/\s*\(\s*([^()]*)\s*\)\s*/g, (_, inside) => ` (${inside.trim()}) `)
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 const numberFrom = value => {
   const parsed = Number(String(value).replaceAll(",", ""));
   return Number.isFinite(parsed) ? parsed : null;
@@ -126,7 +136,7 @@ function instamartItems(pages) {
         .join(" ")
         .replace(/\s{2,}/g, " ")
         .trim();
-      const name = price.inlineName && /[a-z]/i.test(price.inlineName) ? price.inlineName : nearbyName;
+      const name = cleanInstamartItemName(price.inlineName && /[a-z]/i.test(price.inlineName) ? price.inlineName : nearbyName);
       results.push(reviewedItem({
         name: name || `Invoice item ${results.length + 1}`,
         quantity: price.quantity,
