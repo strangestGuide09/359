@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 import { classifySignInError } from "./auth-errors.js";
+import { parseReceipt } from "./receipt-parser.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage }
@@ -39,7 +40,29 @@ function active() { return current && !current.archived_at; }
 function isOwner() { return current?.role === "owner"; }
 function hasPartner() { return members.length === 2; }
 function partner() { return members.find(member => member.user_id !== session?.user?.id); }
-function memberName(id) { return id === session?.user?.id ? "You" : "Your partner"; }
+function accountDisplayName() { return String(session?.user?.user_metadata?.display_name || "").trim(); }
+function needsDisplayName(member) {
+  const name = String(member?.display_name || "").trim();
+  return !name || /^Household (?:owner|partner)$/i.test(name);
+}
+function memberDisplayName(member) {
+  const name = String(member?.display_name || "").trim();
+  return name || (member?.role === "owner" ? "Owner" : "Partner");
+}
+function memberName(id) {
+  const member = members.find(candidate => candidate.user_id === id);
+  const name = memberDisplayName(member);
+  return id === session?.user?.id ? `${name} (you)` : name;
+}
+function payerName(member) {
+  const role = member.role === "owner" ? "Owner" : "Partner";
+  return `${memberDisplayName(member)} (${member.user_id === session?.user?.id ? "you · " : ""}${role})`;
+}
+function populatePayers(selectedId = session?.user?.id) {
+  const choices = [...members].sort((a, b) => (a.role === "owner" ? -1 : 1) - (b.role === "owner" ? -1 : 1));
+  $("paid-by").innerHTML = choices.map(member => `<option value="${member.user_id}">${esc(payerName(member))}</option>`).join("");
+  $("paid-by").value = choices.some(member => member.user_id === selectedId) ? selectedId : session?.user?.id || "";
+}
 function setScreen(html, { busy = false, focus = true } = {}) {
   const screen = $("screen");
   screen.innerHTML = html;
@@ -78,9 +101,9 @@ function balanceFor(userId) {
 function row(item, type) {
   const own = type === "purchase" ? item.paid_by === session.user.id : item.payer === session.user.id;
   const canManage = own || isOwner();
-  const heading = type === "purchase" ? esc(item.label) : `${memberName(item.payer)} paid ${memberName(item.receiver)}`;
+  const heading = type === "purchase" ? esc(item.label) : `${esc(memberName(item.payer))} paid ${esc(memberName(item.receiver))}`;
   const count = type === "purchase" && item.purchase_items?.length ? ` · ${item.purchase_items.length} reviewed item${item.purchase_items.length === 1 ? "" : "s"}` : "";
-  const sub = type === "purchase" ? `${esc(item.category)} · paid by ${memberName(item.paid_by)} · ${fmt(item.purchased_on)}${item.is_personal ? " · personal" : ""}${count}` : fmt(item.settled_on);
+  const sub = type === "purchase" ? `${esc(item.category)} · paid by ${esc(memberName(item.paid_by))} · ${fmt(item.purchased_on)}${item.is_personal ? " · personal" : ""}${count}` : fmt(item.settled_on);
   return `<div class="expense"><div><b>${heading}</b><span>${sub}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
 function suggestions() {
@@ -102,28 +125,34 @@ function suggestions() {
     const due = latest.estimated_use_by || new Date(Date.parse(`${last}T12:00:00`) + days * 86400000).toISOString().slice(0, 10);
     return `<div class="suggestion"><div><b>${esc(latest.name)}</b><span>${latest.estimated_use_by ? "Reviewed use-by" : `Latest interval: ${days} days`} · bought ${dates.length} times</span></div><time class="${due <= today() ? "due" : ""}">${due <= today() ? "Review now" : `Around ${fmt(due)}`}</time></div>`;
   }).filter(Boolean);
-  return cards.join("") || "Track a reviewed receipt item twice on different dates to see a suggestion.";
+  return cards.join("") || '<p class="empty-state">Track a reviewed receipt item twice on different dates to see a suggestion.</p>';
 }
 
-function renderSignedOut() {
+function renderSignedOut(authMode = "signin") {
   $("sync-state").textContent = "Sign in required";
+  const creating = authMode === "signup";
   const retryAt = Number(localStorage.getItem(retryKey) || 0);
   const waiting = retryAt > Date.now();
   const time = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>Sign in or create your account. We’ll email a secure one-time link; open it in this same laptop browser.</article><form id="login-form" class="auth-form"><label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : "Continue with email"}</button></form><p id="auth-status" class="auth-status${waiting ? " error" : ""}">${waiting ? `Try again at ${time}.` : "No password, receipt, payment detail, or address is stored."}</p></section>`);
+  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>${creating ? "Create your account with your name and email." : "Sign in to your existing account."} We’ll email a secure one-time link; open it in this same laptop browser.</article><div class="auth-choice" aria-label="Account access"><button id="show-signin" type="button" class="${creating ? "secondary" : ""}" aria-pressed="${!creating}">Sign in</button><button id="show-signup" type="button" class="${creating ? "" : "secondary"}" aria-pressed="${creating}">Create account</button></div><form id="login-form" class="auth-form${creating ? " auth-signup" : ""}">${creating ? '<label>Your name<input id="signup-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>' : ""}<label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : creating ? "Create account" : "Send sign-in link"}</button></form><p id="auth-status" class="auth-status${waiting ? " error" : ""}">${waiting ? `Try again at ${time}.` : creating ? "Your name is shared only with your household partner." : "Sign in will not create a new account."}</p></section>`);
+  $("show-signin").onclick = () => renderSignedOut("signin");
+  $("show-signup").onclick = () => renderSignedOut("signup");
   $("login-form").onsubmit = async event => {
     event.preventDefault();
     if (waiting) return;
     const button = $("login-form").querySelector("button");
     const email = $("login-email").value.trim();
+    const displayName = creating ? $("signup-name").value.trim() : "";
     button.disabled = true;
     button.textContent = "Sending…";
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${location.origin}${location.pathname}${location.search}` } });
+    const options = { emailRedirectTo: `${location.origin}${location.pathname}${location.search}`, shouldCreateUser: creating };
+    if (creating) options.data = { display_name: displayName };
+    const { error } = await supabase.auth.signInWithOtp({ email, options });
     if (error) {
       const diagnostic = classifySignInError(error);
       if (diagnostic.kind === "rate_limit") {
         localStorage.setItem(retryKey, Date.now() + 3600000);
-        return renderSignedOut();
+        return renderSignedOut(authMode);
       }
       $("auth-status").className = "auth-status error";
       $("auth-status").textContent = diagnostic.message;
@@ -132,7 +161,7 @@ function renderSignedOut() {
       return;
     }
     $("auth-status").className = "auth-status success";
-    $("auth-status").textContent = `Link sent to ${email}. Check Inbox and Spam, then open the newest link in this browser.`;
+    $("auth-status").textContent = `${creating ? "Account link" : "Sign-in link"} sent to ${email}. Check Inbox and Spam, then open the newest link in this browser.`;
     button.disabled = false;
     button.textContent = "Send another link";
   };
@@ -140,25 +169,43 @@ function renderSignedOut() {
 function renderHouseholdSetup() {
   $("sync-state").textContent = "Signed in";
   const invited = inviteCodeFromUrl();
-  setScreen(`<section class="panel account-gate household-gate"><p>ACCOUNT SETUP</p><h1 tabindex="-1">${invited ? "Join your partner’s household" : "Start your two-person ledger"}</h1><article>${invited ? "Your invite link is ready. Confirm the code below to join the shared ledger." : "Create your household, or join your partner with their invite code."}</article><div class="two action-grid"><form id="create-form"><h2>Create household</h2><label>Household name<input id="household-name" maxlength="80" required placeholder="e.g. Ekta & Ritesh"></label><button>Create household</button></form><form id="join-form"><h2>Join your partner</h2><label>Invite code<input id="invite-code" required value="${esc(invited)}" placeholder="Paste invite code"></label><button class="secondary">Join household</button></form></div><button id="sign-out" class="plain">Sign out</button></section>`);
+  const knownName = accountDisplayName();
+  const nameField = knownName ? `<p class="setup-name">Continue as <b>${esc(knownName)}</b></p>` : '<label>Your name<input id="setup-display-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>';
+  const setupName = () => knownName || $("setup-display-name")?.value.trim() || "";
+  setScreen(`<section class="panel account-gate household-gate"><p>ACCOUNT SETUP</p><h1 tabindex="-1">${invited ? "Join your partner’s household" : "Start your two-person ledger"}</h1><article>${invited ? "Your invite link is ready. Confirm the code below to join the shared ledger." : "Create your household, or join your partner with their invite code."}</article>${nameField}<div class="two action-grid"><form id="create-form"><h2>Create household</h2><label>Household name<input id="household-name" maxlength="80" required placeholder="e.g. Ekta & Ritesh"></label><button>Create household</button></form><form id="join-form"><h2>Join your partner</h2><label>Invite code<input id="invite-code" required value="${esc(invited)}" placeholder="Paste invite code"></label><button class="secondary">Join household</button></form></div><button id="sign-out" class="plain">Sign out</button></section>`);
   $("create-form").onsubmit = async event => {
     event.preventDefault();
+    if (!setupName()) { note("Add your name before continuing."); $("setup-display-name")?.focus(); return; }
     const button = event.currentTarget.querySelector("button");
     button.disabled = true;
     button.textContent = "Creating…";
-    const { error } = await supabase.rpc("create_household", { household_name: $("household-name").value.trim() });
+    const { error } = await supabase.rpc("create_household", { household_name: $("household-name").value.trim(), p_display_name: setupName() });
     if (error) { note(error.message); button.disabled = false; button.textContent = "Create household"; return; }
     await loadHousehold();
   };
   $("join-form").onsubmit = async event => {
     event.preventDefault();
+    if (!setupName()) { note("Add your name before continuing."); $("setup-display-name")?.focus(); return; }
     const button = event.currentTarget.querySelector("button");
     button.disabled = true;
     button.textContent = "Joining…";
-    const { error } = await supabase.rpc("join_household", { code: $("invite-code").value.trim() });
+    const { error } = await supabase.rpc("join_household", { code: $("invite-code").value.trim(), p_display_name: setupName() });
     if (error) { note(error.message); button.disabled = false; button.textContent = "Join household"; return; }
     clearInviteFromUrl();
     await loadHousehold();
+  };
+  $("sign-out").onclick = () => supabase.auth.signOut();
+}
+function renderDisplayNameGate(member) {
+  $("sync-state").textContent = "Name required";
+  setScreen(`<section class="panel account-gate"><p>ONE-TIME UPDATE</p><h1 tabindex="-1">How should your partner see you?</h1><article>Add your real name once. You can change it later in Settings.</article><form id="missing-name-form" class="name-form"><label>Your name<input id="missing-name" maxlength="80" required autocomplete="name" value="${needsDisplayName(member) ? "" : esc(memberDisplayName(member))}" placeholder="e.g. Ritesh"></label><button>Save and continue</button></form><button id="sign-out" class="plain">Sign out</button></section>`);
+  $("missing-name-form").onsubmit = async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button");
+    button.disabled = true;
+    const { error } = await supabase.rpc("set_my_display_name", { p_display_name: $("missing-name").value.trim() });
+    if (error) { note(error.message); button.disabled = false; return; }
+    await loadLedger();
   };
   $("sign-out").onclick = () => supabase.auth.signOut();
 }
@@ -187,14 +234,16 @@ async function shareInvite(kind) {
 function renderDashboard() {
   const balance = balanceFor(session.user.id);
   const archived = !!current.archived_at;
+  const otherName = memberDisplayName(partner());
   $("sync-state").textContent = archived ? "Archived · read only" : "Synced";
-  const purchases = [...ledger.purchases].sort((a, b) => b.purchased_on.localeCompare(a.purchased_on)).map(item => row(item, "purchase")).join("") || "No shared expenses yet.";
-  const settlements = [...ledger.settlements].sort((a, b) => b.settled_on.localeCompare(a.settled_on)).map(item => row(item, "settlement")).join("") || "No settlements recorded.";
-  const balanceText = Math.abs(balance) < .005 ? "You’re settled" : balance > 0 ? `Your partner owes you ${money(balance)}` : `You owe your partner ${money(-balance)}`;
+  const purchases = [...ledger.purchases].sort((a, b) => b.purchased_on.localeCompare(a.purchased_on)).map(item => row(item, "purchase")).join("") || '<p class="empty-state">No shared expenses yet. Add one or import a receipt to begin.</p>';
+  const settlements = [...ledger.settlements].sort((a, b) => b.settled_on.localeCompare(a.settled_on)).map(item => row(item, "settlement")).join("") || '<p class="empty-state">No settlements recorded.</p>';
+  const restock = suggestions();
+  const balanceText = Math.abs(balance) < .005 ? `You and ${esc(otherName)} are settled` : balance > 0 ? `${esc(otherName)} owes you ${money(balance)}` : `You owe ${esc(otherName)} ${money(-balance)}`;
   const recoveryOpen = archived && new Date(current.purge_after) > new Date();
   const ownerControls = isOwner() ? archived ? `<div class="settings-actions">${recoveryOpen ? `<button id="restore-household" class="secondary">Restore household</button><small>Recovery is available until ${fmt(current.purge_after)}.</small>` : `<button id="delete-household" class="danger">Permanently delete</button><small>The 30-day recovery period has ended.</small>`}</div>` : `<div class="settings-actions"><button id="archive-household" class="danger"${Math.abs(balance) >= .005 ? " disabled" : ""}>Close household</button><small>${Math.abs(balance) >= .005 ? "Settle the balance before closing." : "Closing starts a 30-day recovery period."}</small></div>` : "";
   const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
-  setScreen(`<section class="household-bar"><b>${esc(current.name)}</b><span>${roleName()}</span></section><section class="hero"><div><p>SHARED HOME LEDGER</p><h1 tabindex="-1">Split the bill.<br><i>See what’s next.</i></h1><article>${archived ? `This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}` : "A private ledger for two partners, reviewed expenses, and gentle restock cues."}</article></div><aside><small>Today’s balance</small><strong>${balanceText}</strong><small>2 partners · equal split</small></aside></section>${archived ? "" : `<nav aria-label="Ledger actions"><button id="import-pdf">⇧ Import receipt PDF</button><button id="add" class="secondary">+ Add expense</button>${balance < -.005 ? `<button id="settle" class="secondary">↔ Settle ${money(-balance)}</button>` : ""}</nav>`}<section class="grid"><article class="panel"><p>RESTOCK</p><h2>Possible buys</h2><div>${suggestions()}</div></article><aside class="panel privacy"><p>PRIVACY PROMISE</p><h2>Only reviewed items sync.</h2><ul><li>PDFs and extracted text stay in this browser session.</li><li>No address, payment mode, card or UPI details.</li><li>Only fields you review and save are shared.</li></ul></aside></section><section class="panel activity"><div class="heading"><div><p>ACTIVITY</p><h2>Expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div>${purchases}</div></section><section class="panel activity"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div><div>${settlements}</div></section><section class="panel settings"><p>SETTINGS</p><h2>Household & recovery</h2><div class="member-list"><div class="expense"><div><b>You</b><span>${roleName()}</span></div></div><div class="expense"><div><b>Your partner</b><span>${isOwner() ? "Partner" : "Owner"}</span></div></div></div>${ownerControls}<div class="settings-actions"><button id="sign-out" class="plain">Sign out</button></div>${archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? esc(item.label) : "Archived settlement"}</b><span>${money(item.amount)}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">Restore</button>` : ""}</div>`).join("")}</details>` : ""}</section>`);
+  setScreen(`<section class="household-bar"><b>${esc(current.name)}</b><span>${roleName()}</span></section><section class="hero"><div><p>SHARED HOME LEDGER</p><h1 tabindex="-1">Split the bill.<br><i>See what’s next.</i></h1><article>${archived ? `This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}` : "A private ledger for two partners, reviewed expenses, and gentle restock cues."}</article></div><aside><small>Today’s balance</small><strong>${balanceText}</strong><small>${esc(memberName(session.user.id))} · ${esc(otherName)} · equal split</small></aside></section>${archived ? "" : `<nav aria-label="Ledger actions"><button id="import-pdf">⇧ Import receipt PDF</button><button id="add" class="secondary">+ Add expense</button>${balance < -.005 ? `<button id="settle" class="secondary">↔ Settle ${money(-balance)}</button>` : ""}</nav>`}<section class="grid${restock.includes("empty-state") ? " restock-empty" : ""}"><article class="panel"><p>RESTOCK</p><h2>Possible buys</h2><div>${restock}</div></article><aside class="panel privacy"><p>PRIVACY PROMISE</p><h2>Only reviewed items sync.</h2><ul><li>PDFs and extracted text stay in this browser session.</li><li>No address, payment mode, card or UPI details.</li><li>Only fields you review and save are shared.</li></ul></aside></section><div class="ledger-sections"><section class="panel activity"><div class="heading"><div><p>ACTIVITY</p><h2>Expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div>${purchases}</div></section><section class="panel activity"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div><div>${settlements}</div></section></div><section class="panel settings"><p>SETTINGS</p><h2>Household & recovery</h2><div class="member-list"><div class="expense"><div><b>${esc(memberName(session.user.id))}</b><span>${roleName()}</span></div></div><div class="expense"><div><b>${esc(otherName)}</b><span>${isOwner() ? "Partner" : "Owner"}</span></div></div></div>${archived ? "" : `<form id="display-name-form" class="inline-form"><label>Your display name<input id="display-name" maxlength="80" required autocomplete="name" value="${esc(memberDisplayName(members.find(member => member.user_id === session.user.id)))}"></label><button class="secondary">Update name</button></form>`}${ownerControls}<div class="settings-actions"><button id="sign-out" class="plain">Sign out</button></div>${archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? esc(item.label) : "Archived settlement"}</b><span>${money(item.amount)}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">Restore</button>` : ""}</div>`).join("")}</details>` : ""}</section>`);
   bindDashboard(balance);
 }
 function bindDashboard(balance) {
@@ -202,6 +251,15 @@ function bindDashboard(balance) {
   $("settle") && ($("settle").onclick = () => openEntry("settlement", { amount: (-balance).toFixed(2) }));
   $("import-pdf") && ($("import-pdf").onclick = () => $("pdf-file").click());
   $("sign-out").onclick = () => supabase.auth.signOut();
+  $("display-name-form") && ($("display-name-form").onsubmit = async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button");
+    button.disabled = true;
+    const { error } = await supabase.rpc("set_my_display_name", { p_display_name: $("display-name").value.trim() });
+    if (error) { note(error.message); button.disabled = false; return; }
+    note("Display name updated.");
+    await loadLedger();
+  });
   $("archive-household") && ($("archive-household").onclick = async () => { if (confirm("Close this household? It becomes read-only and can be restored for 30 days.")) await rpcReload("archive_household", { p_household_id: current.id }, "Household closed."); });
   $("restore-household") && ($("restore-household").onclick = () => rpcReload("restore_household", { p_household_id: current.id }, "Household restored."));
   $("delete-household") && ($("delete-household").onclick = async () => { if (confirm("Permanently delete this household and its reviewed ledger data? This cannot be undone.")) await rpcReload("permanently_delete_household", { p_household_id: current.id }, "Household permanently deleted."); });
@@ -229,7 +287,7 @@ async function loadLedger() {
   if (!current) return loadHousehold();
   renderLoading("Syncing reviewed expenses and items…");
   const [memberResult, purchaseResult, settlementResult, archivedPurchaseResult, archivedSettlementResult] = await Promise.all([
-    supabase.from("household_members").select("user_id,role").eq("household_id", current.id),
+    supabase.from("household_members").select("user_id,role,display_name").eq("household_id", current.id),
     supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).is("archived_at", null),
     supabase.from("settlements").select("*").eq("household_id", current.id).is("archived_at", null),
     supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).not("archived_at", "is", null),
@@ -239,7 +297,10 @@ async function loadLedger() {
   if (error) return renderLoadError("We couldn’t load the current ledger.", error.message, loadLedger);
   members = memberResult.data;
   ledger = { purchases: purchaseResult.data, settlements: settlementResult.data, archivedPurchases: archivedPurchaseResult.data, archivedSettlements: archivedSettlementResult.data };
-  if (members.length < 2 && !current.archived_at) renderPartnerInvite(); else renderDashboard();
+  const self = members.find(member => member.user_id === session.user.id);
+  if (!current.archived_at && needsDisplayName(self)) renderDisplayNameGate(self);
+  else if (members.length < 2 && !current.archived_at) renderPartnerInvite();
+  else renderDashboard();
   channel?.unsubscribe();
   channel = supabase.channel(`household-${current.id}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "purchases", filter: `household_id=eq.${current.id}` }, loadLedger)
@@ -286,9 +347,11 @@ function openEntry(next, defaults = {}, pdfImport) {
   $("expense-fields").classList.toggle("hide", next === "settlement");
   $("pdf-items").classList.toggle("hide", !pdfImport);
   $("settlement-fields").classList.toggle("hide", next !== "settlement");
+  $("settlement-copy").textContent = `You are recording a payment to ${memberDisplayName(partner())}.`;
   $("label").required = next !== "settlement";
   $("label").value = defaults.label || "";
   $("category").value = defaults.category || "Groceries";
+  populatePayers(defaults.paid_by || session.user.id);
   $("personal").checked = !!defaults.personal;
   $("personal").disabled = !!pdfImport;
   $("amount").value = defaults.amount || "";
@@ -328,6 +391,8 @@ $("entry-form").onsubmit = async event => {
   } else {
     const label = $("label").value.trim();
     if (!label) { errorBox.textContent = "Add a merchant or description."; button.disabled = false; button.textContent = "Save"; return; }
+    const paidBy = $("paid-by").value;
+    if (!members.some(member => member.user_id === paidBy)) { errorBox.textContent = "Choose a current household member who paid this expense."; button.disabled = false; button.textContent = "Save"; return; }
     const personal = $("personal").checked;
     if (!personal && !hasPartner()) { errorBox.textContent = "Your partner must join before saving a shared expense."; button.disabled = false; button.textContent = "Save"; return; }
     if (pendingPdfImport) {
@@ -339,9 +404,9 @@ $("entry-form").onsubmit = async event => {
       const reviewedTotal = items.reduce((total, item) => total + (item.line_total || 0), 0);
       if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Reviewed item totals must match the receipt total before saving."; button.disabled = false; button.textContent = "Save"; return; }
       const allPersonal = items.every(item => item.is_personal);
-      ({ error } = await supabase.rpc("import_reviewed_purchase", { p_household_id: current.id, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_label: label, p_category: $("category").value, p_amount: amount, p_purchased_on: $("date").value, p_is_personal: allPersonal, p_items: items }));
+      ({ error } = await supabase.rpc("import_reviewed_purchase", { p_household_id: current.id, p_paid_by: paidBy, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_label: label, p_category: $("category").value, p_amount: amount, p_purchased_on: $("date").value, p_is_personal: allPersonal, p_items: items }));
     } else {
-      ({ error } = await supabase.from("purchases").insert({ household_id: current.id, label, category: $("category").value, amount, paid_by: session.user.id, purchased_on: $("date").value, is_personal: personal, is_tracked_for_restock: false, estimated_use_by: null }));
+      ({ error } = await supabase.from("purchases").insert({ household_id: current.id, label, category: $("category").value, amount, paid_by: paidBy, purchased_on: $("date").value, is_personal: personal, is_tracked_for_restock: false, estimated_use_by: null }));
     }
   }
   if (error) { errorBox.textContent = `${error.message || "Could not save."} Your draft is still here; check your connection and retry.`; button.disabled = false; button.textContent = "Try saving again"; return; }
@@ -369,31 +434,11 @@ async function sha256(value) {
   const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
-function receiptDate(text) {
-  const match = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\b/);
-  if (!match) return today();
-  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
-  const candidate = `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
-  return Number.isNaN(Date.parse(`${candidate}T12:00:00`)) ? today() : candidate;
-}
-function parseReceipt(lines) {
-  const clean = lines.map(line => line.replace(/\s+/g, " ").trim()).filter(Boolean);
-  const amounts = clean.flatMap(line => [...line.matchAll(/(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.\d{2})/gi)].map(match => Number(match[1].replaceAll(",", "")))).filter(Number.isFinite);
-  const items = [];
-  for (const line of clean) {
-    if (/\b(total|subtotal|tax|gst|discount|change|cash|card|upi|amount)\b/i.test(line)) continue;
-    const match = line.match(/^(.{2,120}?)\s+(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.\d{2})\s*$/i);
-    if (!match || !/[a-z]/i.test(match[1])) continue;
-    items.push(emptyReviewedItem({ name: match[1].replace(/^\d+(?:\.\d+)?\s*[x×]?\s*/i, "").trim(), line_total: Number(match[2].replaceAll(",", "")) }));
-  }
-  const merchant = clean.find(line => /[a-z]{3}/i.test(line) && !/invoice|receipt|tax/i.test(line)) || "Receipt import — review merchant";
-  return { defaults: { label: merchant.slice(0, 160), amount: amounts.length ? Math.max(...amounts).toFixed(2) : "", date: receiptDate(clean.join(" ")), category: "Groceries" }, items: items.length ? items : [emptyReviewedItem()] };
-}
 async function readPdfLocally(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const exactHash = await sha256(bytes);
   const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-  const lines = [];
+  const pages = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     note(`Reading page ${pageNumber} of ${pdf.numPages} locally…`);
     const content = await (await pdf.getPage(pageNumber)).getTextContent();
@@ -402,12 +447,13 @@ async function readPdfLocally(file) {
       const y = Math.round(item.transform?.[5] || 0);
       rows.set(y, `${rows.get(y) || ""} ${item.str}`.trim());
     }
-    lines.push(...[...rows.entries()].sort((a, b) => b[0] - a[0]).map(([, text]) => text));
+    pages.push([...rows.entries()].sort((a, b) => b[0] - a[0]).map(([y, text]) => ({ y, text })));
   }
   await pdf.destroy();
+  const lines = pages.flatMap(page => page.map(line => line.text));
   const extractedText = lines.join("\n");
   const normalized = extractedText.toLowerCase().replace(/[^a-z0-9.,₹\n ]/g, "").replace(/[ \t]+/g, " ").trim();
-  return { exactHash, contentHash: await sha256(normalized), ...parseReceipt(lines) };
+  return { exactHash, contentHash: await sha256(normalized), ...parseReceipt(pages, today()) };
 }
 $("pdf-file").onchange = async event => {
   const file = event.target.files?.[0];
