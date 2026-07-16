@@ -314,7 +314,7 @@ function emptyReviewedItem(values = {}) {
   return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: !!values.is_personal, is_tracked_for_restock: !!values.is_tracked_for_restock, estimated_use_by: values.estimated_use_by || "" };
 }
 function renderItemRows() {
-  $("item-rows").innerHTML = reviewedItems.map((item, index) => `<fieldset class="item-row" data-item="${index}"><legend>Item ${index + 1}</legend><label>Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><div class="item-numbers"><label>Quantity<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-options"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal item</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock ? " checked" : ""}${item.is_personal ? " disabled" : ""}> Track for restock</label><label>Optional use-by<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove</button></div></fieldset>`).join("");
+  $("item-rows").innerHTML = reviewedItems.map((item, index) => `<fieldset class="item-row" data-item="${index}"><legend>Item ${index + 1}</legend><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><div class="item-numbers"><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-options"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock ? " checked" : ""}${item.is_personal ? " disabled" : ""}> Restock</label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove</button></div></fieldset>`).join("");
   bindItemRows();
   updateItemTotal();
 }
@@ -341,9 +341,12 @@ function openEntry(next, defaults = {}, pdfImport) {
   mode = next;
   pendingPdfImport = pdfImport;
   reviewedItems = (pdfImport?.items || []).map(emptyReviewedItem);
+  dialog.classList.toggle("pdf-review-dialog", !!pdfImport);
   $("dialog-title").textContent = next === "settlement" ? "Record settlement" : pdfImport ? "Review PDF import" : defaults.personal ? "Add personal expense" : "Add expense";
   $("dialog-kicker").textContent = pdfImport ? "LOCAL PDF DRAFT" : "NEW ENTRY";
-  $("dialog-help").textContent = pdfImport ? "The PDF and extracted text remain local and are discarded when this draft closes. Review every field before saving." : "";
+  const parserMessage = pdfImport?.parserWarning || pdfImport?.parserNotice || "";
+  $("dialog-help").textContent = pdfImport ? `The PDF and extracted text remain local and are discarded when this draft closes. Review every field before saving.${parserMessage ? ` ${parserMessage}` : ""}` : "";
+  $("dialog-help").classList.toggle("parser-warning", !!pdfImport?.parserWarning);
   $("expense-fields").classList.toggle("hide", next === "settlement");
   $("pdf-items").classList.toggle("hide", !pdfImport);
   $("settlement-fields").classList.toggle("hide", next !== "settlement");

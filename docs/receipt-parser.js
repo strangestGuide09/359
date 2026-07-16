@@ -30,25 +30,41 @@ function allAmounts(lines) {
     .filter(value => value != null));
 }
 
-function lastAmount(line) {
-  const matches = [...line.matchAll(amountPattern)];
-  return matches.length ? numberFrom(matches.at(-1)[1]) : null;
+function firstAmountAfter(line, label) {
+  const match = line.match(label);
+  if (!match) return null;
+  const tail = line.slice((match.index || 0) + match[0].length);
+  const amount = [...tail.matchAll(amountPattern)].at(0);
+  return amount ? numberFrom(amount[1]) : null;
 }
 
 function receiptTotal(lines) {
   const preferred = [
-    /\b(?:invoice value|grand total|total payable|amount payable|net amount)\b/i,
+    /\b(?:final amount payable|total payable|amount payable|grand total|invoice value|net amount)\b/i,
     /^\s*total\b/i
   ];
   for (const label of preferred) {
     for (const line of [...lines].reverse()) {
-      if (!label.test(line)) continue;
-      const amount = lastAmount(line);
-      if (amount != null) return amount;
+      const amount = firstAmountAfter(line, label);
+      if (amount != null) return { amount, confidence: "high", source: line };
     }
   }
   const amounts = allAmounts(lines);
-  return amounts.length ? Math.max(...amounts) : null;
+  return amounts.length ? { amount: Math.max(...amounts), confidence: "low", source: "numeric fallback" } : { amount: null, confidence: "low", source: "missing" };
+}
+
+function reconcileReceiptDiscount(items, total) {
+  const itemTotal = items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
+  if (!items.length || total == null || itemTotal <= total + .005 || total <= 0) return { items, notice: "" };
+  const discount = itemTotal - total;
+  if (discount / itemTotal > .5) return { items, notice: "" };
+  let allocated = 0;
+  const adjusted = items.map((item, index) => {
+    const lineTotal = index === items.length - 1 ? Number((total - allocated).toFixed(2)) : Number((Number(item.line_total || 0) * total / itemTotal).toFixed(2));
+    allocated += lineTotal;
+    return { ...item, line_total: lineTotal, unit_price: item.quantity ? Number((lineTotal / item.quantity).toFixed(2)) : item.unit_price };
+  });
+  return { items: adjusted, notice: `Receipt-wide discount of ₹${discount.toFixed(2)} was allocated across item totals. Review before saving.` };
 }
 
 function merchantFrom(lines) {
@@ -128,15 +144,19 @@ export function parseReceipt(pages, fallbackDate) {
     .filter(line => line.text));
   const lines = normalizedPages.flatMap(page => page.map(line => line.text));
   const merchant = merchantFrom(lines);
-  const items = merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines);
+  const parsedItems = merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines);
   const total = receiptTotal(lines);
+  const reconciled = total.confidence === "high" ? reconcileReceiptDiscount(parsedItems, total.amount) : { items: parsedItems, notice: "" };
   return {
     defaults: {
       label: merchant,
-      amount: total == null ? "" : total.toFixed(2),
+      amount: total.amount == null ? "" : total.amount.toFixed(2),
       date: receiptDate(lines.join(" "), fallbackDate),
       category: merchant === "Imported invoice" ? "Other" : "Groceries"
     },
-    items
+    items: reconciled.items,
+    parserWarning: total.confidence === "low" ? "We could not identify a labelled payable total. Check the receipt total carefully before saving." : "",
+    parserNotice: reconciled.notice,
+    totalConfidence: total.confidence
   };
 }

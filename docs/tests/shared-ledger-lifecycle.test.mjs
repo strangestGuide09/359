@@ -96,6 +96,8 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(app, /is_personal: !!item\.is_personal/);
   assert.match(app, /display_order/);
   assert.match(app, /Reviewed item totals must match the receipt total/);
+  assert.match(app, /parserWarning/);
+  assert.match(app, /parserNotice/);
   assert.doesNotMatch(app, /p_(?:pdf|raw|extracted|receipt_text)/i);
   assert.match(sql, /unique \(household_id, exact_pdf_hash\)/);
   assert.match(sql, /unique \(household_id, content_hash\)/);
@@ -123,7 +125,10 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(app, /class="plain remove-item"/);
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{ errorBox\.textContent/);
-  assert.match(style, /\.item-options \{ display:grid; grid-template-columns:1fr 1fr 1fr auto;/);
+  assert.match(style, /\.item-row \{ display:grid; grid-template-columns:minmax\(220px,1\.25fr\)/);
+  assert.match(style, /\.item-options \{ grid-column:1\/-1; display:grid;/);
+  assert.match(style, /\.item-total \{ position:sticky;/);
+  assert.match(style, /\.pdf-review-dialog menu \{ position:sticky;/);
   assert.match(style, /\.item-row \{[^}]*background:#fffaf0;/);
 });
 
