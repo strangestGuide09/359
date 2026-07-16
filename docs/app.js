@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 import { classifySignInError } from "./auth-errors.js";
+import { isDuplicateImportError, sameFingerprint } from "./duplicate-import.js";
 import { parseReceipt } from "./receipt-parser.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
@@ -25,8 +26,36 @@ let channel;
 let mode = "expense";
 let pendingPdfImport;
 let reviewedItems = [];
+let lastPdfFeedback;
 
 function note(text) { $("status").textContent = text || ""; }
+function showImportFeedback(message, kind = "info") {
+  let feedback = $("import-feedback");
+  if (!feedback) {
+    feedback = document.createElement("div");
+    feedback.id = "import-feedback";
+    feedback.setAttribute("aria-live", "polite");
+    feedback.tabIndex = -1;
+    document.querySelector(".primary-actions")?.insertAdjacentElement("afterend", feedback);
+  }
+  feedback.setAttribute("role", kind === "error" ? "alert" : "status");
+  feedback.className = `import-feedback ${kind}`;
+  feedback.textContent = message;
+  note(message);
+  if (!dialog.open) feedback.focus({ preventScroll: false });
+}
+function matchingPurchase(importedAt) {
+  const importedTime = Date.parse(importedAt);
+  return [...ledger.purchases, ...ledger.archivedPurchases]
+    .map(purchase => ({ purchase, distance: Math.abs(Date.parse(purchase.created_at) - importedTime) }))
+    .filter(candidate => Number.isFinite(candidate.distance) && candidate.distance < 15000)
+    .sort((a, b) => a.distance - b.distance)[0]?.purchase;
+}
+function duplicateImportMessage(importRecord, fallbackPurchase) {
+  const existing = matchingPurchase(importRecord?.imported_at) || fallbackPurchase;
+  const identity = existing ? ` as ${existing.label} from ${fmt(existing.purchased_on)}${existing.archived_at ? " (archived)" : ""}` : importRecord?.imported_at ? ` on ${fmt(importRecord.imported_at.slice(0, 10))}` : "";
+  return `This receipt was already imported${identity}. No new expense was added. Review Expenses or archived entries instead.`;
+}
 function inviteCodeFromUrl() {
   const code = new URLSearchParams(location.search).get("invite")?.trim() || "";
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(code) ? code : "";
@@ -415,7 +444,23 @@ $("entry-form").onsubmit = async event => {
       ({ error } = await supabase.from("purchases").insert({ household_id: current.id, label, category: $("category").value, amount, paid_by: paidBy, purchased_on: $("date").value, is_personal: personal, is_tracked_for_restock: false, estimated_use_by: null }));
     }
   }
-  if (error) { errorBox.textContent = `${error.message || "Could not save."} Your draft is still here; check your connection and retry.`; button.disabled = false; button.textContent = "Try saving again"; return; }
+  if (error) {
+    if (pendingPdfImport && isDuplicateImportError(error)) {
+      const duplicateMessage = duplicateImportMessage(null, { label: $("label").value.trim(), purchased_on: $("date").value });
+      lastPdfFeedback = { exactHash: pendingPdfImport.exactHash, contentHash: pendingPdfImport.contentHash, message: duplicateMessage };
+      errorBox.textContent = duplicateMessage;
+      errorBox.tabIndex = -1;
+      errorBox.focus();
+      note(duplicateMessage);
+      button.disabled = false;
+      button.textContent = "Save receipt";
+      return;
+    }
+    errorBox.textContent = `${error.message || "Could not save."} Your draft is still here; check your connection and retry.`;
+    button.disabled = false;
+    button.textContent = "Try saving again";
+    return;
+  }
   pendingPdfImport = undefined;
   reviewedItems = [];
   dialog.close();
@@ -461,21 +506,50 @@ async function readPdfLocally(file) {
   const normalized = extractedText.toLowerCase().replace(/[^a-z0-9.,₹\n ]/g, "").replace(/[ \t]+/g, " ").trim();
   return { exactHash, contentHash: await sha256(normalized), ...parseReceipt(pages, today()) };
 }
+function setPdfBusy(busy) {
+  const button = $("import-pdf");
+  if (button) {
+    button.disabled = busy;
+    button.textContent = busy ? "Checking receipt…" : "Import receipt";
+  }
+  if (busy) $("sync-state").textContent = "Reading receipt…";
+  else $("sync-state").textContent = navigator.onLine ? "Synced" : "Offline";
+}
 $("pdf-file").onchange = async event => {
+  const input = event.target;
   const file = event.target.files?.[0];
-  event.target.value = "";
-  if (!file || !active() || !hasPartner()) return;
-  if (!file.name.toLowerCase().endsWith(".pdf")) return note("Choose a PDF receipt or invoice.");
+  if (!file) return;
+  if (!active() || !hasPartner()) { input.value = ""; return; }
+  if (!file.name.toLowerCase().endsWith(".pdf")) { input.value = ""; return note("Choose a PDF receipt or invoice."); }
+  setPdfBusy(true);
   try {
     note("Reading this PDF locally. It will not be uploaded or stored.");
     const imported = await readPdfLocally(file);
-    const { data, error } = await supabase.from("invoice_imports").select("imported_at").eq("household_id", current.id).or(`exact_pdf_hash.eq.${imported.exactHash},content_hash.eq.${imported.contentHash}`).limit(1);
-    if (error) return note(`Could not check for duplicates: ${error.message}`);
-    if (data.length) return note(`This bill was already imported on ${fmt(data[0].imported_at)}. No expense was added.`);
+    if (sameFingerprint(imported, pendingPdfImport)) {
+      const message = "This receipt is already open in the current review draft. Continue reviewing it or close the draft before choosing another file.";
+      $("dialog-error").textContent = message;
+      note(message);
+      return;
+    }
+    if (sameFingerprint(imported, lastPdfFeedback)) {
+      showImportFeedback(lastPdfFeedback.message, "duplicate");
+      return;
+    }
+    const { data, error } = await supabase.from("invoice_imports").select("imported_at").eq("household_id", current.id).or(`exact_pdf_hash.eq.${imported.exactHash},content_hash.eq.${imported.contentHash}`).order("imported_at", { ascending: false }).limit(1);
+    if (error) { showImportFeedback(`Could not check whether this receipt was already imported. ${error.message}`, "error"); return; }
+    if (data.length) {
+      const message = duplicateImportMessage(data[0]);
+      lastPdfFeedback = { exactHash: imported.exactHash, contentHash: imported.contentHash, message };
+      showImportFeedback(message, "duplicate");
+      return;
+    }
     openEntry("expense", imported.defaults, imported);
     note("Local draft ready. Review every item before saving.");
   } catch (error) {
-    note(`Could not read this PDF locally: ${error.message}. Nothing was uploaded.`);
+    showImportFeedback(`Could not read this PDF locally: ${error.message}. Nothing was uploaded. Choose the file again to retry.`, "error");
+  } finally {
+    input.value = "";
+    setPdfBusy(false);
   }
 };
 

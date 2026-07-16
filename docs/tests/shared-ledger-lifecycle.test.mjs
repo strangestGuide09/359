@@ -98,6 +98,12 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(app, /Reviewed item totals must match the receipt total/);
   assert.match(app, /parserWarning/);
   assert.match(app, /parserNotice/);
+  assert.match(app, /showImportFeedback\(message, "duplicate"\)/);
+  assert.match(app, /sameFingerprint\(imported, pendingPdfImport\)/);
+  assert.match(app, /sameFingerprint\(imported, lastPdfFeedback\)/);
+  assert.match(app, /isDuplicateImportError\(error\)/);
+  assert.match(app, /input\.value = "";\n    setPdfBusy\(false\);/);
+  assert.match(app, /Review Expenses or archived entries instead/);
   assert.doesNotMatch(app, /p_(?:pdf|raw|extracted|receipt_text)/i);
   assert.match(sql, /unique \(household_id, exact_pdf_hash\)/);
   assert.match(sql, /unique \(household_id, content_hash\)/);
@@ -124,7 +130,8 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(page, /Only these reviewed fields will sync/);
   assert.match(app, /class="plain remove-item"/);
   assert.match(app, /Your draft is still here/);
-  assert.match(app, /if \(error\) \{ errorBox\.textContent/);
+  assert.match(app, /if \(error\) \{/);
+  assert.match(app, /Your draft is still here; check your connection and retry/);
   assert.match(app, /is_tracked_for_restock: personal \? false : values\.is_tracked_for_restock \?\? true/);
   assert.match(app, /if \(field === "is_personal"\) reviewedItems\[index\]\.is_tracked_for_restock = !input\.checked/);
   assert.match(app, /<summary>More details<\/summary>/);
