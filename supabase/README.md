@@ -105,3 +105,21 @@ schema remains reproducible.
 Never pass a database password, `sb_secret_...` key, `service_role` key, CLI
 access token, SMTP key/password, or password-bearing connection string through
 client code or chat.
+
+## Restock history audit and legacy flags
+
+Run `support/restock_history_audit.sql` first. It is read-only and reports
+per-purchase personal/tracked/untracked counts, normalized names repeated across
+distinct purchase dates, and exact untracked item UUIDs for manual review.
+Multiple receipts on the same date provide only one date of restock history, so
+they do not establish a buying interval by themselves.
+
+There is no reliable database marker distinguishing the former website default
+(`is_tracked_for_restock = false`) from a user's explicit opt-out. `created_at`
+is not sufficient evidence, so there is intentionally no date-based or blanket
+backfill. After the user confirms individual items, copy only those exact
+`purchase_items.id` values into `support/manual_restock_backfill.sql`, uncomment
+the insert, and run it. The transaction rejects an empty list, rejects missing
+or personal IDs, and updates only still-untracked non-personal items. The update
+is idempotent, but a mistakenly confirmed UUID would override that item's prior
+opt-out and must therefore be reviewed carefully.
