@@ -32,6 +32,10 @@ nav { display:flex; flex-wrap:wrap; gap:10px; padding:10px 0 25px; }
 .balance-card { display:flex; flex-direction:column; justify-content:center; min-height:150px; padding:22px; border-radius:18px; background:var(--pine); color:white; box-shadow:6px 6px #e7c89d; }
 .balance-card small,.balance-card span { color:#c9ddca; }
 .balance-card strong { margin:10px 0; font-size:24px; line-height:1.2; }
+.balance-next { display:grid; gap:7px; margin-top:16px; padding-top:14px; border-top:1px solid rgba(255,255,255,.22); }
+.balance-next b { font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+.balance-next span { line-height:1.4; }
+.balance-next button { width:100%; margin-top:3px; border-color:white; background:white; color:var(--pine); box-shadow:none; }
 .primary-actions { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:10px; padding:0; }
 .privacy-disclosure { grid-column:1/-1; color:var(--muted); font-size:13px; }
 .privacy-disclosure summary { width:max-content; max-width:100%; color:var(--pine); font-weight:bold; cursor:pointer; }

@@ -39,7 +39,7 @@ test("shared web flow has explicit safe loading and recovery states", async () =
 });
 
 test("production UI is owner and partner only and gates shared actions", async () => {
-  const [page, app] = await Promise.all([read("docs/index.html"), read("docs/app.js")]);
+  const [page, app, settlement] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/settlement-flow.js")]);
   assert.match(app, /function hasPartner\(\)/);
   assert.match(app, /Shared expenses, balances, settlements, and restock history stay locked/);
   assert.match(app, /Your partner must join before saving a shared expense/);
@@ -63,6 +63,12 @@ test("production UI is owner and partner only and gates shared actions", async (
   assert.match(app, /paid_by: paidBy/);
   assert.match(page, /<select id="paid-by" required/);
   assert.match(page, /Choose who actually paid/);
+  assert.match(app, /settlementState\(balance, currentName, otherName\)/);
+  assert.match(settlement, /Record payment sent/);
+  assert.match(settlement, /must sign in and record the payment/);
+  assert.match(app, /settlementAmountError\(latestBalance, amount\)/);
+  assert.match(app, /settlementConfirmation\(payer, receiverName, amount, \$\("date"\)\.value\)/);
+  assert.match(app, /payer: session\.user\.id, receiver: receiver\.user_id/);
 });
 
 test("clean bootstrap enforces the approved two-person lifecycle", async () => {
