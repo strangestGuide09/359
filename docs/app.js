@@ -95,6 +95,11 @@ function setScreen(html, { busy = false, focus = true } = {}) {
   const screen = $("screen");
   formDirty = false;
   screen.innerHTML = html;
+  const main = document.querySelector("main");
+  if (screen.querySelector(".dashboard-shell")) main.dataset.layout = "dashboard";
+  else if (screen.querySelector(".household-gate")) main.dataset.layout = "household-gate";
+  else if (screen.querySelector(".partner-gate")) main.dataset.layout = "partner-gate";
+  else main.dataset.layout = "narrow";
   screen.setAttribute("aria-busy", String(busy));
   if (focus) requestAnimationFrame(() => screen.querySelector("h1,h2")?.focus({ preventScroll: true }));
 }
@@ -131,9 +136,11 @@ function row(item, type) {
   const own = type === "purchase" ? item.paid_by === session.user.id : item.payer === session.user.id;
   const canManage = own || isOwner();
   const heading = type === "purchase" ? esc(item.label) : `${esc(memberName(item.payer))} paid ${esc(memberName(item.receiver))}`;
-  const count = type === "purchase" && item.purchase_items?.length ? ` · ${item.purchase_items.length} reviewed item${item.purchase_items.length === 1 ? "" : "s"}` : "";
-  const sub = type === "purchase" ? `${esc(item.category)} · paid by ${esc(memberName(item.paid_by))} · ${fmt(item.purchased_on)}${item.is_personal ? " · personal" : ""}${count}` : fmt(item.settled_on);
-  return `<div class="expense"><div><b>${heading}</b><span>${sub}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
+  if (type === "purchase") {
+    const itemCount = item.purchase_items?.length || 0;
+    return `<div class="expense purchase-row"><div class="purchase-merchant"><b>${heading}</b><span>${esc(item.category)}${item.is_personal ? " · personal" : ""}</span></div><span data-label="Paid by">${esc(memberName(item.paid_by))}</span><time data-label="Date">${fmt(item.purchased_on)}</time><span data-label="Items">${itemCount ? `${itemCount} reviewed` : "Manual entry"}</span><div class="entry-actions" data-label="Amount"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
+  }
+  return `<div class="expense"><div><b>${heading}</b><span>${fmt(item.settled_on)}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
 function suggestionCards() {
   const groups = restockHistory(ledger.purchases);
@@ -257,7 +264,7 @@ async function shareInvite(kind) {
   else try { await navigator.clipboard.writeText(inviteUrl); note("New invite link copied."); } catch { note(`Copy is unavailable. Invite code: ${code}`); }
 }
 function renderMembers() {
-  return members.map(member => `<div class="member-block"><strong>${esc(displayedMemberName(member))}</strong><span>${member.role === "owner" ? "Owner" : "Partner"}</span>${member.user_id === session.user.id ? '<small class="you-badge">You</small>' : ""}</div>`).join("");
+  return members.map(member => `<span class="member-block"><strong>${esc(displayedMemberName(member))}</strong><span aria-hidden="true">·</span><span>${member.role === "owner" ? "owner" : "partner"}</span>${member.user_id === session.user.id ? '<span aria-hidden="true">·</span><small class="you-badge">you</small>' : ""}</span>`).join("");
 }
 function renderPreview(rows, { id, limit, noun, empty }) {
   if (!rows.length) return empty;
@@ -294,7 +301,7 @@ function renderDashboard() {
   const settlementPanel = renderPreview(settlementRows, { id: "settlement-preview", limit: 3, noun: "settlements", empty: '<p class="empty-state">No settlements recorded.</p>' });
   const actions = archived ? "" : `<nav class="command-actions primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button><button id="open-settings" class="plain" aria-controls="household-settings">Household settings</button></nav>`;
   const archiveBanner = archived ? `<p class="archive-banner">This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}</p>` : "";
-  setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}<section class="command-bar">${renderBalance(balance, archived)}${actions}</section><section class="insights-grid"><section class="panel insight-card restock-panel"><div class="heading"><div><p>RESTOCK</p><h2>Possible buys</h2></div></div>${restockPanel}</section><section class="panel insight-card settlements-panel"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section></section><section class="panel expenses-panel"><div class="heading"><div><p>LEDGER</p><h2>Recent expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div>${purchases}</div></section>${renderSettings(balance, archived, recoveryOpen)}<details class="privacy-disclosure"><summary>Privacy: only reviewed receipt items sync</summary><p>PDFs and extracted text stay in this browser session. Payment methods, addresses, card and UPI details are never saved.</p></details></section>`);
+  setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}<section class="command-bar">${renderBalance(balance, archived)}${actions}</section><section class="insights-grid"><section class="panel insight-card restock-panel"><div class="heading"><div><p>RESTOCK</p><h2>Possible buys</h2></div></div>${restockPanel}</section><section class="panel insight-card settlements-panel"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section></section><section class="panel expenses-panel"><div class="heading"><div><p>LEDGER</p><h2>Recent expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div class="ledger-columns" aria-hidden="true"><span>Merchant</span><span>Paid by</span><span>Date</span><span>Reviewed items</span><span>Amount</span></div><div>${purchases}</div></section>${renderSettings(balance, archived, recoveryOpen)}</section>`);
   bindDashboard(balance);
 }
 function bindDashboard(balance) {
