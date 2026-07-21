@@ -3,6 +3,7 @@ import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 import { classifySignInError } from "./auth-errors.js";
 import { isDuplicateImportError, sameFingerprint } from "./duplicate-import.js";
+import { clearImportFeedback, showImportFeedback as renderImportFeedback } from "./import-feedback.js";
 import { parseReceipt } from "./receipt-parser.js";
 import { qualifiesForRestockSuggestion, restockHistory } from "./restock.js";
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
@@ -37,21 +38,7 @@ document.addEventListener("input", event => { if (event.target.closest?.("form")
 document.addEventListener("change", event => { if (event.target.closest?.("form")) formDirty = true; });
 
 function note(text) { $("status").textContent = text || ""; }
-function showImportFeedback(message, kind = "info") {
-  let feedback = $("import-feedback");
-  if (!feedback) {
-    feedback = document.createElement("div");
-    feedback.id = "import-feedback";
-    feedback.setAttribute("aria-live", "polite");
-    feedback.tabIndex = -1;
-    document.querySelector(".primary-actions")?.insertAdjacentElement("afterend", feedback);
-  }
-  feedback.setAttribute("role", kind === "error" ? "alert" : "status");
-  feedback.className = `import-feedback ${kind}`;
-  feedback.textContent = message;
-  note(message);
-  if (!dialog.open) feedback.focus({ preventScroll: false });
-}
+function showImportFeedback(message, kind = "info") { renderImportFeedback(document, message, kind); }
 function matchingPurchase(importedAt) {
   const importedTime = Date.parse(importedAt);
   return [...ledger.purchases, ...ledger.archivedPurchases]
@@ -455,7 +442,7 @@ $("entry-form").onsubmit = async event => {
       errorBox.textContent = duplicateMessage;
       errorBox.tabIndex = -1;
       errorBox.focus();
-      note(duplicateMessage);
+      note("");
       button.disabled = false;
       button.textContent = "Save receipt";
       return;
@@ -526,6 +513,7 @@ $("pdf-file").onchange = async event => {
   if (!file) return;
   if (!active() || !hasPartner()) { input.value = ""; return; }
   if (!file.name.toLowerCase().endsWith(".pdf")) { input.value = ""; return note("Choose a PDF receipt or invoice."); }
+  clearImportFeedback(document);
   setPdfBusy(true);
   try {
     note("Reading this PDF locally. It will not be uploaded or stored.");
@@ -533,7 +521,7 @@ $("pdf-file").onchange = async event => {
     if (sameFingerprint(imported, pendingPdfImport)) {
       const message = "This receipt is already open in the current review draft. Continue reviewing it or close the draft before choosing another file.";
       $("dialog-error").textContent = message;
-      note(message);
+      note("");
       return;
     }
     if (sameFingerprint(imported, lastPdfFeedback)) {

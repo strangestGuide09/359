@@ -85,7 +85,7 @@ test("clean bootstrap enforces the approved two-person lifecycle", async () => {
 });
 
 test("local PDF privacy and duplicate safeguards remain present", async () => {
-  const [app, restock, sql] = await Promise.all([read("docs/app.js"), read("docs/restock.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql")]);
+  const [app, feedback, restock, sql] = await Promise.all([read("docs/app.js"), read("docs/import-feedback.js"), read("docs/restock.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql")]);
   assert.match(app, /Reading this PDF locally\. It will not be uploaded or stored/);
   assert.match(app, /exactHash/);
   assert.match(app, /contentHash/);
@@ -102,8 +102,16 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(app, /sameFingerprint\(imported, pendingPdfImport\)/);
   assert.match(app, /sameFingerprint\(imported, lastPdfFeedback\)/);
   assert.match(app, /isDuplicateImportError\(error\)/);
+  assert.match(app, /errorBox\.textContent = duplicateMessage;[\s\S]{0,180}note\(""\);/);
+  assert.doesNotMatch(app, /errorBox\.textContent = duplicateMessage;[\s\S]{0,180}note\(duplicateMessage\);/);
+  assert.match(app, /\$\("dialog-error"\)\.textContent = message;\n\s+note\(""\);/);
+  assert.doesNotMatch(app, /\$\("dialog-error"\)\.textContent = message;\n\s+note\(message\);/);
   assert.match(app, /input\.value = "";\n    setPdfBusy\(false\);/);
   assert.match(app, /Review Expenses or archived entries instead/);
+  assert.match(feedback, /feedbackTimers/);
+  assert.match(feedback, /durationMs = 10000/);
+  assert.match(feedback, /Dismiss notification/);
+  assert.doesNotMatch(app, /note\(message\);\n\s*if \(!dialog\.open\)/);
   assert.doesNotMatch(app, /p_(?:pdf|raw|extracted|receipt_text)/i);
   assert.match(sql, /unique \(household_id, exact_pdf_hash\)/);
   assert.match(sql, /unique \(household_id, content_hash\)/);
