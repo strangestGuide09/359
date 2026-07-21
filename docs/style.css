@@ -36,9 +36,10 @@ nav { display:flex; flex-wrap:wrap; gap:10px; padding:10px 0 25px; }
 .privacy-disclosure { grid-column:1/-1; color:var(--muted); font-size:13px; }
 .privacy-disclosure summary { width:max-content; max-width:100%; color:var(--pine); font-weight:bold; cursor:pointer; }
 .privacy-disclosure p { max-width:760px; margin:8px 0 0; line-height:1.5; }
-.import-feedback { grid-column:1/-1; padding:12px 14px; border:1px solid #d5bd92; border-radius:11px; background:#fff8e9; color:var(--ink); line-height:1.45; }
+.import-feedback { grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px 14px; border:1px solid #d5bd92; border-radius:11px; background:#fff8e9; color:var(--ink); line-height:1.45; }
 .import-feedback.duplicate { border-color:#d8a363; background:#fff0dc; }
 .import-feedback.error { border-color:#d7aaa0; background:#fff2ee; }
+.feedback-dismiss { flex:0 0 auto; min-width:43px; min-height:43px; padding:3px 9px; border-radius:8px; font-size:22px; line-height:1; }
 .archive-banner { grid-column:1/-1; margin:0; padding:12px 14px; border-radius:10px; background:#f1e4ca; }
 .dashboard-grid { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(300px,.75fr); gap:18px; align-items:start; margin-top:18px; }
 .dashboard-side { display:grid; gap:18px; }
