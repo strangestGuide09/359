@@ -5,6 +5,7 @@ import { classifySignInError } from "./auth-errors.js";
 import { isDuplicateImportError, sameFingerprint } from "./duplicate-import.js";
 import { clearImportFeedback, showImportFeedback as renderImportFeedback } from "./import-feedback.js";
 import { previewState } from "./dashboard-view.js";
+import { formatMemberName } from "./member-names.js";
 import { parseReceipt } from "./receipt-parser.js";
 import { qualifiesForRestockSuggestion, restockHistory } from "./restock.js";
 import { settlementAmountError, settlementConfirmation, settlementState } from "./settlement-flow.js";
@@ -75,14 +76,15 @@ function memberDisplayName(member) {
   const name = String(member?.display_name || "").trim();
   return name || (member?.role === "owner" ? "Owner" : "Partner");
 }
+function displayedMemberName(member) { return formatMemberName(memberDisplayName(member)); }
 function memberName(id) {
   const member = members.find(candidate => candidate.user_id === id);
-  const name = memberDisplayName(member);
+  const name = displayedMemberName(member);
   return id === session?.user?.id ? `${name} (you)` : name;
 }
 function payerName(member) {
   const role = member.role === "owner" ? "Owner" : "Partner";
-  return `${memberDisplayName(member)} (${member.user_id === session?.user?.id ? "you · " : ""}${role})`;
+  return `${displayedMemberName(member)} (${member.user_id === session?.user?.id ? "you · " : ""}${role})`;
 }
 function populatePayers(selectedId = session?.user?.id) {
   const choices = [...members].sort((a, b) => (a.role === "owner" ? -1 : 1) - (b.role === "owner" ? -1 : 1));
@@ -255,7 +257,7 @@ async function shareInvite(kind) {
   else try { await navigator.clipboard.writeText(inviteUrl); note("New invite link copied."); } catch { note(`Copy is unavailable. Invite code: ${code}`); }
 }
 function renderMembers() {
-  return members.map(member => `<div class="member-block"><strong>${esc(memberDisplayName(member))}</strong><span>${member.role === "owner" ? "Owner" : "Partner"}</span>${member.user_id === session.user.id ? '<small class="you-badge">You</small>' : ""}</div>`).join("");
+  return members.map(member => `<div class="member-block"><strong>${esc(displayedMemberName(member))}</strong><span>${member.role === "owner" ? "Owner" : "Partner"}</span>${member.user_id === session.user.id ? '<small class="you-badge">You</small>' : ""}</div>`).join("");
 }
 function renderPreview(rows, { id, limit, noun, empty }) {
   if (!rows.length) return empty;
@@ -265,8 +267,8 @@ function renderPreview(rows, { id, limit, noun, empty }) {
   return `<div id="${id}">${items}</div>${controls}`;
 }
 function renderBalance(balance, archived) {
-  const otherName = memberDisplayName(partner());
-  const currentName = memberDisplayName(members.find(member => member.user_id === session.user.id));
+  const otherName = displayedMemberName(partner());
+  const currentName = displayedMemberName(members.find(member => member.user_id === session.user.id));
   const balanceText = Math.abs(balance) < .005 ? `You and ${esc(otherName)} are settled` : balance > 0 ? `${esc(otherName)} owes you ${money(balance)}` : `You owe ${esc(otherName)} ${money(-balance)}`;
   const settlement = settlementState(balance, currentName, otherName);
   const guidance = settlement.kind === "settled" ? "" : `<div class="balance-next"><b>Next step</b><span>${esc(settlement.guidance)}</span>${settlement.actionLabel ? `<button id="settle">${esc(settlement.actionLabel)} · ${money(settlement.amount)}</button>` : ""}</div>`;
@@ -275,7 +277,7 @@ function renderBalance(balance, archived) {
 function renderSettings(balance, archived, recoveryOpen) {
   const ownerControls = isOwner() ? archived ? `<div class="danger-zone">${recoveryOpen ? `<button id="restore-household" class="secondary">Restore household</button><small>Recovery is available until ${fmt(current.purge_after)}.</small>` : `<button id="delete-household" class="danger">Permanently delete</button><small>The 30-day recovery period has ended.</small>`}</div>` : `<div class="danger-zone"><b>Close household</b><small>${Math.abs(balance) >= .005 ? "Settle the balance before closing." : "Starts a 30-day recovery period."}</small><button id="archive-household" class="danger"${Math.abs(balance) >= .005 ? " disabled" : ""}>Close household</button></div>` : "";
   const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
-  const memberRows = members.map(member => `<div class="expense"><div><b>${esc(memberDisplayName(member))}</b><span>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</span></div></div>`).join("");
+  const memberRows = members.map(member => `<div class="expense"><div><b>${esc(displayedMemberName(member))}</b><span>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</span></div></div>`).join("");
   const nameForm = archived ? "" : `<form id="display-name-form" class="inline-form"><label>Your display name<input id="display-name" maxlength="80" required autocomplete="name" value="${esc(memberDisplayName(members.find(member => member.user_id === session.user.id)))}"></label><button class="secondary">Update name</button></form>`;
   const archiveList = archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? esc(item.label) : "Archived settlement"}</b><span>${money(item.amount)}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">Restore</button>` : ""}</div>`).join("")}</details>` : "";
   return `<details id="household-settings" class="panel settings"><summary><span><b>Household settings</b><small>Names, archived entries and recovery</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body"><div class="member-list">${memberRows}</div>${nameForm}${archiveList}${ownerControls}<div class="settings-actions"><button id="sign-out" class="plain">Sign out</button></div></div></details>`;
@@ -415,7 +417,7 @@ function openEntry(next, defaults = {}, pdfImport) {
   $("expense-fields").classList.toggle("hide", next === "settlement");
   $("pdf-items").classList.toggle("hide", !pdfImport);
   $("settlement-fields").classList.toggle("hide", next !== "settlement");
-  $("settlement-copy").textContent = `You are recording a payment to ${memberDisplayName(partner())}.`;
+  $("settlement-copy").textContent = `You are recording a payment to ${displayedMemberName(partner())}.`;
   $("label").required = next !== "settlement";
   $("label").value = defaults.label || "";
   $("category").value = defaults.category || "Groceries";
@@ -459,8 +461,8 @@ $("entry-form").onsubmit = async event => {
     const latestBalance = balanceFor(session.user.id);
     const amountError = settlementAmountError(latestBalance, amount);
     if (amountError) { errorBox.textContent = amountError; button.disabled = false; button.textContent = "Save"; return; }
-    const payer = memberDisplayName(members.find(member => member.user_id === session.user.id));
-    const receiverName = memberDisplayName(receiver);
+    const payer = displayedMemberName(members.find(member => member.user_id === session.user.id));
+    const receiverName = displayedMemberName(receiver);
     if (!confirm(settlementConfirmation(payer, receiverName, amount, $("date").value))) { button.disabled = false; button.textContent = "Save"; return; }
     ({ error } = await supabase.from("settlements").insert({ household_id: current.id, payer: session.user.id, receiver: receiver.user_id, amount, settled_on: $("date").value }));
   } else {

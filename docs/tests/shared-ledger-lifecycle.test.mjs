@@ -54,6 +54,7 @@ test("production UI is owner and partner only and gates shared actions", async (
   assert.match(app, /clearInviteFromUrl\(\)/);
   assert.match(app, /select\("user_id,role,display_name"\)/);
   assert.match(app, /function memberDisplayName/);
+  assert.match(app, /function displayedMemberName/);
   assert.match(app, /function needsDisplayName/);
   assert.match(app, /function renderDisplayNameGate/);
   assert.match(app, /set_my_display_name/);
@@ -173,7 +174,7 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.match(app, /class="privacy-disclosure"/);
   assert.match(app, /id="household-settings" class="panel settings"/);
   assert.match(app, /class="member-block"/);
-  assert.match(app, /<strong>\$\{esc\(memberDisplayName\(member\)\)\}<\/strong><span>\$\{member\.role/);
+  assert.match(app, /<strong>\$\{esc\(displayedMemberName\(member\)\)\}<\/strong><span>\$\{member\.role/);
   assert.match(app, /class="you-badge">You<\/small>/);
   assert.match(app, /data-preview-extra/);
   assert.match(app, /aria-expanded="false">Review all/);
