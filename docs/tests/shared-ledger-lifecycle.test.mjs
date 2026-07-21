@@ -85,14 +85,14 @@ test("clean bootstrap enforces the approved two-person lifecycle", async () => {
 });
 
 test("local PDF privacy and duplicate safeguards remain present", async () => {
-  const [app, sql] = await Promise.all([read("docs/app.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql")]);
+  const [app, restock, sql] = await Promise.all([read("docs/app.js"), read("docs/restock.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql")]);
   assert.match(app, /Reading this PDF locally\. It will not be uploaded or stored/);
   assert.match(app, /exactHash/);
   assert.match(app, /contentHash/);
   assert.match(app, /import_reviewed_purchase/);
   assert.match(app, /p_items: items/);
   assert.match(app, /purchase_items\(\*\)/);
-  assert.match(app, /for \(const item of purchase\.purchase_items \|\| \[\]\)/);
+  assert.match(restock, /for \(const item of purchase\.purchase_items \|\| \[\]\)/);
   assert.match(app, /is_personal: !!item\.is_personal/);
   assert.match(app, /display_order/);
   assert.match(app, /Reviewed item totals must match the receipt total/);
@@ -117,10 +117,11 @@ test("production client uses the validated hosted project public credentials", a
 });
 
 test("mixed reviewed receipts use shared item totals for balances and restock", async () => {
-  const app = await read("docs/app.js");
+  const [app, restock] = await Promise.all([read("docs/app.js"), read("docs/restock.js")]);
   assert.match(app, /function sharedPurchaseAmount/);
   assert.match(app, /item\.is_personal \? 0/);
-  assert.match(app, /if \(item\.is_personal \|\| !item\.is_tracked_for_restock\) continue/);
+  assert.match(restock, /if \(item\.is_personal \|\| !item\.is_tracked_for_restock/);
+  assert.match(app, /Tracking \$\{groups\.size\} item/);
 });
 
 test("itemized review is editable and retains failed drafts", async () => {

@@ -22,9 +22,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare versioned Pages artifact
+        run: |
+          cp -R docs _site
+          printf 'window.GROCERY_LEDGER_BUILD = "%s";\n' "$GITHUB_SHA" > _site/version.js
+          printf '{"build":"%s"}\n' "$GITHUB_SHA" > _site/version.json
+          sed -i "s|src=\"version.js\"|src=\"version.js?v=${GITHUB_SHA}\"|" _site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

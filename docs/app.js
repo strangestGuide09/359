@@ -4,6 +4,8 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 import { classifySignInError } from "./auth-errors.js";
 import { isDuplicateImportError, sameFingerprint } from "./duplicate-import.js";
 import { parseReceipt } from "./receipt-parser.js";
+import { qualifiesForRestockSuggestion, restockHistory } from "./restock.js";
+import { hasUnsafeDraft, versionAction } from "./version-check.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage }
@@ -17,6 +19,8 @@ const fmt = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "shor
 const esc = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 const retryKey = "grocery-ledger-email-retry-at";
 const dialog = $("entry");
+const clientBuild = window.GROCERY_LEDGER_BUILD || "local-dev";
+const reloadVersionKey = "grocery-ledger-reloading-version";
 
 let session;
 let current;
@@ -27,6 +31,10 @@ let mode = "expense";
 let pendingPdfImport;
 let reviewedItems = [];
 let lastPdfFeedback;
+let formDirty = false;
+
+document.addEventListener("input", event => { if (event.target.closest?.("form")) formDirty = true; });
+document.addEventListener("change", event => { if (event.target.closest?.("form")) formDirty = true; });
 
 function note(text) { $("status").textContent = text || ""; }
 function showImportFeedback(message, kind = "info") {
@@ -94,6 +102,7 @@ function populatePayers(selectedId = session?.user?.id) {
 }
 function setScreen(html, { busy = false, focus = true } = {}) {
   const screen = $("screen");
+  formDirty = false;
   screen.innerHTML = html;
   screen.setAttribute("aria-busy", String(busy));
   if (focus) requestAnimationFrame(() => screen.querySelector("h1,h2")?.focus({ preventScroll: true }));
@@ -136,25 +145,19 @@ function row(item, type) {
   return `<div class="expense"><div><b>${heading}</b><span>${sub}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
 function suggestions() {
-  const groups = {};
-  for (const purchase of ledger.purchases) {
-    for (const item of purchase.purchase_items || []) {
-      if (item.is_personal || !item.is_tracked_for_restock) continue;
-      const key = item.name.trim().toLowerCase();
-      (groups[key] ??= []).push({ ...item, purchased_on: purchase.purchased_on });
-    }
-  }
-  const cards = Object.values(groups).map(items => {
+  const groups = restockHistory(ledger.purchases);
+  const cards = [...groups.values()].map(items => {
     items.sort((a, b) => a.purchased_on.localeCompare(b.purchased_on));
     const dates = [...new Set(items.map(item => item.purchased_on))];
-    if (dates.length < 2) return null;
+    if (!qualifiesForRestockSuggestion(items)) return null;
     const [previous, last] = dates.slice(-2);
     const days = Math.max(1, Math.round((Date.parse(`${last}T12:00:00`) - Date.parse(`${previous}T12:00:00`)) / 86400000));
     const latest = items.at(-1);
     const due = latest.estimated_use_by || new Date(Date.parse(`${last}T12:00:00`) + days * 86400000).toISOString().slice(0, 10);
-    return `<div class="suggestion"><div><b>${esc(latest.name)}</b><span>${latest.estimated_use_by ? "Reviewed use-by" : `Latest interval: ${days} days`} · bought ${dates.length} times</span></div><time class="${due <= today() ? "due" : ""}">${due <= today() ? "Review now" : `Around ${fmt(due)}`}</time></div>`;
+    return `<div class="suggestion"><div><b>${esc(latest.display_name)}</b><span>${latest.estimated_use_by ? "Reviewed use-by" : `Latest interval: ${days} days`} · bought ${dates.length} times</span></div><time class="${due <= today() ? "due" : ""}">${due <= today() ? "Review now" : `Around ${fmt(due)}`}</time></div>`;
   }).filter(Boolean);
-  return cards.join("") || '<p class="empty-state">Track a reviewed receipt item twice on different dates to see a suggestion.</p>';
+  if (cards.length) return cards.join("");
+  return groups.size ? `<p class="empty-state">Tracking ${groups.size} item${groups.size === 1 ? "" : "s"}. Buy a tracked item again on another date to see a suggestion.</p>` : '<p class="empty-state">No tracked grocery items yet. Import a receipt and keep “Track for restock” selected.</p>';
 }
 
 function renderSignedOut(authMode = "signin") {
@@ -402,6 +405,7 @@ function closeEntry() {
   if (pendingPdfImport && !confirm("Discard this local PDF draft? The PDF and extracted text will not be stored.")) return;
   pendingPdfImport = undefined;
   reviewedItems = [];
+  formDirty = false;
   dialog.close();
 }
 $("close").onclick = closeEntry;
@@ -463,6 +467,7 @@ $("entry-form").onsubmit = async event => {
   }
   pendingPdfImport = undefined;
   reviewedItems = [];
+  formDirty = false;
   dialog.close();
   note(`${mode === "settlement" ? "Settlement" : "Expense"} saved and shared.`);
   await loadLedger();
@@ -552,6 +557,47 @@ $("pdf-file").onchange = async event => {
     setPdfBusy(false);
   }
 };
+
+function unsafeForRefresh() {
+  return hasUnsafeDraft({ dialogOpen: dialog.open, pendingPdfImport, formDirty });
+}
+function showUpdateAvailable(nextBuild) {
+  let banner = $("update-available");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "update-available";
+    banner.className = "update-banner";
+    banner.setAttribute("role", "status");
+    banner.setAttribute("aria-live", "polite");
+    document.querySelector("header")?.insertAdjacentElement("afterend", banner);
+  }
+  banner.innerHTML = '<span><b>Update available</b><small>Refresh after saving or closing your draft.</small></span><button type="button" class="secondary">Refresh now</button>';
+  banner.querySelector("button").onclick = () => {
+    if (unsafeForRefresh()) { banner.querySelector("small").textContent = "Save or close your current draft before refreshing."; return; }
+    sessionStorage.setItem(reloadVersionKey, nextBuild);
+    location.reload();
+  };
+}
+async function checkForSiteUpdate() {
+  try {
+    const versionUrl = new URL("./version.json", import.meta.url);
+    versionUrl.searchParams.set("t", Date.now());
+    const response = await fetch(versionUrl, { cache: "no-store" });
+    if (!response.ok) return;
+    const nextBuild = String((await response.json())?.build || "").trim();
+    const attempted = sessionStorage.getItem(reloadVersionKey) || "";
+    if (attempted === clientBuild) sessionStorage.removeItem(reloadVersionKey);
+    const action = versionAction(clientBuild, nextBuild, unsafeForRefresh(), attempted);
+    if (action === "reload") {
+      sessionStorage.setItem(reloadVersionKey, nextBuild);
+      location.reload();
+    } else if (action === "prompt") showUpdateAvailable(nextBuild);
+  } catch { /* Update checks are deliberately non-blocking. */ }
+}
+setTimeout(checkForSiteUpdate, 5000);
+setInterval(checkForSiteUpdate, 180000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkForSiteUpdate(); });
+window.addEventListener("focus", checkForSiteUpdate);
 
 renderLoading("Checking your saved session…");
 window.addEventListener("offline", () => { $("sync-state").textContent = "Offline"; note("You’re offline. Unsaved form and PDF review fields remain in this browser; reconnect before saving."); });
