@@ -160,7 +160,7 @@ test("itemized review is editable and retains failed drafts", async () => {
 
 test("authenticated dashboard prioritizes household work and one main landmark", async () => {
   const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
-  assert.equal((page.match(/<main>/g) || []).length, 1);
+  assert.equal((page.match(/<main(?:\s[^>]*)?>/g) || []).length, 1);
   assert.equal((app.match(/function renderDashboard\(\)/g) || []).length, 1);
   assert.equal((app.match(/bindDashboard\(balance\);/g) || []).length, 1);
   assert.match(app, /class="dashboard-shell"/);
@@ -171,19 +171,21 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.ok(app.indexOf("settlements-panel") < app.indexOf("expenses-panel"));
   assert.doesNotMatch(app, /<main class=/);
   assert.match(app, /class="command-actions primary-actions"/);
-  assert.match(app, /class="privacy-disclosure"/);
+  assert.doesNotMatch(app, /class="privacy-disclosure"/);
+  assert.match(page, /<footer>Reviewed shared-ledger entries only/);
   assert.match(app, /id="household-settings" class="panel settings"/);
   assert.match(app, /class="member-block"/);
-  assert.match(app, /<strong>\$\{esc\(displayedMemberName\(member\)\)\}<\/strong><span>\$\{member\.role/);
-  assert.match(app, /class="you-badge">You<\/small>/);
+  assert.match(app, /<strong>\$\{esc\(displayedMemberName\(member\)\)\}<\/strong><span aria-hidden="true">·<\/span><span>\$\{member\.role/);
+  assert.match(app, /class="you-badge">you<\/small>/);
   assert.match(app, /data-preview-extra/);
   assert.match(app, /aria-expanded="false">Review all/);
   assert.match(page, /<div class="page-meta"><p id="status"/);
   assert.match(page, /<footer>Reviewed shared-ledger entries only/);
   assert.doesNotMatch(app, /Split the bill\.<br><i>See what’s next/);
   assert.match(style, /\.insights-grid \{ display:grid; grid-template-columns:minmax\(0,2fr\)/);
+  assert.match(style, /\.household-masthead \{ display:flex; justify-content:space-between;/);
   assert.match(style, /@media \(max-width:900px\) and \(min-width:701px\)/);
-  assert.match(style, /\.two,\.name-form,\.inline-form,\.household-masthead,\.command-bar,\.insights-grid \{ grid-template-columns:1fr; \}/);
+  assert.match(style, /\.two,\.name-form,\.inline-form,\.command-bar,\.insights-grid \{ grid-template-columns:1fr; \}/);
   assert.match(style, /\.page-meta \{ width:100%;/);
   assert.doesNotMatch(style, /\.activity,\.settings \{ margin-top:/);
   assert.match(style, /\.insight-card,\.expenses-panel \{ margin:0; \}/);
