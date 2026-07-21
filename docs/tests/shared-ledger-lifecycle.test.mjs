@@ -162,17 +162,30 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.equal((page.match(/<main>/g) || []).length, 1);
   assert.equal((app.match(/function renderDashboard\(\)/g) || []).length, 1);
   assert.equal((app.match(/bindDashboard\(balance\);/g) || []).length, 1);
-  assert.match(app, /class="dashboard-head"/);
-  assert.match(app, /class="dashboard-grid"/);
-  assert.match(app, /<section class="dashboard-main">/);
-  assert.doesNotMatch(app, /<main class="dashboard-main">/);
-  assert.match(app, /class="primary-actions"/);
+  assert.match(app, /class="dashboard-shell"/);
+  assert.match(app, /class="household-masthead"/);
+  assert.match(app, /class="command-bar"/);
+  assert.match(app, /class="insights-grid"/);
+  assert.ok(app.indexOf("restock-panel") < app.indexOf("expenses-panel"));
+  assert.ok(app.indexOf("settlements-panel") < app.indexOf("expenses-panel"));
+  assert.doesNotMatch(app, /<main class=/);
+  assert.match(app, /class="command-actions primary-actions"/);
   assert.match(app, /class="privacy-disclosure"/);
-  assert.match(app, /<details class="panel settings">/);
+  assert.match(app, /id="household-settings" class="panel settings"/);
+  assert.match(app, /class="member-block"/);
+  assert.match(app, /<strong>\$\{esc\(memberDisplayName\(member\)\)\}<\/strong><span>\$\{member\.role/);
+  assert.match(app, /class="you-badge">You<\/small>/);
+  assert.match(app, /data-preview-extra/);
+  assert.match(app, /aria-expanded="false">Review all/);
+  assert.match(page, /<div class="page-meta"><p id="status"/);
+  assert.match(page, /<footer>Reviewed shared-ledger entries only/);
   assert.doesNotMatch(app, /Split the bill\.<br><i>See what’s next/);
-  assert.match(style, /\.dashboard-grid \{ display:grid; grid-template-columns:minmax\(0,1\.65fr\)/);
+  assert.match(style, /\.insights-grid \{ display:grid; grid-template-columns:minmax\(0,2fr\)/);
+  assert.match(style, /@media \(max-width:900px\) and \(min-width:701px\)/);
+  assert.match(style, /\.two,\.name-form,\.inline-form,\.household-masthead,\.command-bar,\.insights-grid \{ grid-template-columns:1fr; \}/);
+  assert.match(style, /\.page-meta \{ width:100%;/);
   assert.doesNotMatch(style, /\.activity,\.settings \{ margin-top:/);
-  assert.match(style, /\.expenses-panel,\.compact-card \{ margin:0; \}/);
+  assert.match(style, /\.insight-card,\.expenses-panel \{ margin:0; \}/);
 });
 
 test("repository declares docs as the production web client", async () => {

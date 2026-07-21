@@ -4,6 +4,7 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 import { classifySignInError } from "./auth-errors.js";
 import { isDuplicateImportError, sameFingerprint } from "./duplicate-import.js";
 import { clearImportFeedback, showImportFeedback as renderImportFeedback } from "./import-feedback.js";
+import { previewState } from "./dashboard-view.js";
 import { parseReceipt } from "./receipt-parser.js";
 import { qualifiesForRestockSuggestion, restockHistory } from "./restock.js";
 import { settlementAmountError, settlementConfirmation, settlementState } from "./settlement-flow.js";
@@ -132,7 +133,7 @@ function row(item, type) {
   const sub = type === "purchase" ? `${esc(item.category)} · paid by ${esc(memberName(item.paid_by))} · ${fmt(item.purchased_on)}${item.is_personal ? " · personal" : ""}${count}` : fmt(item.settled_on);
   return `<div class="expense"><div><b>${heading}</b><span>${sub}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
-function suggestions() {
+function suggestionCards() {
   const groups = restockHistory(ledger.purchases);
   const cards = [...groups.values()].map(items => {
     items.sort((a, b) => a.purchased_on.localeCompare(b.purchased_on));
@@ -144,8 +145,10 @@ function suggestions() {
     const due = latest.estimated_use_by || new Date(Date.parse(`${last}T12:00:00`) + days * 86400000).toISOString().slice(0, 10);
     return `<div class="suggestion"><div><b>${esc(latest.display_name)}</b><span>${latest.estimated_use_by ? "Reviewed use-by" : `Latest interval: ${days} days`} · bought ${dates.length} times</span></div><time class="${due <= today() ? "due" : ""}">${due <= today() ? "Review now" : `Around ${fmt(due)}`}</time></div>`;
   }).filter(Boolean);
-  if (cards.length) return cards.join("");
-  return groups.size ? `<p class="empty-state">Tracking ${groups.size} item${groups.size === 1 ? "" : "s"}. Buy a tracked item again on another date to see a suggestion.</p>` : '<p class="empty-state">No tracked grocery items yet. Import a receipt and keep “Track for restock” selected.</p>';
+  return {
+    cards,
+    empty: groups.size ? `<p class="empty-state">Tracking ${groups.size} item${groups.size === 1 ? "" : "s"}. Buy a tracked item again on another date to see a suggestion.</p>` : '<p class="empty-state">No tracked grocery items yet. Import a receipt and keep “Track for restock” selected.</p>'
+  };
 }
 
 function renderSignedOut(authMode = "signin") {
@@ -251,30 +254,66 @@ async function shareInvite(kind) {
   if (kind === "email") location.href = `mailto:?subject=${encodeURIComponent("Join my Grocery Ledger household")}&body=${encodeURIComponent(body)}`;
   else try { await navigator.clipboard.writeText(inviteUrl); note("New invite link copied."); } catch { note(`Copy is unavailable. Invite code: ${code}`); }
 }
+function renderMembers() {
+  return members.map(member => `<div class="member-block"><strong>${esc(memberDisplayName(member))}</strong><span>${member.role === "owner" ? "Owner" : "Partner"}</span>${member.user_id === session.user.id ? '<small class="you-badge">You</small>' : ""}</div>`).join("");
+}
+function renderPreview(rows, { id, limit, noun, empty }) {
+  if (!rows.length) return empty;
+  const state = previewState(rows.length, limit);
+  const items = rows.map((content, index) => `<div class="preview-row"${index >= state.visibleCount ? ` data-preview-extra="${id}" hidden` : ""}>${content}</div>`).join("");
+  const controls = state.hasToggle ? `<div class="preview-controls"><span data-preview-count="${id}">${state.summary}</span><button type="button" class="plain preview-toggle" data-preview="${id}" data-total="${rows.length}" data-noun="${noun}" aria-controls="${id}" aria-expanded="false">Review all ${rows.length}</button></div>` : "";
+  return `<div id="${id}">${items}</div>${controls}`;
+}
+function renderBalance(balance, archived) {
+  const otherName = memberDisplayName(partner());
+  const currentName = memberDisplayName(members.find(member => member.user_id === session.user.id));
+  const balanceText = Math.abs(balance) < .005 ? `You and ${esc(otherName)} are settled` : balance > 0 ? `${esc(otherName)} owes you ${money(balance)}` : `You owe ${esc(otherName)} ${money(-balance)}`;
+  const settlement = settlementState(balance, currentName, otherName);
+  const guidance = settlement.kind === "settled" ? "" : `<div class="balance-next"><b>Next step</b><span>${esc(settlement.guidance)}</span>${settlement.actionLabel ? `<button id="settle">${esc(settlement.actionLabel)} · ${money(settlement.amount)}</button>` : ""}</div>`;
+  return `<section class="balance-card" aria-labelledby="balance-title"><small id="balance-title">Current balance</small><strong>${balanceText}</strong><span>Shared items split equally</span>${archived ? "" : guidance}</section>`;
+}
+function renderSettings(balance, archived, recoveryOpen) {
+  const ownerControls = isOwner() ? archived ? `<div class="danger-zone">${recoveryOpen ? `<button id="restore-household" class="secondary">Restore household</button><small>Recovery is available until ${fmt(current.purge_after)}.</small>` : `<button id="delete-household" class="danger">Permanently delete</button><small>The 30-day recovery period has ended.</small>`}</div>` : `<div class="danger-zone"><b>Close household</b><small>${Math.abs(balance) >= .005 ? "Settle the balance before closing." : "Starts a 30-day recovery period."}</small><button id="archive-household" class="danger"${Math.abs(balance) >= .005 ? " disabled" : ""}>Close household</button></div>` : "";
+  const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
+  const memberRows = members.map(member => `<div class="expense"><div><b>${esc(memberDisplayName(member))}</b><span>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</span></div></div>`).join("");
+  const nameForm = archived ? "" : `<form id="display-name-form" class="inline-form"><label>Your display name<input id="display-name" maxlength="80" required autocomplete="name" value="${esc(memberDisplayName(members.find(member => member.user_id === session.user.id)))}"></label><button class="secondary">Update name</button></form>`;
+  const archiveList = archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? esc(item.label) : "Archived settlement"}</b><span>${money(item.amount)}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">Restore</button>` : ""}</div>`).join("")}</details>` : "";
+  return `<details id="household-settings" class="panel settings"><summary><span><b>Household settings</b><small>Names, archived entries and recovery</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body"><div class="member-list">${memberRows}</div>${nameForm}${archiveList}${ownerControls}<div class="settings-actions"><button id="sign-out" class="plain">Sign out</button></div></div></details>`;
+}
 function renderDashboard() {
   const balance = balanceFor(session.user.id);
   const archived = !!current.archived_at;
-  const otherName = memberDisplayName(partner());
+  const recoveryOpen = archived && new Date(current.purge_after) > new Date();
   $("sync-state").textContent = archived ? "Archived · read only" : "Synced";
   const purchases = [...ledger.purchases].sort((a, b) => b.purchased_on.localeCompare(a.purchased_on)).map(item => row(item, "purchase")).join("") || '<p class="empty-state">No shared expenses yet. Add one or import a receipt to begin.</p>';
-  const settlements = [...ledger.settlements].sort((a, b) => b.settled_on.localeCompare(a.settled_on)).map(item => row(item, "settlement")).join("") || '<p class="empty-state">No settlements recorded.</p>';
-  const restock = suggestions();
-  const balanceText = Math.abs(balance) < .005 ? `You and ${esc(otherName)} are settled` : balance > 0 ? `${esc(otherName)} owes you ${money(balance)}` : `You owe ${esc(otherName)} ${money(-balance)}`;
-  const currentName = memberDisplayName(members.find(member => member.user_id === session.user.id));
-  const settlement = settlementState(balance, currentName, otherName);
-  const settlementGuidance = settlement.kind === "settled" ? "" : `<div class="balance-next"><b>Next step</b><span>${esc(settlement.guidance)}</span>${settlement.actionLabel ? `<button id="settle">${esc(settlement.actionLabel)} · ${money(settlement.amount)}</button>` : ""}</div>`;
-  const recoveryOpen = archived && new Date(current.purge_after) > new Date();
-  const ownerControls = isOwner() ? archived ? `<div class="danger-zone">${recoveryOpen ? `<button id="restore-household" class="secondary">Restore household</button><small>Recovery is available until ${fmt(current.purge_after)}.</small>` : `<button id="delete-household" class="danger">Permanently delete</button><small>The 30-day recovery period has ended.</small>`}</div>` : `<div class="danger-zone"><b>Close household</b><small>${Math.abs(balance) >= .005 ? "Settle the balance before closing." : "Starts a 30-day recovery period."}</small><button id="archive-household" class="danger"${Math.abs(balance) >= .005 ? " disabled" : ""}>Close household</button></div>` : "";
-  const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
-  const memberSummary = members.map(member => `<span class="member-chip"><b>${esc(memberDisplayName(member))}</b><small>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</small></span>`).join("");
-  const actions = archived ? "" : `<nav class="primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button></nav>`;
-  setScreen(`<section class="dashboard-head"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1><div class="member-chips">${memberSummary}</div></div><aside class="balance-card"><small>Current balance</small><strong>${balanceText}</strong><span>Shared items split equally</span>${archived ? "" : settlementGuidance}</aside>${actions}<details class="privacy-disclosure"><summary>Privacy: only reviewed receipt items sync</summary><p>PDFs and extracted text stay in this browser session. Payment methods, addresses, card and UPI details are never saved.</p></details>${archived ? `<p class="archive-banner">This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}</p>` : ""}</section><section class="dashboard-grid"><section class="dashboard-main"><section class="panel activity expenses-panel"><div class="heading"><div><p>LEDGER</p><h2>Expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div>${purchases}</div></section></section><aside class="dashboard-side"><section class="panel compact-card"><div class="heading"><div><p>RESTOCK</p><h2>Possible buys</h2></div></div><div>${restock}</div></section><section class="panel compact-card"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div><div>${settlements}</div></section></aside></section><details class="panel settings"><summary><span><b>Household settings</b><small>Names, archived entries and recovery</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body"><div class="member-list">${members.map(member => `<div class="expense"><div><b>${esc(memberDisplayName(member))}</b><span>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</span></div></div>`).join("")}</div>${archived ? "" : `<form id="display-name-form" class="inline-form"><label>Your display name<input id="display-name" maxlength="80" required autocomplete="name" value="${esc(memberDisplayName(members.find(member => member.user_id === session.user.id)))}"></label><button class="secondary">Update name</button></form>`}${archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? esc(item.label) : "Archived settlement"}</b><span>${money(item.amount)}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">Restore</button>` : ""}</div>`).join("")}</details>` : ""}${ownerControls}<div class="settings-actions"><button id="sign-out" class="plain">Sign out</button></div></div></details>`);
+  const settlementRows = [...ledger.settlements].sort((a, b) => b.settled_on.localeCompare(a.settled_on)).map(item => row(item, "settlement"));
+  const restock = suggestionCards();
+  const restockPanel = renderPreview(restock.cards, { id: "restock-preview", limit: 4, noun: "suggestions", empty: restock.empty });
+  const settlementPanel = renderPreview(settlementRows, { id: "settlement-preview", limit: 3, noun: "settlements", empty: '<p class="empty-state">No settlements recorded.</p>' });
+  const actions = archived ? "" : `<nav class="command-actions primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button><button id="open-settings" class="plain" aria-controls="household-settings">Household settings</button></nav>`;
+  const archiveBanner = archived ? `<p class="archive-banner">This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}</p>` : "";
+  setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}<section class="command-bar">${renderBalance(balance, archived)}${actions}</section><section class="insights-grid"><section class="panel insight-card restock-panel"><div class="heading"><div><p>RESTOCK</p><h2>Possible buys</h2></div></div>${restockPanel}</section><section class="panel insight-card settlements-panel"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section></section><section class="panel expenses-panel"><div class="heading"><div><p>LEDGER</p><h2>Recent expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div>${purchases}</div></section>${renderSettings(balance, archived, recoveryOpen)}<details class="privacy-disclosure"><summary>Privacy: only reviewed receipt items sync</summary><p>PDFs and extracted text stay in this browser session. Payment methods, addresses, card and UPI details are never saved.</p></details></section>`);
   bindDashboard(balance);
 }
 function bindDashboard(balance) {
   $("add") && ($("add").onclick = () => openEntry("expense"));
   $("settle") && ($("settle").onclick = () => openEntry("settlement", { amount: (-balance).toFixed(2) }));
   $("import-pdf") && ($("import-pdf").onclick = () => $("pdf-file").click());
+  $("open-settings") && ($("open-settings").onclick = () => {
+    const settings = $("household-settings");
+    settings.open = true;
+    settings.querySelector("summary").focus();
+    settings.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  document.querySelectorAll("[data-preview]").forEach(button => button.onclick = () => {
+    const id = button.dataset.preview;
+    const expanded = button.getAttribute("aria-expanded") !== "true";
+    button.setAttribute("aria-expanded", String(expanded));
+    document.querySelectorAll(`[data-preview-extra="${id}"]`).forEach(item => { item.hidden = !expanded; });
+    const count = document.querySelector(`[data-preview-count="${id}"]`);
+    if (count) count.textContent = expanded ? "" : `Showing ${id === "restock-preview" ? 4 : 3} of ${button.dataset.total}`;
+    button.textContent = expanded ? "Show fewer" : `Review all ${button.dataset.total}`;
+  });
   $("sign-out").onclick = () => supabase.auth.signOut();
   $("display-name-form") && ($("display-name-form").onsubmit = async event => {
     event.preventDefault();
