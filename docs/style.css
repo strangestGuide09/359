@@ -6,6 +6,9 @@ header,.heading { display:flex; justify-content:space-between; align-items:cente
 .brand { color:var(--ink); font-weight:800; text-decoration:none; }
 .brand b { display:inline-grid; place-items:center; width:29px; height:29px; margin-right:8px; border-radius:8px; background:var(--pine); color:white; font-size:10px; }
 header>span { padding:7px 10px; border:1px solid var(--line); border-radius:16px; color:var(--muted); font-size:12px; }
+.update-banner { position:sticky; top:10px; z-index:8; display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:14px; padding:11px 14px; border:1px solid #d8a363; border-radius:12px; background:#fff0dc; box-shadow:0 8px 24px #172f2220; }
+.update-banner span { display:grid; gap:2px; }
+.update-banner small { color:var(--muted); }
 button { min-height:43px; padding:11px 15px; border:1px solid var(--pine); border-radius:10px; background:var(--pine); color:white; font-weight:bold; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.58; }
 button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible { outline:3px solid #e7833d; outline-offset:3px; }
