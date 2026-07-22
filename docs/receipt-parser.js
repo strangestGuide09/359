@@ -135,6 +135,100 @@ function chargeName(text) {
   return "Other receipt charges";
 }
 
+const tokenAmount = token => {
+  const values = allAmounts([cleanText(token?.text)]);
+  return values.length ? values.at(-1) : null;
+};
+
+function tableSchema(tokens) {
+  const descriptions = tokens.filter(token => /\b(?:item\s+description|description(?:\s+of\s+goods)?)\b/i.test(token.text));
+  for (const description of descriptions) {
+    const band = tokens.filter(token => Math.abs(token.y - description.y) <= 20);
+    const serial = band.filter(token => /^(?:sr\.?\s*(?:no\.?)?|s\.?\s*no\.?)$/i.test(cleanText(token.text))).sort((a, b) => a.x - b.x)[0];
+    const quantity = band.filter(token => /^(?:qty\.?|quantity)\b(?:\s*(?:\/|and)?\s*uqc)?/i.test(cleanText(token.text))).sort((a, b) => a.x - b.x)[0];
+    const totals = band.filter(token => /^total(?:\s+amount)?(?:\s*\(\s*rs\.?\s*\))?\.?$/i.test(cleanText(token.text))).sort((a, b) => b.x - a.x);
+    const total = totals[0];
+    if (serial && quantity && total && serial.x < description.x && description.x < quantity.x && quantity.x < total.x) {
+      return { headerY: description.y, serialX: serial.x, descriptionX: description.x, quantityX: quantity.x, totalX: total.x, totalRight: total.x + total.width };
+    }
+  }
+  return null;
+}
+
+function positionedInvoiceTable(pages) {
+  const rows = [];
+  let sawSchema = false;
+  let detectedSerialCount = 0;
+  for (const page of pages) {
+    const tokens = page.filter(token => Number.isFinite(token.x) && Number.isFinite(token.y) && token.text);
+    const schema = tableSchema(tokens);
+    if (!schema) continue;
+    sawSchema = true;
+    const serials = tokens
+      .filter(token => token.y < schema.headerY - 2 && Math.abs(token.x - schema.serialX) <= 18 && /^\d{1,3}$/.test(cleanText(token.text)))
+      .map(token => ({ ...token, serial: Number(token.text) }))
+      .sort((a, b) => b.y - a.y);
+    const typicalGap = serials.length > 1 ? Math.max(22, Math.min(70, serials.slice(0, -1).reduce((sum, token, index) => sum + (token.y - serials[index + 1].y), 0) / (serials.length - 1))) : 44;
+    detectedSerialCount += serials.length;
+    serials.forEach((serial, index) => {
+      const previous = serials[index - 1];
+      const next = serials[index + 1];
+      const upper = previous ? (previous.y + serial.y) / 2 : schema.headerY - 2;
+      const lower = next ? (serial.y + next.y) / 2 : serial.y - typicalGap * .8;
+      const rowTokens = tokens.filter(token => token.y <= upper && token.y > lower);
+      const description = rowTokens
+        .filter(token => token.x >= schema.descriptionX - 8 && token.x < schema.quantityX - 4 && /[a-z]/i.test(token.text))
+        .sort((a, b) => b.y - a.y || a.x - b.x)
+        .map(token => token.text)
+        .join(" ");
+      const quantityToken = rowTokens
+        .filter(token => Math.abs(token.x - schema.quantityX) <= 35 && tokenAmount(token) != null)
+        .sort((a, b) => Math.abs(a.x - schema.quantityX) - Math.abs(b.x - schema.quantityX))[0];
+      const totalToken = rowTokens
+        .filter(token => token.x >= schema.totalX - 45 && tokenAmount(token) != null)
+        .sort((a, b) => Math.abs((a.x + a.width) - schema.totalRight) - Math.abs((b.x + b.width) - schema.totalRight))[0];
+      const name = cleanInstamartItemName(description);
+      const quantity = quantityToken ? tokenAmount(quantityToken) : null;
+      const lineTotal = totalToken ? tokenAmount(totalToken) : null;
+      if (!name || quantity == null || quantity <= 0 || lineTotal == null || lineTotal < 0) return;
+      const kind = instamartRowKind(name);
+      if (kind === "summary") return;
+      rows.push({ serial: serial.serial, page: serial.page || 0, kind, item: reviewedItem({
+        name: kind === "charge" ? chargeName(name) : name,
+        quantity,
+        line_total: lineTotal,
+        unit_price: quantity ? Number((lineTotal / quantity).toFixed(2)) : null,
+        is_tracked_for_restock: kind !== "charge"
+      }) });
+    });
+  }
+  if (!sawSchema || !rows.length) return null;
+  rows.sort((a, b) => a.serial - b.serial || a.page - b.page);
+  const serials = rows.map(row => row.serial);
+  const uniqueSerials = new Set(serials);
+  const contiguous = uniqueSerials.size === serials.length && serials.every((serial, index) => index === 0 || serial === serials[index - 1] + 1);
+  const items = [];
+  rows.forEach(({ kind, item }) => {
+    if (kind === "charge") {
+      const existing = items.find(candidate => candidate.name === item.name && !candidate.is_tracked_for_restock);
+      if (existing) { if (item.line_total > existing.line_total) Object.assign(existing, item); return; }
+    }
+    items.push(item);
+  });
+  return { items, complete: contiguous && serials[0] === 1 && rows.length === detectedSerialCount && rows.length >= 2, serials };
+}
+
+function linesForPage(page) {
+  if (!page.some(record => Number.isFinite(record.x))) return page.map(record => ({ y: Number(record.y) || 0, text: cleanText(record.text) })).filter(record => record.text);
+  const rows = new Map();
+  page.forEach(token => {
+    const y = Math.round((Number(token.y) || 0) / 2) * 2;
+    if (!rows.has(y)) rows.set(y, []);
+    rows.get(y).push(token);
+  });
+  return [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([y, tokens]) => ({ y, text: tokens.sort((a, b) => a.x - b.x).map(token => cleanText(token.text)).filter(Boolean).join(" ") }));
+}
+
 function instamartItems(pages) {
   const ignored = [
     "description of goods", "taxable", "discount", "amount", "value", "cgst", "sgst",
@@ -203,16 +297,20 @@ function instamartItems(pages) {
 }
 
 export function parseReceipt(pages, fallbackDate) {
-  const normalizedPages = pages.map(page => page
-    .map(line => typeof line === "string" ? { y: 0, text: cleanText(line) } : { y: Number(line.y) || 0, text: cleanText(line.text) })
-    .filter(line => line.text));
+  const positionedPages = pages.map((page, pageIndex) => page.map(record => typeof record === "string"
+    ? { page: pageIndex + 1, y: 0, text: cleanText(record) }
+    : { page: Number(record.page) || pageIndex + 1, x: record.x == null ? undefined : Number(record.x), y: Number(record.y) || 0, width: Number(record.width) || 0, height: Number(record.height) || 0, text: cleanText(record.text) }).filter(record => record.text));
+  const normalizedPages = positionedPages.map(linesForPage);
   const lines = normalizedPages.flatMap(page => page.map(line => line.text));
   const merchant = merchantFrom(lines);
-  const parsedItems = merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines);
+  const structured = positionedInvoiceTable(positionedPages);
+  const parsedItems = structured?.items?.length ? structured.items : merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines);
   const itemTotal = parsedItems.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
-  const total = receiptTotal(lines, itemTotal);
+  const semanticTotal = receiptTotal(lines, itemTotal);
+  const calculatedTotal = semanticTotal.confidence !== "high" && structured?.complete ? Number(itemTotal.toFixed(2)) : null;
+  const total = calculatedTotal == null ? semanticTotal : { amount: calculatedTotal, confidence: "calculated", source: "structured total column" };
   const reconciled = total.confidence === "high" ? reconcileReceiptDiscount(parsedItems, total.amount, lines) : { items: parsedItems, notice: "", mismatch: false };
-  const unresolvedTotal = total.confidence !== "high";
+  const unresolvedTotal = !["high", "calculated"].includes(total.confidence);
   const unreconciled = !!reconciled.mismatch || (total.amount != null && Math.abs(reconciled.items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0) - total.amount) > .01);
   const parserWarning = unresolvedTotal
     ? "We could not confidently identify a final paid or payable total. Enter it from the receipt, then verify every item and charge before saving."
@@ -228,7 +326,7 @@ export function parseReceipt(pages, fallbackDate) {
     },
     items: reconciled.items,
     parserWarning,
-    parserNotice: reconciled.notice,
+    parserNotice: calculatedTotal == null ? reconciled.notice : "Receipt total was calculated from the labelled Total column across complete item rows. Verify it against the invoice before saving.",
     totalConfidence: unreconciled ? "low" : total.confidence
   };
 }

@@ -415,7 +415,16 @@ function bindItemRows() {
 }
 function updateItemTotal() {
   const sum = reviewedItems.reduce((total, item) => total + (Number(item.line_total) || 0), 0);
-  const receiptTotal = Number($("amount").value) || 0;
+  const rawReceiptTotal = $("amount").value.trim();
+  if (!rawReceiptTotal) {
+    $("item-total").textContent = `Reviewed items: ${money(sum)} · Receipt total: needs confirmation · Difference unavailable`;
+    return;
+  }
+  const receiptTotal = Number(rawReceiptTotal);
+  if (!Number.isFinite(receiptTotal)) {
+    $("item-total").textContent = `Reviewed items: ${money(sum)} · Receipt total: needs confirmation · Difference unavailable`;
+    return;
+  }
   const difference = receiptTotal - sum;
   $("item-total").textContent = `Reviewed items: ${money(sum)} · Receipt total: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Difference: ${money(difference)}` : " · Totals match"}`;
 }
@@ -551,16 +560,17 @@ async function readPdfLocally(file) {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     note(`Reading page ${pageNumber} of ${pdf.numPages} locally…`);
     const content = await (await pdf.getPage(pageNumber)).getTextContent();
-    const rows = new Map();
-    for (const item of content.items) {
-      const y = Math.round(item.transform?.[5] || 0);
-      rows.set(y, `${rows.get(y) || ""} ${item.str}`.trim());
-    }
-    pages.push([...rows.entries()].sort((a, b) => b[0] - a[0]).map(([y, text]) => ({ y, text })));
+    pages.push(content.items.map(item => ({
+      page: pageNumber,
+      x: Number(item.transform?.[4]) || 0,
+      y: Number(item.transform?.[5]) || 0,
+      width: Number(item.width) || 0,
+      height: Number(item.height) || 0,
+      text: String(item.str || "").trim()
+    })).filter(item => item.text));
   }
   await pdf.destroy();
-  const lines = pages.flatMap(page => page.map(line => line.text));
-  const extractedText = lines.join("\n");
+  const extractedText = pages.flatMap(page => page.map(token => token.text)).join("\n");
   const normalized = extractedText.toLowerCase().replace(/[^a-z0-9.,₹\n ]/g, "").replace(/[ \t]+/g, " ").trim();
   return { exactHash, contentHash: await sha256(normalized), ...parseReceipt(pages, today()) };
 }

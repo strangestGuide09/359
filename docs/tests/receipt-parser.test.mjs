@@ -219,6 +219,69 @@ test("generic receipts still support name and price rows", () => {
   assert.equal(parsed.items[0].line_total, 120);
 });
 
+const positioned = (text, x, y, width = 40, page = 1) => ({ text, x, y, width, height: 10, page });
+
+test("positioned invoice columns retain multiline descriptions and calculate a complete total", () => {
+  const page = [
+    positioned("Ekta Dhan Greenmania Modern Retails Pvt Ltd -", 40, 950, 260),
+    positioned("Sr. no", 10, 900), positioned("UPC", 55, 900), positioned("Item Description", 140, 900, 130),
+    positioned("Qty", 430, 900), positioned("MRP", 500, 900), positioned("Total Amount (Rs.)", 600, 900, 110)
+  ];
+  const ordinaryTotals = Array(19).fill(100).concat(135.04);
+  let ordinaryIndex = 0;
+  for (let serial = 1; serial <= 23; serial += 1) {
+    const y = 860 - (serial - 1) * 30;
+    const special = serial === 10 ? 100 : serial === 20 ? 80 : serial === 23 ? 145 : null;
+    const total = special ?? ordinaryTotals[ordinaryIndex++];
+    page.push(positioned(String(serial), 10, y, 12), positioned(`890600000${String(serial).padStart(2, "0")}`, 55, y, 72));
+    if (serial === 10) page.push(positioned("Everyday", 140, y, 65), positioned("Apple (Pack)", 140, y - 9, 90));
+    else if (serial === 20) page.push(positioned("Akshayakalpa Organic Artisanal", 140, y, 190), positioned("Organic Set Cup Curd (Cup)", 140, y - 9, 180));
+    else if (serial === 23) page.push(positioned("Akshayakalpa Organic", 140, y, 145), positioned("Malai Paneer (Pack)", 140, y - 9, 145));
+    else page.push(positioned(`Product ${serial} (Pack)`, 140, y, 110));
+    page.push(positioned("1", 430, y, 8), positioned("9988", 485, y, 32), positioned("5.00", 535, y, 30), positioned(total.toFixed(2), 600, y, 48));
+  }
+  page.push(positioned("Total", 140, 140), positioned("14", 430, 140), positioned("3.54", 535, 140), positioned("3.54", 600, 140));
+  const parsed = parseReceipt([page], "2026-07-22");
+
+  assert.equal(parsed.defaults.amount, "2360.04");
+  assert.equal(parsed.totalConfidence, "calculated");
+  assert.match(parsed.parserNotice, /calculated from the labelled Total column/i);
+  assert.equal(parsed.items.length, 23);
+  assert.deepEqual(parsed.items.filter(item => item.name.startsWith("Akshayakalpa")).map(item => [item.name, item.line_total]), [
+    ["Akshayakalpa Organic Artisanal Organic Set Cup Curd (Cup)", 80],
+    ["Akshayakalpa Organic Malai Paneer (Pack)", 145]
+  ]);
+  assert.equal(parsed.items.find(item => item.name.startsWith("Everyday")).name, "Everyday Apple (Pack)");
+  assert.ok(parsed.items.every(item => item.quantity === 1));
+  assert.ok(parsed.items.every(item => item.is_tracked_for_restock));
+  assert.ok(parsed.items.every(item => !/890600|9988/.test(item.name)));
+});
+
+test("alternate positioned Description of Goods schema uses its rightmost Total column", () => {
+  const page = [
+    positioned("Corner invoice", 20, 600), positioned("Sr. no", 10, 550), positioned("Description of Goods", 100, 550, 150),
+    positioned("Qty. and UQC", 330, 550), positioned("Taxable Value", 410, 550), positioned("Total", 560, 550),
+    positioned("1", 10, 510), positioned("Everyday", 100, 510), positioned("Apple (Pack)", 100, 500), positioned("2", 330, 510), positioned("80.00", 410, 510), positioned("100.00", 560, 510),
+    positioned("2", 10, 460), positioned("Organic Milk 1 L", 100, 460), positioned("1", 330, 460), positioned("50.00", 410, 460), positioned("65.00", 560, 460),
+    positioned("Total", 100, 400), positioned("2", 330, 400), positioned("7.50", 410, 400), positioned("7.50", 560, 400)
+  ];
+  const parsed = parseReceipt([page], "2026-07-22");
+  assert.equal(parsed.defaults.amount, "165.00");
+  assert.deepEqual(parsed.items.map(item => [item.name, item.quantity, item.line_total]), [["Everyday Apple (Pack)", 2, 100], ["Organic Milk 1 L", 1, 65]]);
+});
+
+test("an incomplete positioned serial sequence cannot synthesize a receipt total", () => {
+  const page = [
+    positioned("Invoice", 20, 600), positioned("Sr. no", 10, 550), positioned("Item Description", 100, 550), positioned("Qty", 330, 550), positioned("Total", 560, 550),
+    positioned("1", 10, 510), positioned("Rice 2 kg", 100, 510), positioned("1", 330, 510), positioned("120.00", 560, 510),
+    positioned("2", 10, 460), positioned("Milk 1 L", 100, 460), positioned("1", 330, 460)
+  ];
+  const parsed = parseReceipt([page], "2026-07-22");
+  assert.equal(parsed.defaults.amount, "");
+  assert.equal(parsed.totalConfidence, "low");
+  assert.match(parsed.parserWarning, /enter it from the receipt/i);
+});
+
 test("receipt dates use an explicit fallback when absent", () => {
   assert.equal(receiptDate("no date", "2026-07-16"), "2026-07-16");
 });
