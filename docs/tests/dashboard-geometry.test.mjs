@@ -37,8 +37,8 @@ test.after(async () => {
 });
 
 const edges = box => ({ left: Math.round(box.left), right: Math.round(box.right) });
-async function measure(page, state) {
-  await page.goto(`${origin}/tests/fixtures/dashboard-geometry.html?state=${state}`);
+async function measure(page, state, presentation = "classic") {
+  await page.goto(`${origin}/tests/fixtures/dashboard-geometry.html?state=${state}&presentation=${presentation}`);
   return page.evaluate(() => {
     const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
     const result = { viewport: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth, footer: rect(".page-meta") };
@@ -62,9 +62,9 @@ async function measure(page, state) {
 test("loading and auth footers align to their active narrow cards", async context => {
   if (!browser) return context.skip("Playwright browser executable is not installed");
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  for (const state of ["loading", "auth"]) {
-    const measured = await measure(page, state);
-    assert.deepEqual(edges(measured.footer), edges(measured.card));
+  for (const presentation of ["classic", "sketch"]) for (const state of ["loading", "auth"]) {
+    const measured = await measure(page, state, presentation);
+    assert.deepEqual(edges(measured.footer), edges(measured.card), `${presentation} ${state}`);
   }
   await page.close();
 });
@@ -72,8 +72,8 @@ test("loading and auth footers align to their active narrow cards", async contex
 test("dashboard and expanded settings share exact desktop edges and intentional insight geometry", async context => {
   if (!browser) return context.skip("Playwright browser executable is not installed");
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
-  for (const state of ["dashboard", "settings"]) {
-    const measured = await measure(page, state);
+  for (const presentation of ["classic", "sketch"]) for (const state of ["dashboard", "settings"]) {
+    const measured = await measure(page, state, presentation);
     for (const key of ["masthead", "command", "insights", "ledger", "settings", "footer"]) assert.deepEqual(edges(measured[key]), edges(measured.shell), key);
     assert.equal(Math.round(measured.restock.top), Math.round(measured.settlements.top));
     assert.equal(Math.round(measured.restock.bottom), Math.round(measured.settlements.bottom));
@@ -87,9 +87,9 @@ test("dashboard and expanded settings share exact desktop edges and intentional 
 
 test("tablet and mobile retain order without horizontal overflow", async context => {
   if (!browser) return context.skip("Playwright browser executable is not installed");
-  for (const viewport of [{ width: 820, height: 1000 }, { width: 390, height: 844 }]) {
+  for (const presentation of ["classic", "sketch"]) for (const viewport of [{ width: 820, height: 1000 }, { width: 390, height: 844 }]) {
     const page = await browser.newPage({ viewport });
-    const measured = await measure(page, "dashboard");
+    const measured = await measure(page, "dashboard", presentation);
     assert.equal(measured.scrollWidth, measured.viewport);
     assert.ok(measured.masthead.top < measured.command.top);
     assert.ok(measured.command.top < measured.insights.top);

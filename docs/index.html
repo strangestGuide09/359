@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-presentation="classic">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,7 +13,7 @@
   </head>
   <body>
     <main data-layout="narrow">
-      <header><a class="brand" href="./"><b>GL</b> Grocery Ledger</a><span id="sync-state">Loading…</span></header>
+      <header><a class="brand" href="./"><b>GL</b> Grocery Ledger</a><div class="header-tools"><fieldset class="presentation-switch"><legend>Presentation</legend><label><input type="radio" name="presentation" value="classic" checked> Classic</label><label><input type="radio" name="presentation" value="sketch"> Sketch</label></fieldset><span id="sync-state">Loading…</span></div></header>
       <div id="screen"></div>
       <div class="page-meta"><p id="status" role="status" aria-live="polite"></p><footer>Reviewed shared-ledger entries only · PDFs are processed locally · no payment method, address, card, or UPI details</footer></div>
     </main>
