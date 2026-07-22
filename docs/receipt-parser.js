@@ -64,32 +64,25 @@ function receiptTotal(lines, itemTotal) {
       if (amount != null) return { amount, confidence: "high", source: line };
     }
   }
-  for (const line of [...lines].reverse()) {
-    if (!/^\s*total\b/i.test(line) || /^\s*total\s+(?:discount|tax|gst|cgst|sgst|cess|savings?|items?)\b/i.test(line)) continue;
-    const amount = semanticAmount(line, /^\s*total\b/i, itemTotal);
-    if (amount == null) continue;
-    if (!itemTotal || amount >= itemTotal * .35) return { amount, confidence: "high", source: line };
-  }
-  const amounts = allAmounts(lines);
-  const plausible = itemTotal ? amounts
-    .map(amount => ({ amount, distance: Math.abs(amount - itemTotal) }))
-    .filter(candidate => candidate.distance <= Math.max(1, itemTotal * .1))
-    .sort((a, b) => a.distance - b.distance)[0]?.amount : amounts.length === 1 ? amounts[0] : null;
-  return plausible != null ? { amount: plausible, confidence: "low", source: "numeric fallback" } : { amount: null, confidence: "low", source: "missing or implausible" };
+  // A bare "Total" is common in HSN/tax summaries and may be followed by an
+  // item count, tax rate, or column total. Never promote it to the payable
+  // amount, and never invent a receipt total from an unlabelled number.
+  return { amount: null, confidence: "low", source: "missing explicit payable total" };
 }
 
-function reconcileReceiptDiscount(items, total) {
+function reconcileReceiptDiscount(items, total, lines) {
   const itemTotal = items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
   if (!items.length || total == null || itemTotal <= total + .005 || total <= 0) return { items, notice: "" };
   const discount = itemTotal - total;
-  if (discount / itemTotal > .5) return { items, notice: "" };
+  const hasExplicitDiscount = lines.some(line => /\b(?:discount|coupon|promo|savings?)\b/i.test(line));
+  if (!hasExplicitDiscount || discount / itemTotal > .5) return { items, notice: "", mismatch: true };
   let allocated = 0;
   const adjusted = items.map((item, index) => {
     const lineTotal = index === items.length - 1 ? Number((total - allocated).toFixed(2)) : Number((Number(item.line_total || 0) * total / itemTotal).toFixed(2));
     allocated += lineTotal;
     return { ...item, line_total: lineTotal, unit_price: item.quantity ? Number((lineTotal / item.quantity).toFixed(2)) : item.unit_price };
   });
-  return { items: adjusted, notice: `Receipt-wide discount of ₹${discount.toFixed(2)} was allocated across item totals. Review before saving.` };
+  return { items: adjusted, notice: `Receipt-wide discount of ₹${discount.toFixed(2)} was allocated across item totals. Review before saving.`, mismatch: false };
 }
 
 function merchantFrom(lines) {
@@ -110,17 +103,26 @@ function genericItems(lines) {
     if (rowKind === "summary" || /\b(change|cash|card|upi)\b/i.test(line)) continue;
     const match = line.match(/^(.{2,120}?)\s+(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.\d{1,2})\s*$/i);
     if (!match || !/[a-z]/i.test(match[1])) continue;
-    const name = rowKind === "charge" ? chargeName(line) : match[1].replace(/^\d+(?:\.\d+)?\s*[x×]?\s*/i, "").trim();
+    const name = rowKind === "charge" ? chargeName(line) : cleanInstamartItemName(match[1].replace(/^\d+(?:\.\d+)?\s*[x×]?\s*/i, ""));
     const positiveAmounts = allAmounts([line]).filter(amount => amount > 0);
     const amount = rowKind === "charge" ? positiveAmounts.at(-1) : numberFrom(match[2]);
-    if (name && amount != null) items.push(reviewedItem({ name, line_total: amount, is_tracked_for_restock: rowKind !== "charge" }));
+    if (!name || amount == null) continue;
+    const item = reviewedItem({ name, line_total: amount, is_tracked_for_restock: rowKind !== "charge" });
+    if (rowKind === "charge") {
+      const existing = items.find(result => result.name === name && !result.is_tracked_for_restock);
+      if (existing) {
+        if (item.line_total > existing.line_total) Object.assign(existing, item);
+        continue;
+      }
+    }
+    items.push(item);
   }
   return items;
 }
 
 function instamartRowKind(text) {
   const normalized = cleanText(text).toLowerCase();
-  if (/\b(?:discount|coupon|promo|tax|gst|cgst|sgst|cess|subtotal|grand total|total paid|total payable|amount paid|amount payable|invoice value|net amount|round[ -]?off|savings?)\b/.test(normalized)) return "summary";
+  if (/^total\b/.test(normalized) || /\b(?:discount|coupon|promo|tax|gst|cgst|sgst|cess|subtotal|grand total|total paid|total payable|amount paid|amount payable|invoice value|net amount|round[ -]?off|savings?|payment summary)\b/.test(normalized)) return "summary";
   if (/\b(?:delivery(?:\s+and\s+other)?(?:\s+(?:fee|fees|charge|charges))?|(?:handling|platform|convenience|packing|service)\s+(?:fee|fees|charge|charges)|other\s+(?:fee|fees|charge|charges))\b/.test(normalized)) return "charge";
   return "product";
 }
@@ -137,7 +139,8 @@ function instamartItems(pages) {
   const ignored = [
     "description of goods", "taxable", "discount", "amount", "value", "cgst", "sgst",
     "cess", "hsn", "invoice", "quantity", "grand total", "total payable", "greenmania",
-    "modern retails", "private limited", "pvt ltd", "customer", "delivery address", "order id"
+    "modern retails", "private limited", "pvt ltd", "customer", "delivery address", "order id",
+    "payment summary", "total items"
   ];
   const results = [];
   for (const page of pages) {
@@ -145,10 +148,11 @@ function instamartItems(pages) {
       .map(line => ({ y: Number(line.y) || 0, text: cleanText(line.text) }))
       .filter(line => line.text);
     const prices = lines.flatMap(line => {
-      const match = line.text.match(/(?:^|\s)(\d+(?:\.\d+)?)\s+NOS\b.*?([0-9][0-9,]*(?:\.\d{1,2})?)\s*$/i);
-      const amount = match ? numberFrom(match[2]) : null;
-      const inlineName = match ? cleanText(line.text.slice(0, match.index)) : "";
-      return match && amount != null ? [{ y: line.y, quantity: numberFrom(match[1]) || 1, amount, inlineName }] : [];
+      const match = line.text.match(/(?:^|\s)(\d+(?:\.\d+)?)\s+NOS\b(.*)$/i);
+      const tailAmounts = match ? allAmounts([match[2]]) : [];
+      const amount = tailAmounts.length ? tailAmounts.at(-1) : null;
+      const inlineName = match ? cleanInstamartItemName(line.text.slice(0, match.index)) : "";
+      return match && amount != null ? [{ y: line.y, quantity: numberFrom(match[1]) || 1, amount, tailAmounts, inlineName }] : [];
     }).sort((a, b) => b.y - a.y);
 
     prices.forEach((price, index) => {
@@ -168,18 +172,31 @@ function instamartItems(pages) {
         .join(" ")
         .replace(/\s{2,}/g, " ")
         .trim();
-      const rawName = price.inlineName && /[a-z]/i.test(price.inlineName) ? price.inlineName : nearbyName;
+      const rawName = price.inlineName && /[a-z]/i.test(price.inlineName) ? price.inlineName : cleanInstamartItemName(nearbyName);
       if (!rawName) return;
       const rowKind = instamartRowKind(rawName);
       if (rowKind === "summary") return;
       const name = rowKind === "charge" ? chargeName(rawName) : cleanInstamartItemName(rawName);
-      results.push(reviewedItem({
+      // Charge rows in some invoices finish with zero-valued tax columns. In
+      // that layout the last positive decimal after the HSN/service code is the
+      // charge, while merchandise rows continue to use the final amount column.
+      const chargeAmounts = price.tailAmounts.filter((amount, index) => amount > 0 && !(index === 0 && Number.isInteger(amount) && amount >= 1000));
+      const lineTotal = rowKind === "charge" && price.amount === 0 ? chargeAmounts.at(-1) ?? 0 : price.amount;
+      const item = reviewedItem({
         name,
         quantity: price.quantity,
-        line_total: price.amount,
-        unit_price: price.quantity ? Number((price.amount / price.quantity).toFixed(2)) : null,
+        line_total: lineTotal,
+        unit_price: price.quantity ? Number((lineTotal / price.quantity).toFixed(2)) : null,
         is_tracked_for_restock: rowKind !== "charge"
-      }));
+      });
+      if (rowKind === "charge") {
+        const existing = results.find(result => result.name === name && !result.is_tracked_for_restock);
+        if (existing) {
+          if (item.line_total > existing.line_total) Object.assign(existing, item);
+          return;
+        }
+      }
+      results.push(item);
     });
   }
   return results;
@@ -194,17 +211,24 @@ export function parseReceipt(pages, fallbackDate) {
   const parsedItems = merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines);
   const itemTotal = parsedItems.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
   const total = receiptTotal(lines, itemTotal);
-  const reconciled = total.confidence === "high" ? reconcileReceiptDiscount(parsedItems, total.amount) : { items: parsedItems, notice: "" };
+  const reconciled = total.confidence === "high" ? reconcileReceiptDiscount(parsedItems, total.amount, lines) : { items: parsedItems, notice: "", mismatch: false };
+  const unresolvedTotal = total.confidence !== "high";
+  const unreconciled = !!reconciled.mismatch || (total.amount != null && Math.abs(reconciled.items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0) - total.amount) > .01);
+  const parserWarning = unresolvedTotal
+    ? "We could not confidently identify a final paid or payable total. Enter it from the receipt, then verify every item and charge before saving."
+    : unreconciled
+      ? "The extracted products and charges do not reconcile with the payable total. Check for a missing discount, fee, or incorrect line total before saving."
+      : "";
   return {
     defaults: {
       label: merchant,
-      amount: total.amount == null ? "" : total.amount.toFixed(2),
+      amount: total.amount == null || unreconciled ? "" : total.amount.toFixed(2),
       date: receiptDate(lines.join(" "), fallbackDate),
       category: merchant === "Imported invoice" ? "Other" : "Groceries"
     },
     items: reconciled.items,
-    parserWarning: total.confidence === "low" ? "We could not confidently identify the final paid or payable total. Check the receipt total and any delivery, fee, discount, or tax rows before saving." : "",
+    parserWarning,
     parserNotice: reconciled.notice,
-    totalConfidence: total.confidence
+    totalConfidence: unreconciled ? "low" : total.confidence
   };
 }

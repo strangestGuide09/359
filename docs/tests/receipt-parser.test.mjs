@@ -142,7 +142,7 @@ test("a total-discount column cannot become the payable total", () => {
 
   assert.notEqual(parsed.defaults.amount, "13.00");
   assert.equal(parsed.totalConfidence, "low");
-  assert.match(parsed.parserWarning, /delivery, fee, discount, or tax rows/i);
+  assert.match(parsed.parserWarning, /enter it from the receipt/i);
 });
 
 test("Blinkit and generic charge lines remain explicit and never restock", () => {
@@ -150,6 +150,7 @@ test("Blinkit and generic charge lines remain explicit and never restock", () =>
     { y: 200, text: "Blink Commerce Pvt Ltd - Blinkit" },
     { y: 180, text: "Apples 100.00" },
     { y: 160, text: "Platform fee 13.00" },
+    { y: 150, text: "Platform fee 13.00" },
     { y: 120, text: "Total Paid 113.00" }
   ]], "2026-07-16");
 
@@ -160,11 +161,50 @@ test("Blinkit and generic charge lines remain explicit and never restock", () =>
   assert.equal(parsed.items[1].is_tracked_for_restock, false);
 });
 
-test("unlabelled numeric fallback is explicitly low confidence", () => {
+test("unlabelled numeric fallback remains unresolved instead of inventing a total", () => {
   const parsed = parseReceipt([[{ y: 100, text: "Corner Shop" }, { y: 80, text: "Rice 120.00" }]], "2026-07-16");
-  assert.equal(parsed.defaults.amount, "120.00");
+  assert.equal(parsed.defaults.amount, "");
   assert.equal(parsed.totalConfidence, "low");
-  assert.match(parsed.parserWarning, /could not confidently identify the final paid or payable total/i);
+  assert.match(parsed.parserWarning, /could not confidently identify a final paid or payable total/i);
+});
+
+test("polluted Instamart table rows do not create a false 4760 total or footer item", () => {
+  const parsed = parseReceipt([[
+    { y: 900, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 820, text: "8906 Anveshan Desi 1045.00 313.00 1 697.14 0.00 0.00 0.00" },
+    { y: 800, text: "1 NOS 1515 697.14 17.43 17.43 0.00 732.00" },
+    { y: 760, text: "Toor Dal 1 kg 350.00 0.00 1 350.00 0.00 0.00" },
+    { y: 740, text: "1 NOS 0713 350.00" },
+    { y: 700, text: "- Delivery and other - - - 1.56 0.00 0.00 0.00 0 0.00" },
+    { y: 680, text: "1 NOS 9968 1.56 0.00 0.00 0.00" },
+    { y: 660, text: "Delivery and other charges 1.56 0.00 0.00" },
+    { y: 640, text: "1 NOS 9968 1.56 0.00 0.00 0.00" },
+    { y: 160, text: "Total 14 3.54 3.54 998.00 4760.00" },
+    { y: 140, text: "1 NOS 0000 998.00" }
+  ]], "2026-07-22");
+
+  assert.equal(parsed.defaults.amount, "");
+  assert.equal(parsed.totalConfidence, "low");
+  assert.match(parsed.parserWarning, /enter it from the receipt/i);
+  assert.deepEqual(parsed.items.map(item => item.name), ["Anveshan Desi", "Toor Dal 1 kg", "Delivery and other charges"]);
+  assert.deepEqual(parsed.items.map(item => item.line_total), [732, 350, 1.56]);
+  assert.equal(parsed.items.filter(item => item.name === "Delivery and other charges").length, 1);
+  assert.equal(parsed.items.at(-1).is_tracked_for_restock, false);
+  assert.ok(parsed.items.slice(0, 2).every(item => item.is_tracked_for_restock));
+  assert.ok(parsed.items.every(item => !/^total\b/i.test(item.name)));
+  assert.ok(parsed.items.every(item => !/\d+\.\d+\s+\d+\.\d+/.test(item.name)));
+});
+
+test("an explicit payable total that does not reconcile is left unresolved", () => {
+  const parsed = parseReceipt([[
+    { y: 500, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 400, text: "Rice 1 NOS 1006 100.00" },
+    { y: 100, text: "Grand Total items 14 tax 3.54 ₹4,760.00" }
+  ]], "2026-07-22");
+
+  assert.equal(parsed.defaults.amount, "");
+  assert.equal(parsed.totalConfidence, "low");
+  assert.match(parsed.parserWarning, /enter it from the receipt|do not reconcile/i);
 });
 
 test("generic receipts still support name and price rows", () => {
