@@ -1,14 +1,14 @@
 import Foundation
 import SwiftData
 
-enum LedgerPerson: String, CaseIterable, Identifiable, Codable {
+enum LedgerPerson: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
     case ekta = "Ekta"
     case ritesh = "Ritesh"
 
     var id: String { rawValue }
 }
 
-enum ExpenseCategory: String, CaseIterable, Identifiable, Codable {
+enum ExpenseCategory: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
     case groceries = "Groceries"
     case food = "Food"
     case wifi = "Wi-Fi"
@@ -30,11 +30,10 @@ final class Purchase {
     var purchasedAt: Date
     var createdAt: Date
     var paidBy: String
-    var sourcePDF: Data?
     var parsingNote: String?
     @Relationship(deleteRule: .cascade, inverse: \PurchaseItem.purchase) var items: [PurchaseItem]
 
-    init(merchant: String, category: ExpenseCategory = .groceries, invoiceNumber: String? = nil, purchasedAt: Date = .now, paidBy: LedgerPerson = .ekta, sourcePDF: Data? = nil, parsingNote: String? = nil) {
+    init(merchant: String, category: ExpenseCategory = .groceries, invoiceNumber: String? = nil, purchasedAt: Date = .now, paidBy: LedgerPerson = .ekta, parsingNote: String? = nil) {
         self.id = UUID()
         self.merchant = merchant
         self.category = category.rawValue
@@ -42,7 +41,6 @@ final class Purchase {
         self.purchasedAt = purchasedAt
         self.createdAt = .now
         self.paidBy = paidBy.rawValue
-        self.sourcePDF = sourcePDF
         self.parsingNote = parsingNote
         self.items = []
     }
@@ -54,16 +52,18 @@ final class PurchaseItem {
     var name: String
     var amount: Decimal
     var quantity: Decimal
+    var displayOrder: Int = 0
     var isPersonal: Bool
     var isTrackedForRestock: Bool
     var estimatedUseBy: Date?
     var purchase: Purchase?
 
-    init(name: String, amount: Decimal, quantity: Decimal = 1, isPersonal: Bool = false, isTrackedForRestock: Bool = false, estimatedUseBy: Date? = nil) {
+    init(name: String, amount: Decimal, quantity: Decimal = 1, displayOrder: Int = 0, isPersonal: Bool = false, isTrackedForRestock: Bool = false, estimatedUseBy: Date? = nil) {
         self.id = UUID()
         self.name = name
         self.amount = amount
         self.quantity = quantity
+        self.displayOrder = displayOrder
         self.isPersonal = isPersonal
         self.isTrackedForRestock = isTrackedForRestock
         self.estimatedUseBy = estimatedUseBy

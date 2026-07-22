@@ -57,7 +57,11 @@ private struct PurchaseDetailView: View {
                 if let note = purchase.parsingNote { Text(note).font(.footnote).foregroundStyle(.secondary) }
             }
             Section("Items") {
-                ForEach(purchase.items, id: \.id) { item in
+                ForEach(purchase.items.sorted { lhs, rhs in
+                    lhs.displayOrder == rhs.displayOrder
+                        ? lhs.id.uuidString < rhs.id.uuidString
+                        : lhs.displayOrder < rhs.displayOrder
+                }, id: \.id) { item in
                     Toggle(isOn: Binding(get: { item.isPersonal }, set: { item.isPersonal = $0 })) {
                         HStack {
                             VStack(alignment: .leading) {

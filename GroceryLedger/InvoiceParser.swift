@@ -6,7 +6,9 @@ struct ParsedInvoiceItem: Identifiable {
     var name: String
     var amount: Decimal
     var quantity: Decimal
+    var isPersonal: Bool = false
     var isTrackedForRestock: Bool = false
+    var estimatedUseBy: Date?
 }
 
 struct ParsedInvoice {
@@ -17,8 +19,22 @@ struct ParsedInvoice {
     var buyer: LedgerPerson?
     var suggestedTotal: Decimal?
     var items: [ParsedInvoiceItem]
-    var rawText: String
     var note: String
+}
+
+enum InvoiceReviewPolicy {
+    static func itemTotal(_ items: [ParsedInvoiceItem]) -> Decimal {
+        items.reduce(0) { $0 + $1.amount }
+    }
+
+    static func reconciliationDifference(items: [ParsedInvoiceItem], invoiceTotal: Decimal?) -> Decimal? {
+        invoiceTotal.map { itemTotal(items) - $0 }
+    }
+
+    static func shouldTrackForRestock(item: ParsedInvoiceItem, category: ExpenseCategory) -> Bool {
+        let supportedCategory = category == .groceries || category == .household
+        return supportedCategory && !item.isPersonal && item.isTrackedForRestock
+    }
 }
 
 enum InvoiceParser {
@@ -64,9 +80,9 @@ enum InvoiceParser {
             items = blinkitItems(in: text)
         }
         let note = items.isEmpty
-            ? "No product lines were read. Add a shared total manually, then review it before saving."
+            ? "No product lines were read. Review the draft item and total before saving."
             : "Product lines and invoice buyer were read from the PDF. Review the items and choose which ones to track for restock."
-        return ParsedInvoice(merchant: merchant, category: category, invoiceNumber: invoice, date: parsedDate, buyer: buyer, suggestedTotal: total, items: items, rawText: text, note: note)
+        return ParsedInvoice(merchant: merchant, category: category, invoiceNumber: invoice, date: parsedDate, buyer: buyer, suggestedTotal: total, items: items, note: note)
     }
 
     private static func foodItems(in text: String) -> [ParsedInvoiceItem] {
