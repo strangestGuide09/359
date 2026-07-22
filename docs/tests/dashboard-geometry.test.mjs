@@ -98,3 +98,25 @@ test("tablet and mobile retain order without horizontal overflow", async context
     await page.close();
   }
 });
+
+test("native expense selects align, stack, and retain chevrons in both presentations", async context => {
+  if (!browser) return context.skip("Playwright browser executable is not installed");
+  for (const presentation of ["classic", "sketch"]) for (const viewport of [{ width: 1440, height: 900 }, { width: 820, height: 1000 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage({ viewport });
+    await page.goto(`${origin}/tests/fixtures/dashboard-geometry.html?state=dashboard&presentation=${presentation}&modal=1`);
+    const measured = await page.evaluate(() => {
+      const category = document.querySelector("#fixture-category").getBoundingClientRect();
+      const payer = document.querySelector("#fixture-payer").getBoundingClientRect();
+      const payerStyle = getComputedStyle(document.querySelector("#fixture-payer"));
+      return { category, payer, columns: getComputedStyle(document.querySelector(".expense-meta-grid")).gridTemplateColumns, appearance: payerStyle.appearance, background: payerStyle.backgroundImage, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+    });
+    assert.equal(measured.category.height, 48);
+    assert.equal(measured.payer.height, 48);
+    assert.equal(measured.appearance, "none");
+    assert.match(measured.background, /linear-gradient/);
+    assert.equal(measured.overflow, 0);
+    if (viewport.width > 700) assert.equal(Math.round(measured.category.top), Math.round(measured.payer.top));
+    else assert.ok(measured.category.bottom < measured.payer.top);
+    await page.close();
+  }
+});
