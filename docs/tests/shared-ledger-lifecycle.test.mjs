@@ -198,3 +198,20 @@ test("repository declares docs as the production web client", async () => {
   assert.match(prototypeReadme, /retired browser-local prototype/);
   assert.match(prototypeReadme, /Do not deploy this directory/);
 });
+
+test("classic and sketch presentations share one accessible application surface", async () => {
+  const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
+  assert.match(page, /<html lang="en" data-presentation="classic">/);
+  assert.match(page, /<fieldset class="presentation-switch"><legend>Presentation<\/legend>/);
+  assert.match(page, /type="radio" name="presentation" value="classic" checked/);
+  assert.match(page, /type="radio" name="presentation" value="sketch"/);
+  assert.equal((page.match(/id="screen"/g) || []).length, 1);
+  assert.equal((page.match(/<dialog /g) || []).length, 1);
+  assert.match(app, /applyPresentation\(document, readPresentation\(window\.localStorage\)\)/);
+  assert.match(app, /savePresentation\(window\.localStorage, input\.value\)/);
+  assert.match(style, /html\[data-presentation="sketch"\] \.panel::after/);
+  assert.match(style, /html\[data-presentation="sketch"\] dialog::after/);
+  assert.match(style, /html\[data-presentation="sketch"\] \.import-feedback::after/);
+  const sketchStyles = style.slice(style.indexOf('html[data-presentation="sketch"]'));
+  assert.doesNotMatch(sketchStyles, /#[0-9a-f]{3,8}\b|rgba?\(/i);
+});

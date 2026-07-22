@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
+import { applyPresentation, readPresentation, savePresentation } from "./appearance.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 import { classifySignInError } from "./auth-errors.js";
 import { isDuplicateImportError, sameFingerprint } from "./duplicate-import.js";
@@ -25,6 +26,13 @@ const retryKey = "grocery-ledger-email-retry-at";
 const dialog = $("entry");
 const clientBuild = window.GROCERY_LEDGER_BUILD || "local-dev";
 const reloadVersionKey = "grocery-ledger-reloading-version";
+
+applyPresentation(document, readPresentation(window.localStorage));
+document.querySelectorAll('input[name="presentation"]').forEach(input => input.addEventListener("change", () => {
+  if (!input.checked) return;
+  applyPresentation(document, savePresentation(window.localStorage, input.value));
+  note(`${input.value === "sketch" ? "Sketch" : "Classic"} presentation selected.`);
+}));
 
 let session;
 let current;
