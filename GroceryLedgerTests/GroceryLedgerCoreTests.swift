@@ -4,6 +4,10 @@ import XCTest
 
 @MainActor
 final class GroceryLedgerCoreTests: XCTestCase {
+    private func token(_ text: String, _ x: CGFloat, _ y: CGFloat, _ width: CGFloat = 40) -> PositionedInvoiceToken {
+        PositionedInvoiceToken(text: text, x: x, y: y, width: width)
+    }
+
     private func purchase(
         name: String,
         date: Date,
@@ -79,7 +83,7 @@ final class GroceryLedgerCoreTests: XCTestCase {
         Restaurant Name: Test Kitchen
         Order Time: 11 July 2026, 07:57 PM
         Veg Wrap 2 ₹100.00 ₹200.00
-        Total ₹200.00
+        Total Paid ₹200.00
         """)
 
         XCTAssertEqual(invoice.merchant, "Test Kitchen")
@@ -90,6 +94,64 @@ final class GroceryLedgerCoreTests: XCTestCase {
         XCTAssertEqual(invoice.items.first?.isPersonal, false)
         XCTAssertEqual(invoice.items.first?.isTrackedForRestock, false)
         XCTAssertNil(invoice.items.first?.estimatedUseBy)
+    }
+
+    func testPositionedItemDescriptionTablePreservesMultilineSameBrandProducts() throws {
+        let page = [
+            token("Sr.", 10, 900), token("Description", 140, 900, 80), token("Qty", 430, 900), token("Total", 600, 900, 48),
+            token("1", 10, 860), token("Everyday", 140, 860), token("Apple", 140, 851), token("(Pack)", 190, 851), token("2", 430, 860), token("100.00", 600, 860, 48),
+            token("2", 10, 820), token("Akshayakalpa", 140, 820, 90), token("Organic", 235, 820), token("Artisanal", 285, 820), token("Organic", 140, 811), token("Set", 190, 811), token("Cup", 220, 811), token("Curd", 250, 811), token("1", 430, 820), token("80.00", 600, 820, 40),
+            token("3", 10, 780), token("Akshayakalpa", 140, 780, 90), token("Organic", 235, 780), token("Malai", 140, 771), token("Paneer", 180, 771), token("1", 430, 780), token("145.00", 600, 780, 48)
+        ]
+
+        let invoice = try InvoiceParser.parse(text: "Greenmania tax invoice", positionedPages: [page])
+
+        XCTAssertEqual(invoice.items.map(\.name), [
+            "Everyday Apple (Pack)",
+            "Akshayakalpa Organic Artisanal Organic Set Cup Curd",
+            "Akshayakalpa Organic Malai Paneer"
+        ])
+        XCTAssertEqual(invoice.items.map(\.quantity), [2, 1, 1])
+        XCTAssertEqual(invoice.items.map(\.amount), [100, 80, 145])
+        XCTAssertEqual(invoice.suggestedTotal, 325, "a contiguous complete Total column may supply the draft total")
+    }
+
+    func testPositionedDescriptionOfGoodsUsesQuantityAndRightmostTotalColumns() throws {
+        let page = [
+            token("Sr.", 10, 550), token("Description", 100, 550, 75), token("Quantity", 330, 550, 55), token("Taxable", 410, 550, 50), token("Total", 560, 550, 45),
+            token("1", 10, 510), token("Everyday", 100, 510), token("Apple", 100, 501), token("(Pack)", 145, 501), token("2", 330, 510), token("80.00", 410, 510), token("100.00", 560, 510),
+            token("2", 10, 460), token("Organic", 100, 460), token("Milk", 150, 460), token("1", 330, 460), token("50.00", 410, 460), token("65.00", 560, 460)
+        ]
+
+        let invoice = try InvoiceParser.parse(text: "Corner invoice\nInvoice Value ₹165.00 reference 14", positionedPages: [page])
+
+        XCTAssertEqual(invoice.items.map { [$0.quantity, $0.amount] }, [[2, 100], [1, 65]])
+        XCTAssertEqual(invoice.suggestedTotal, 165)
+    }
+
+    func testUnknownReceiptTotalRemainsNilInsteadOfBecomingZero() throws {
+        let invoice = try InvoiceParser.parse(text: """
+        Corner Shop
+        Rice 120.00
+        Total Discount 13.00
+        """)
+
+        XCTAssertNil(invoice.suggestedTotal)
+        XCTAssertNil(InvoiceReviewPolicy.reconciliationDifference(items: invoice.items, invoiceTotal: invoice.suggestedTotal))
+        XCTAssertTrue(invoice.note.localizedCaseInsensitiveContains("needs confirmation"))
+    }
+
+    func testLabelledButUnreconciledReceiptTotalRemainsUnresolved() throws {
+        let invoice = try InvoiceParser.parse(text: """
+        Zomato Food Order
+        Restaurant Name: Test Kitchen
+        Veg Wrap 1 ₹100.00 ₹100.00
+        Grand Total items 14 tax 3.54 ₹4,760.00
+        """)
+
+        XCTAssertEqual(invoice.items.first?.amount, 100)
+        XCTAssertNil(invoice.suggestedTotal)
+        XCTAssertNil(InvoiceReviewPolicy.reconciliationDifference(items: invoice.items, invoiceTotal: invoice.suggestedTotal))
     }
 
     func testPurchasePersistsReviewedLedgerFields() {

@@ -191,7 +191,8 @@ struct ImportInvoiceView: View {
                     .foregroundStyle(difference == 0 ? .green : .orange)
                 }
             } else {
-                Text("No invoice total was detected. Confirm the reviewed item total manually.")
+                LabeledContent("Receipt total", value: "Needs confirmation")
+                Text("Difference unavailable until a payable receipt total is confirmed. Verify every parsed row and amount before saving.")
                     .foregroundStyle(.orange)
             }
         }

@@ -22,6 +22,14 @@ struct ParsedInvoice {
     var note: String
 }
 
+struct PositionedInvoiceToken {
+    var text: String
+    var x: CGFloat
+    var y: CGFloat
+    var width: CGFloat
+    var page: Int = 0
+}
+
 enum InvoiceReviewPolicy {
     static func itemTotal(_ items: [ParsedInvoiceItem]) -> Decimal {
         items.reduce(0) { $0 + $1.amount }
@@ -41,16 +49,23 @@ enum InvoiceParser {
     static func parse(url: URL) throws -> ParsedInvoice {
         guard let document = PDFDocument(url: url) else { throw ParserError.unreadablePDF }
         let text = (0..<document.pageCount).compactMap { document.page(at: $0)?.string }.joined(separator: "\n")
-        return try parse(text: text, instamartDocument: document)
+        let positionedPages = (0..<document.pageCount).compactMap { index in
+            document.page(at: index).map { positionedTokens(from: $0, page: index) }
+        }
+        return try parse(text: text, positionedPages: positionedPages, instamartDocument: document)
     }
 
     /// Exposed internally for regression tests using sanitised invoice text.
     /// PDF contents are deliberately not stored by the parser.
     static func parse(text: String) throws -> ParsedInvoice {
-        try parse(text: text, instamartDocument: nil)
+        try parse(text: text, positionedPages: [], instamartDocument: nil)
     }
 
-    private static func parse(text: String, instamartDocument: PDFDocument?) throws -> ParsedInvoice {
+    static func parse(text: String, positionedPages: [[PositionedInvoiceToken]]) throws -> ParsedInvoice {
+        try parse(text: text, positionedPages: positionedPages, instamartDocument: nil)
+    }
+
+    private static func parse(text: String, positionedPages: [[PositionedInvoiceToken]], instamartDocument: PDFDocument?) throws -> ParsedInvoice {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ParserError.noSelectableText }
 
         let merchant: String
@@ -69,20 +84,151 @@ enum InvoiceParser {
         let buyerName = capture("(?:Invoice To:\\s*|Customer Name:\\s*|Name\\s*:\\s*)(Ekta(?:\\s+Dhan)?|Ritesh(?:\\s+Kumar)?)", in: text)
         let buyer = buyerName?.localizedCaseInsensitiveContains("Ritesh") == true ? LedgerPerson.ritesh : buyerName == nil ? nil : .ekta
         let invoice = capture("(?:Invoice No|Invoice Number|Order ID)\\s*:?\\s*([A-Z0-9]+)", in: text)
-        let total = decimalCapture("(?m)(?:Invoice Value|Grand Total|^Total)\\s*:?\\s*₹?\\s*([0-9]+(?:\\.[0-9]{1,2})?)", in: text)
         let parsedDate = foodOrderDate(in: text) ?? dateCapture("(?:Date\\s+of\\s+Invoice|Invoice\\s+Date|Date)\\s*:?\\s*([0-9]{2}[-/][A-Za-z0-9]{2,3}[-/][0-9]{2,4})", in: text) ?? .now
         let items: [ParsedInvoiceItem]
+        let structured = positionedTableItems(from: positionedPages)
         if category == .food {
             items = foodItems(in: text)
+        } else if let structured, !structured.items.isEmpty {
+            items = structured.items
         } else if merchant == "Instamart", let instamartDocument {
             items = instamartItems(from: instamartDocument)
         } else {
             items = blinkitItems(in: text)
         }
+        let itemTotal = InvoiceReviewPolicy.itemTotal(items)
+        let labelledTotal = confidentlyLabelledTotal(in: text, itemTotal: itemTotal)
+        let total = labelledTotal ?? (structured?.isComplete == true ? itemTotal : nil)
         let note = items.isEmpty
-            ? "No product lines were read. Review the draft item and total before saving."
-            : "Product lines and invoice buyer were read from the PDF. Review the items and choose which ones to track for restock."
+            ? "No product lines were read and the payable total needs confirmation. Review the draft item and total before saving."
+            : labelledTotal == nil && structured?.isComplete == true
+                ? "Receipt total was calculated from a complete labelled Total column. Verify it against the invoice before saving."
+                : total == nil
+                    ? "The payable total needs confirmation. Verify every item and enter or correct the receipt total before saving."
+                    : "Product lines and invoice buyer were read from the PDF. Review the items and choose which ones to track for restock."
         return ParsedInvoice(merchant: merchant, category: category, invoiceNumber: invoice, date: parsedDate, buyer: buyer, suggestedTotal: total, items: items, note: note)
+    }
+
+    private struct PositionedTableResult {
+        var items: [ParsedInvoiceItem]
+        var isComplete: Bool
+    }
+
+    private struct TableSchema {
+        var headerY: CGFloat
+        var serialX: CGFloat
+        var descriptionX: CGFloat
+        var quantityX: CGFloat
+        var totalX: CGFloat
+        var totalRight: CGFloat
+    }
+
+    private static func positionedTableItems(from pages: [[PositionedInvoiceToken]]) -> PositionedTableResult? {
+        var rows: [(serial: Int, page: Int, item: ParsedInvoiceItem)] = []
+        var sawSchema = false
+        for page in pages {
+            guard let schema = tableSchema(in: page) else { continue }
+            sawSchema = true
+            let serials = page.compactMap { token -> (token: PositionedInvoiceToken, serial: Int)? in
+                let value = token.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard token.y < schema.headerY - 2, abs(token.x - schema.serialX) <= 22,
+                      value.range(of: "^[0-9]{1,3}$", options: .regularExpression) != nil,
+                      let serial = Int(value) else { return nil }
+                return (token, serial)
+            }.sorted { $0.token.y > $1.token.y }
+            let typicalGap: CGFloat = {
+                guard serials.count > 1 else { return 44 }
+                let gaps = zip(serials, serials.dropFirst()).map { $0.token.y - $1.token.y }
+                return min(70, max(22, gaps.reduce(0, +) / CGFloat(gaps.count)))
+            }()
+            for index in serials.indices {
+                let serial = serials[index]
+                let upper = index > 0 ? (serials[index - 1].token.y + serial.token.y) / 2 : schema.headerY - 2
+                let lower = index + 1 < serials.count ? (serial.token.y + serials[index + 1].token.y) / 2 : serial.token.y - typicalGap * 0.8
+                let row = page.filter { $0.y <= upper && $0.y > lower }
+                let description = row.filter {
+                    $0.x >= schema.descriptionX - 10 && $0.x < schema.quantityX - 4 &&
+                    $0.text.rangeOfCharacter(from: .letters) != nil
+                }.sorted { $0.y == $1.y ? $0.x < $1.x : $0.y > $1.y }
+                    .map(\.text).joined(separator: " ")
+                let quantityToken = row.filter {
+                    abs($0.x - schema.quantityX) <= 38 && decimal(in: $0.text) != nil
+                }.min { abs($0.x - schema.quantityX) < abs($1.x - schema.quantityX) }
+                let totalToken = row.filter {
+                    $0.x >= schema.totalX - 45 && decimal(in: $0.text) != nil
+                }.min { abs(($0.x + $0.width) - schema.totalRight) < abs(($1.x + $1.width) - schema.totalRight) }
+                let name = cleanName(description)
+                guard !name.isEmpty, let quantityToken, let quantity = decimal(in: quantityToken.text), quantity > 0,
+                      let totalToken, let amount = decimal(in: totalToken.text), amount >= 0 else { continue }
+                rows.append((serial.serial, serial.token.page, ParsedInvoiceItem(name: name, amount: amount, quantity: quantity)))
+            }
+        }
+        guard sawSchema, !rows.isEmpty else { return nil }
+        rows.sort { $0.serial == $1.serial ? $0.page < $1.page : $0.serial < $1.serial }
+        let serials = rows.map(\.serial)
+        let complete = Set(serials).count == serials.count && serials.enumerated().allSatisfy { index, serial in
+            index == 0 || serial == serials[index - 1] + 1
+        } && rows.count >= 2
+        return PositionedTableResult(items: rows.map(\.item), isComplete: complete)
+    }
+
+    private static func tableSchema(in tokens: [PositionedInvoiceToken]) -> TableSchema? {
+        for description in tokens where description.text.range(of: "description", options: [.caseInsensitive]) != nil {
+            let band = tokens.filter { abs($0.y - description.y) <= 20 }
+            let serial = band.filter { $0.text.range(of: "^(?:sr\\.?|s\\.?|sr\\.?\\s*no\\.?)$", options: [.caseInsensitive, .regularExpression]) != nil }.min { $0.x < $1.x }
+            let quantity = band.filter { $0.text.range(of: "^(?:qty|quantity)(?:\\s*/\\s*uqc)?$", options: [.caseInsensitive, .regularExpression]) != nil }.min { $0.x < $1.x }
+            let total = band.filter { $0.text.range(of: "^total(?:\\s+amount)?(?:\\s*\\(\\s*rs\\.?\\s*\\))?\\.?$", options: [.caseInsensitive, .regularExpression]) != nil }.max { $0.x < $1.x }
+            if let serial, let quantity, let total, serial.x < description.x, description.x < quantity.x, quantity.x < total.x {
+                return TableSchema(headerY: description.y, serialX: serial.x, descriptionX: description.x, quantityX: quantity.x, totalX: total.x, totalRight: total.x + total.width)
+            }
+        }
+        return nil
+    }
+
+    private static func positionedTokens(from page: PDFPage, page pageIndex: Int) -> [PositionedInvoiceToken] {
+        guard let value = page.string else { return [] }
+        let source = value as NSString
+        var result: [PositionedInvoiceToken] = []
+        var start: Int?
+        func appendToken(endingAt end: Int) {
+            guard let tokenStart = start, end > tokenStart else { start = nil; return }
+            var bounds = CGRect.null
+            for index in tokenStart..<end { bounds = bounds.union(page.characterBounds(at: index)) }
+            let text = source.substring(with: NSRange(location: tokenStart, length: end - tokenStart))
+            if !bounds.isNull { result.append(PositionedInvoiceToken(text: text, x: bounds.minX, y: bounds.minY, width: bounds.width, page: pageIndex)) }
+            start = nil
+        }
+        for index in 0..<source.length {
+            if CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(source.character(at: index))!) { appendToken(endingAt: index) }
+            else if start == nil { start = index }
+        }
+        appendToken(endingAt: source.length)
+        return result
+    }
+
+    private static func confidentlyLabelledTotal(in text: String, itemTotal: Decimal) -> Decimal? {
+        let label = "(?:Final Amount Payable|Total Payable|Amount Payable|Amount Paid|Total Paid|You Paid|Grand Total|Invoice Value|Net Amount)"
+        guard let regex = try? NSRegularExpression(pattern: "(?im)\\b\(label)\\b[^\\n]*", options: [.caseInsensitive]) else { return nil }
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: text) else { continue }
+            let values = decimalValues(in: String(text[range]))
+            guard !values.isEmpty else { continue }
+            let chosen = itemTotal > 0 ? values.min(by: { abs($0 - itemTotal) < abs($1 - itemTotal) })! : values.last!
+            if itemTotal == 0 || abs(chosen - itemTotal) <= Decimal(string: "0.01")! { return chosen }
+        }
+        return nil
+    }
+
+    private static func decimalValues(in value: String) -> [Decimal] {
+        guard let regex = try? NSRegularExpression(pattern: "[0-9][0-9,]*(?:\\.[0-9]{1,2})?") else { return [] }
+        return regex.matches(in: value, range: NSRange(value.startIndex..., in: value)).compactMap { match in
+            Range(match.range, in: value).flatMap { decimal(in: String(value[$0])) }
+        }
+    }
+
+    private static func decimal(in value: String) -> Decimal? {
+        Decimal(string: value.replacingOccurrences(of: ",", with: ""), locale: Locale(identifier: "en_US_POSIX"))
     }
 
     private static func foodItems(in text: String) -> [ParsedInvoiceItem] {
@@ -136,10 +282,11 @@ enum InvoiceParser {
                 guard let text = selection.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
                 return VisualLine(y: selection.bounds(for: page).minY, text: text)
             }
-            let prices = lines.compactMap { line -> (y: CGFloat, amount: Decimal)? in
+            let prices = lines.compactMap { line -> (y: CGFloat, amount: Decimal, quantity: Decimal)? in
                 guard line.text.range(of: "^[0-9]+\\s+NOS\\s+[0-9]+.*\\s+([0-9]+(?:\\.[0-9]+)?)$", options: .regularExpression) != nil,
+                      let quantity = Decimal(string: line.text.split(separator: " ").first.map(String.init) ?? ""),
                       let amount = Decimal(string: line.text.split(separator: " ").last.map(String.init) ?? "", locale: Locale(identifier: "en_US_POSIX")) else { return nil }
-                return (line.y, amount)
+                return (line.y, amount, quantity)
             }.sorted { $0.y > $1.y }
             for (index, price) in prices.enumerated() {
                 let upper = index == 0 && prices.count > 1
@@ -153,7 +300,7 @@ enum InvoiceParser {
                     return line.y <= upper && line.y >= lower && line.text.rangeOfCharacter(from: .letters) != nil &&
                         !line.text.localizedCaseInsensitiveContains("NOS") && !ignored.contains(where: lowercased.contains)
                 }.sorted { $0.y > $1.y }.map(\.text).joined(separator: " ")
-                result.append(ParsedInvoiceItem(name: name.isEmpty ? "Invoice item \(result.count + 1)" : cleanName(name), amount: price.amount, quantity: 1))
+                result.append(ParsedInvoiceItem(name: name.isEmpty ? "Invoice item \(result.count + 1)" : cleanName(name), amount: price.amount, quantity: price.quantity))
             }
         }
         return result
