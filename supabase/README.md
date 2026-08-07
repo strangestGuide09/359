@@ -114,6 +114,24 @@ distinct purchase dates, and exact untracked item UUIDs for manual review.
 Multiple receipts on the same date provide only one date of restock history, so
 they do not establish a buying interval by themselves.
 
+The production website does not call a restock RPC. It selects active
+`purchases` with embedded `purchase_items` and computes Possible buys locally.
+An item is eligible only when it is non-personal, tracked, not a fee/charge,
+and its normalized name appears on at least two distinct `purchased_on` dates.
+The second audit result now reports `tracked_distinct_purchase_dates` and
+`possible_buys_eligible`; a repeated name with only one tracked date must not be
+treated as a suggestion. Its SQL normalization is deliberately conservative,
+so the website may also merge obvious merchant/pack/unit formatting variants.
+
+For a hosted-data check, run `support/restock_history_audit.sql` in SQL Editor
+without modifying it. Result 1 confirms that reviewed rows and restock flags
+exist by purchase. Result 2 identifies repeated names and shows whether the
+stored flags satisfy the two-date rule. Result 3 lists untracked rows for manual
+review. A signed-out client or the publishable key alone cannot audit household
+rows because RLS correctly hides them; use an authenticated household session
+or the Dashboard SQL Editor. Do not share the result if reviewed item names are
+sensitive.
+
 There is no reliable database marker distinguishing the former website default
 (`is_tracked_for_restock = false`) from a user's explicit opt-out. `created_at`
 is not sufficient evidence, so there is intentionally no date-based or blanket

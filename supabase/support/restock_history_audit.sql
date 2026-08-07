@@ -41,7 +41,9 @@ select
   count(distinct purchased_on)::integer as distinct_purchase_dates,
   array_agg(distinct purchased_on order by purchased_on) as purchase_dates,
   count(*) filter (where is_tracked_for_restock)::integer as tracked_count,
-  count(*) filter (where not is_tracked_for_restock)::integer as untracked_count
+  count(*) filter (where not is_tracked_for_restock)::integer as untracked_count,
+  count(distinct purchased_on) filter (where is_tracked_for_restock)::integer as tracked_distinct_purchase_dates,
+  (count(distinct purchased_on) filter (where is_tracked_for_restock) >= 2) as possible_buys_eligible
 from normalized_items
 where normalized_name <> ''
 group by household_id, normalized_name
