@@ -117,7 +117,6 @@ struct ReturningSessionMachine: Equatable, Sendable {
 }
 
 enum NativeSignInRecommendation {
-    static let primary = "Email one-time code"
-    static let fallback = "Magic link"
-    static let guidance = "Offer a six-digit email OTP first so sign-in stays inside the app. Keep a magic-link fallback for delivery or autofill problems, returning through a verified universal link."
+    static let primary = "Six-digit email code"
+    static let guidance = "Send a six-digit email code and verify it inside the app. Do not require the person to leave the app to open a sign-in link."
 }

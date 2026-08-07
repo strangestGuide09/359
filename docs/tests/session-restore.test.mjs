@@ -75,15 +75,17 @@ test("temporary SDK cache removal can be restored without duplicating persistenc
   assert.equal(raw.getItem("sb-project-auth-token"), "saved-session");
 });
 
-test("restore and OTP UI messaging protects session state and never remembers a code", async () => {
+test("restore and email-code UI messaging protects session state and never remembers a code", async () => {
   const app = await readFile(new URL("../app.js", import.meta.url), "utf8");
   assert.equal(SESSION_RESTORE_DELAYS.reduce((sum, delay) => sum + delay, 0), 12000);
   assert.match(app, /RESTORING SESSION/);
   assert.match(app, /Waking your ledger/);
   assert.match(app, /Nothing was signed out or cleared, and local drafts remain/);
-  assert.match(app, /autocomplete="one-time-code"/);
-  assert.match(app, /verifyOtp\(\{ email, token, type: "email" \}\)/);
   assert.match(app, /localStorage\.setItem\(rememberedEmailKey, email\)/);
   assert.doesNotMatch(app, /localStorage\.setItem\([^\n]*(?:token|code)/i);
-  assert.match(app, /secure same-browser sign-in link remains available as a fallback/);
+  assert.match(app, /We’ll email a 6-digit code you can enter here/);
+  assert.match(app, /autocomplete="one-time-code"/);
+  assert.match(app, /supabase\.auth\.verifyOtp\(\{ email, token, type: "email" \}\)/);
+  assert.doesNotMatch(app, /function renderEmailLinkSent/);
+  assert.doesNotMatch(app, /Email me a sign-in link/);
 });

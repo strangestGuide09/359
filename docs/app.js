@@ -233,31 +233,44 @@ function suggestionCards() {
 
 function renderOtpChallenge(email, creating) {
   $("sync-state").textContent = "Check your email";
-  setScreen(`<section class="panel account-gate"><p>CHECK YOUR EMAIL</p><h1 tabindex="-1">Enter your sign-in code</h1><article>Enter the one-time code sent to <b>${esc(email)}</b>. It works in this browser without switching away from the ledger.</article><form id="otp-form" class="auth-form"><label>One-time code<input id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required placeholder="6-digit code"></label><button>Verify code</button></form><p class="auth-status">If your email contains a secure sign-in link instead, open that link in this same browser. The link remains available as a fallback.</p><button id="send-another-code" type="button" class="plain">Use another email or send again</button><p id="auth-status" class="auth-status" role="status"></p></section>`);
+  setScreen('<section class="panel account-gate"><p>CHECK YOUR EMAIL</p><h1 tabindex="-1">Enter your 6-digit code</h1><article>Enter the six-digit code sent to <b>' + esc(email) + '</b>. It works here without leaving Grocery Ledger.</article><form id="otp-form" class="auth-form"><label>One-time code<input id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="123456"></label><button>Verify code</button></form><button id="send-another-code" type="button" class="plain">Use another email or send another code</button><p id="auth-status" class="auth-status" role="status"></p></section>');
   $("send-another-code").onclick = () => renderSignedOut(creating ? "signup" : "signin");
   $("otp-form").onsubmit = async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector("button");
     const input = $("login-code");
     const token = input.value.trim();
+    if (!/^\d{6}$/.test(token)) {
+      $("auth-status").className = "auth-status error";
+      $("auth-status").textContent = "Enter the six-digit code from your email.";
+      input.focus();
+      return;
+    }
     button.disabled = true;
     button.textContent = "Verifying…";
     verifyingOtp = true;
-    const { data, error } = await supabase.auth.verifyOtp({ email, token, type: "email" });
-    verifyingOtp = false;
-    input.value = "";
-    if (error) {
-      const invalid = sessionErrorKind(error) === "invalid";
-      $("auth-status").className = "auth-status error";
-      $("auth-status").textContent = invalid ? "That code is invalid or expired. Request a new code and try again." : "We couldn’t verify the code while the ledger reconnects. Try again in a moment; your email is remembered.";
-      button.disabled = false;
-      button.textContent = "Try verification again";
-      return;
-    }
-    if (data.session) {
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+      input.value = "";
+      if (error || !data?.session) {
+        $("auth-status").className = "auth-status error";
+        $("auth-status").textContent = error && sessionErrorKind(error) === "invalid"
+          ? "That 6-digit code is invalid or expired. Send another code and try again."
+          : "We couldn’t verify the code. Send another code and try again.";
+        button.disabled = false;
+        button.textContent = "Try verification again";
+        return;
+      }
       session = data.session;
       renderRestoring();
       await loadHousehold();
+    } catch {
+      $("auth-status").className = "auth-status error";
+      $("auth-status").textContent = "We couldn’t verify the code. Try again in a moment.";
+      button.disabled = false;
+      button.textContent = "Try verification again";
+    } finally {
+      verifyingOtp = false;
     }
   };
 }
@@ -269,7 +282,7 @@ function renderSignedOut(authMode = "signin", statusMessage = "") {
   const retryAt = Number(localStorage.getItem(retryKey) || 0);
   const waiting = retryAt > Date.now();
   const time = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>${creating ? "Create your account with your name and email." : "Sign in to your existing account."} We’ll email a one-time code you can enter here. A secure same-browser sign-in link remains available as a fallback.</article><div class="auth-choice" aria-label="Account access"><button id="show-signin" type="button" class="${creating ? "secondary" : ""}" aria-pressed="${!creating}">Sign in</button><button id="show-signup" type="button" class="${creating ? "" : "secondary"}" aria-pressed="${creating}">Create account</button></div><form id="login-form" class="auth-form${creating ? " auth-signup" : ""}">${creating ? '<label>Your name<input id="signup-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>' : ""}<label>Email<input id="login-email" type="email" required autocomplete="email" value="${esc(rememberedEmail)}" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : creating ? "Create account" : "Email me a code"}</button></form><p id="auth-status" class="auth-status${waiting || statusMessage ? " error" : ""}">${esc(statusMessage || (waiting ? `Try again at ${time}.` : creating ? "Your name is shared only with your household partner." : "Sign in will not create a new account."))}</p></section>`);
+  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>${creating ? "Create your account with your name and email." : "Sign in to your existing account."} We’ll email a 6-digit code you can enter here.</article><div class="auth-choice" aria-label="Account access"><button id="show-signin" type="button" class="${creating ? "secondary" : ""}" aria-pressed="${!creating}">Sign in</button><button id="show-signup" type="button" class="${creating ? "" : "secondary"}" aria-pressed="${creating}">Create account</button></div><form id="login-form" class="auth-form${creating ? " auth-signup" : ""}">${creating ? '<label>Your name<input id="signup-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>' : ""}<label>Email<input id="login-email" type="email" required autocomplete="email" value="${esc(rememberedEmail)}" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : creating ? "Create account and send code" : "Send 6-digit code"}</button></form><p id="auth-status" class="auth-status${waiting || statusMessage ? " error" : ""}">${esc(statusMessage || (waiting ? `Try again at ${time}.` : creating ? "Your name is shared only with your household partner." : "Sign in will not create a new account."))}</p></section>`);
   $("show-signin").onclick = () => renderSignedOut("signin");
   $("show-signup").onclick = () => renderSignedOut("signup");
   $("login-form").onsubmit = async event => {
@@ -280,7 +293,7 @@ function renderSignedOut(authMode = "signin", statusMessage = "") {
     const displayName = creating ? $("signup-name").value.trim() : "";
     button.disabled = true;
     button.textContent = "Sending…";
-    const options = { emailRedirectTo: `${location.origin}${location.pathname}${location.search}`, shouldCreateUser: creating };
+    const options = { shouldCreateUser: creating };
     if (creating) options.data = { display_name: displayName };
     localStorage.setItem(rememberedEmailKey, email);
     const { error } = await supabase.auth.signInWithOtp({ email, options });

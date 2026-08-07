@@ -128,8 +128,8 @@ and checks below passed.
   `Grocery Ledger` and a 60-second minimum send interval. No SMTP credential is
   stored in this repository.
 - Brevo reports the expected DKIM, DMARC, and free-address deliverability
-  warnings. Successful Magic Link delivery to both users remains a live
-  acceptance-test requirement.
+  warnings. Successful six-digit email-code delivery and verification for both
+  users remains a live acceptance-test requirement.
 - Security Advisor reported zero errors, nine expected warnings for the
   authenticated Grocery Ledger `SECURITY DEFINER` RPCs, and one informational
   suggestion.
@@ -141,6 +141,53 @@ and checks below passed.
 These warnings are expected only while their grants remain exactly as audited.
 Any future anonymous execute grant, service-role client use, missing RLS policy,
 additional Realtime table, or new Advisor error requires investigation.
+
+## Hosted six-digit email-code configuration
+
+The web client sends passwordless email through `signInWithOtp(...)` and
+verifies the code inside the client with
+`verifyOtp({ email, token, type: "email" })`. The code itself is never persisted
+by the client.
+
+In Supabase Dashboard → **Authentication** → **Email Templates** → **Magic
+Link**, replace any `{{ .ConfirmationURL }}` use with `{{ .Token }}`. Use this
+email-client-safe, branded template:
+
+```html
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f8f1e2;color:#173b2b;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f8f1e2;padding:32px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#fffdf8;border:1px solid #ddceb7;border-radius:18px;">
+            <tr>
+              <td style="padding:32px 32px 12px;">
+                <p style="margin:0 0 10px;color:#c95208;font-size:12px;font-weight:700;letter-spacing:1.5px;">GROCERY LEDGER</p>
+                <h1 style="margin:0;color:#173b2b;font-size:28px;line-height:1.2;">Your verification code</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:12px 32px 32px;">
+                <p style="margin:0 0 24px;color:#4c5f55;font-size:16px;line-height:1.55;">Enter this code in Grocery Ledger to securely sign in.</p>
+                <div style="margin:0 0 24px;padding:20px;background:#0e4934;border-radius:12px;color:#ffffff;font-size:34px;font-weight:700;letter-spacing:8px;line-height:1;text-align:center;">{{ .Token }}</div>
+                <p style="margin:0;color:#4c5f55;font-size:14px;line-height:1.55;">Do not share this code. If you did not request it, you can safely ignore this email.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+```
+
+The Supabase editor preview displays `{{ .Token }}` literally; a real email
+replaces it with the six-digit code.
+
+Save the template only after the matching web build is deployed, then test both
+**Sign in** and **Create account** with an email you control. No database
+migration, redirect URL, or additional secret is required for this change.
 
 ## Validation and deployment order
 
