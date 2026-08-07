@@ -75,6 +75,19 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(GroceryBrand.muted)
                 }
 
+                Section("Household sync") {
+                    LabeledContent("Status", value: "Local only")
+                    Text("Account sign-in and household sync are not connected in this build. Your local ledger remains available.")
+                        .font(.footnote)
+                        .foregroundStyle(GroceryBrand.muted)
+                    Text("When enabled, Grocery Ledger will restore a saved session silently. Temporary network or service problems will show a waking/retrying state; sign-in appears only after the account service confirms that the session is invalid or revoked.")
+                        .font(.footnote)
+                        .foregroundStyle(GroceryBrand.muted)
+                    Text("Planned sign-in: email one-time code, with a magic-link fallback.")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(GroceryBrand.pine)
+                }
+
                 if let statusMessage {
                     Section { Text(statusMessage).font(.footnote).foregroundStyle(.secondary) }
                 }

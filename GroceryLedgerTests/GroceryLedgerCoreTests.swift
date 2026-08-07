@@ -296,4 +296,64 @@ final class GroceryLedgerCoreTests: XCTestCase {
             XCTAssertEqual(error as? SharedDataMappingError, .invalidFingerprint)
         }
     }
+
+    func testReturningSessionSilentlyRestoresPersistedIdentity() {
+        let identity = SessionIdentity(userID: UUID(), email: "ritesh@example.com", lastValidatedAt: Date())
+        var machine = ReturningSessionMachine()
+
+        machine.beginRestore(hasStoredSession: true)
+        XCTAssertEqual(machine.state, .restoring)
+        XCTAssertFalse(machine.state.shouldPresentSignInPrompt)
+
+        machine.finishRestore(.authenticated(identity))
+        XCTAssertEqual(machine.state, .authenticated(identity))
+        XCTAssertFalse(machine.state.shouldPresentSignInPrompt)
+    }
+
+    func testTemporaryRestoreFailureWakesAndRetriesWithoutSignInPrompt() {
+        var machine = ReturningSessionMachine()
+        machine.beginRestore(hasStoredSession: true)
+        machine.finishRestore(.temporarilyUnavailable(.networkUnavailable))
+
+        XCTAssertEqual(machine.state, .waking(SessionWakeState(
+            reason: .networkUnavailable,
+            retryAttempt: 1,
+            lastValidatedIdentity: nil
+        )))
+        XCTAssertTrue(machine.state.permitsSilentRetry)
+        XCTAssertFalse(machine.state.shouldPresentSignInPrompt)
+
+        machine.retry()
+        XCTAssertTrue(machine.state.permitsSilentRetry)
+        machine.finishRestore(.temporarilyUnavailable(.backendUnavailable))
+        XCTAssertEqual(machine.state, .waking(SessionWakeState(
+            reason: .backendUnavailable,
+            retryAttempt: 2,
+            lastValidatedIdentity: nil
+        )))
+    }
+
+    func testOnlyConfirmedInvalidOrRevokedSessionPromptsSignIn() {
+        for reason in [SessionInvalidationReason.invalid, .revoked] {
+            var machine = ReturningSessionMachine(state: .restoring)
+            machine.finishRestore(.invalid(reason))
+            XCTAssertEqual(machine.state, .signInRequired(reason))
+            XCTAssertTrue(machine.state.shouldPresentSignInPrompt)
+        }
+
+        var firstUse = ReturningSessionMachine()
+        firstUse.beginRestore(hasStoredSession: false)
+        XCTAssertEqual(firstUse.state, .noStoredSession)
+        XCTAssertFalse(firstUse.state.shouldPresentSignInPrompt)
+    }
+
+    func testUnconfiguredClientNeverClaimsAuthenticationOrSync() async {
+        let client = UnconfiguredSharedLedgerSyncClient()
+
+        await client.restoreSession()
+        await client.synchronize()
+
+        XCTAssertEqual(client.sessionState, .localOnly)
+        XCTAssertEqual(client.state, .notConfigured)
+    }
 }

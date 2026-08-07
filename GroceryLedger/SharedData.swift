@@ -351,7 +351,7 @@ enum SharedBalanceCalculator {
 
 enum SharedSyncState: Equatable, Sendable {
     case notConfigured
-    case signedOut
+    case awaitingSession(ReturningSessionState)
     case readyOffline(lastSuccessfulSync: Date?)
     case syncing(lastSuccessfulSync: Date?)
     case pendingChanges(count: Int, lastSuccessfulSync: Date?)
@@ -363,12 +363,20 @@ enum SharedSyncState: Equatable, Sendable {
 @MainActor
 protocol SharedLedgerSyncClient: AnyObject {
     var state: SharedSyncState { get }
+    var sessionState: ReturningSessionState { get }
+    func restoreSession() async
     func synchronize() async
 }
 
 @MainActor
 final class UnconfiguredSharedLedgerSyncClient: SharedLedgerSyncClient {
     private(set) var state: SharedSyncState = .notConfigured
+    private(set) var sessionState: ReturningSessionState = .localOnly
+
+    func restoreSession() async {
+        sessionState = .localOnly
+        state = .notConfigured
+    }
 
     func synchronize() async {
         state = .notConfigured
