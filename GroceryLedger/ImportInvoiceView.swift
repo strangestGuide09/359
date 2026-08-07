@@ -54,6 +54,8 @@ struct ImportInvoiceView: View {
                     privacySection
                 }
             }
+            .brandScreen()
+            .listSectionSpacing(14)
             .navigationTitle("Review PDF import")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -78,6 +80,8 @@ struct ImportInvoiceView: View {
             } message: {
                 Text(errorMessage ?? "Unknown error")
             }
+            .toolbarBackground(GroceryBrand.paper, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 
@@ -201,6 +205,7 @@ struct ImportInvoiceView: View {
     private var privacySection: some View {
         Section("Privacy and saving") {
             Label("The PDF and its extracted receipt text are not saved.", systemImage: "lock.shield")
+                .foregroundStyle(GroceryBrand.pine)
             Text("Only the fields you reviewed—purchase details, item names, amounts, quantities, allocation, and restock choices—are saved locally. When household sync is added, only these reviewed fields will be eligible to sync.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)

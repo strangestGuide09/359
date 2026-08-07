@@ -23,5 +23,8 @@ struct ContentView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
+        .tint(GroceryBrand.orange)
+        .toolbarBackground(GroceryBrand.paper, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
     }
 }

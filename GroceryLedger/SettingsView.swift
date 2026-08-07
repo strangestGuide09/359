@@ -32,6 +32,15 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        BrandEyebrow(text: "Household settings")
+                        Text("Ekta & Ritesh").font(.title2.bold())
+                        Text("Local app preferences and privacy controls.")
+                            .font(.subheadline).foregroundStyle(GroceryBrand.muted)
+                    }
+                    .padding(.vertical, 8)
+                }
                 Section("Restock reminders") {
                     Picker("Frequency", selection: selectedFrequency) {
                         ForEach(RestockNotificationFrequency.allCases) { option in
@@ -59,15 +68,22 @@ struct SettingsView: View {
                 }
 
                 Section("Privacy") {
-                    Text("Invoice PDFs are read during import only. Grocery Ledger saves only the reviewed purchase details, not the raw receipt, payment details, address, or payment mode.")
-                        .font(.footnote)
+                    Label("Only the reviewed ledger", systemImage: "lock.shield.fill")
+                        .font(.headline)
+                        .foregroundStyle(GroceryBrand.pine)
+                    Text("Invoice PDFs are read during import only. Grocery Ledger saves only reviewed purchase details—not the raw receipt, extracted text, payment details, address, or payment mode.")
+                        .font(.footnote).foregroundStyle(GroceryBrand.muted)
                 }
 
                 if let statusMessage {
                     Section { Text(statusMessage).font(.footnote).foregroundStyle(.secondary) }
                 }
             }
+            .brandScreen()
+            .listSectionSpacing(14)
             .navigationTitle("Settings")
+            .toolbarBackground(GroceryBrand.paper, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 

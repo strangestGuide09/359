@@ -9,26 +9,52 @@ struct PurchasesView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ScrollView {
+                LazyVStack(spacing: 12) {
                 if purchases.isEmpty {
-                    ContentUnavailableView("No purchases", systemImage: "doc.badge.plus", description: Text("Import a grocery invoice PDF to create the first shared purchase."))
+                    BrandEmptyState(icon: "doc.badge.plus", title: "No purchases", message: "Import a grocery invoice PDF to create the first shared purchase.")
+                        .brandCard()
                 }
                 ForEach(purchases, id: \.id) { purchase in
                     NavigationLink {
                         PurchaseDetailView(purchase: purchase)
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(purchase.merchant).font(.headline)
-                            Text(purchase.category).font(.caption).foregroundStyle(.secondary)
-                            Text("Paid by \(purchase.paidBy) • \(purchase.purchasedAt.formatted(date: .abbreviated, time: .omitted))")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                            Text(LedgerEngine.sharedTotal(for: purchase), format: .currency(code: "INR"))
-                                .font(.subheadline.weight(.semibold))
+                        HStack(spacing: 14) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(GroceryBrand.pine)
+                                    .frame(width: 46, height: 46)
+                                Image(systemName: "basket.fill").foregroundStyle(.white)
+                            }
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(purchase.merchant).font(.headline).foregroundStyle(GroceryBrand.ink)
+                                Text("\(purchase.category) · paid by \(purchase.paidBy)")
+                                    .font(.caption).foregroundStyle(GroceryBrand.muted)
+                                Text(purchase.purchasedAt, format: .dateTime.day().month().year())
+                                    .font(.caption).foregroundStyle(GroceryBrand.muted)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 5) {
+                                Text(LedgerEngine.sharedTotal(for: purchase), format: .currency(code: "INR"))
+                                    .font(.subheadline.bold()).foregroundStyle(GroceryBrand.pine)
+                                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(GroceryBrand.orange)
+                            }
+                        }
+                        .brandCard()
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Delete purchase", systemImage: "trash", role: .destructive) {
+                            modelContext.delete(purchase)
                         }
                     }
                 }
-                .onDelete { indexes in indexes.map { purchases[$0] }.forEach(modelContext.delete) }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
             }
+            .background(GroceryBrand.cream)
             .navigationTitle("Purchases")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -40,7 +66,10 @@ struct PurchasesView: View {
             }
             .sheet(isPresented: $showImporter) { ImportInvoiceView() }
             .sheet(isPresented: $showManualExpense) { AddExpenseView() }
+            .toolbarBackground(GroceryBrand.paper, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
+        .tint(GroceryBrand.pine)
     }
 }
 
@@ -82,6 +111,7 @@ private struct PurchaseDetailView: View {
             }
         }
         .navigationTitle("Review purchase")
+        .brandScreen()
     }
 }
 
@@ -111,6 +141,7 @@ private struct AddExpenseView: View {
                 Text("Expenses are split equally by default. The optional use-by date is your estimate, not a package expiry.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            .brandScreen()
             .navigationTitle("Add shared expense")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

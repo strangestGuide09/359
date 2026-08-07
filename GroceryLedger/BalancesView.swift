@@ -11,27 +11,67 @@ struct BalancesView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Text(summary.settlementMessage).font(.title3.bold())
-                }
-                Section("Settlement history") {
-                    if settlements.isEmpty { Text("No settlements recorded.").foregroundStyle(.secondary) }
-                    ForEach(settlements, id: \.id) { settlement in
-                        VStack(alignment: .leading) {
-                            Text("\(settlement.payer) paid \(settlement.receiver)")
-                            Text(settlement.amount, format: .currency(code: "INR"))
-                                .font(.subheadline.weight(.semibold))
-                            if !settlement.note.isEmpty { Text(settlement.note).font(.caption).foregroundStyle(.secondary) }
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        BrandEyebrow(text: "Today’s balance")
+                        Text(summary.settlementMessage)
+                            .font(.title2.bold())
+                            .foregroundStyle(.white)
+                        Text("Shared purchases are split equally between Ekta and Ritesh.")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.72))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+                    .background {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(GroceryBrand.pine)
+                            .shadow(color: GroceryBrand.warmShadow, radius: 0, x: 6, y: 6)
+                    }
+                    .padding(.bottom, 6)
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        BrandEyebrow(text: "Settlements")
+                        Text("Payment history").font(.title2.bold())
+                        if settlements.isEmpty {
+                            BrandEmptyState(icon: "arrow.left.arrow.right", title: "No settlements recorded", message: "Record a payment after one person settles their share.")
+                        } else {
+                            ForEach(settlements, id: \.id) { settlement in
+                                HStack(spacing: 12) {
+                                    Image(systemName: "arrow.left.arrow.right.circle.fill")
+                                        .font(.title2).foregroundStyle(GroceryBrand.orange)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("\(settlement.payer) paid \(settlement.receiver)").font(.headline)
+                                        if !settlement.note.isEmpty { Text(settlement.note).font(.caption).foregroundStyle(GroceryBrand.muted) }
+                                    }
+                                    Spacer()
+                                    Text(settlement.amount, format: .currency(code: "INR"))
+                                        .font(.subheadline.bold()).foregroundStyle(GroceryBrand.pine)
+                                }
+                                .contextMenu {
+                                    Button("Delete settlement", systemImage: "trash", role: .destructive) {
+                                        modelContext.delete(settlement)
+                                    }
+                                }
+                                if settlement.id != settlements.last?.id { Divider().overlay(GroceryBrand.line) }
+                            }
                         }
                     }
-                    .onDelete { indexes in indexes.map { settlements[$0] }.forEach(modelContext.delete) }
+                    .brandCard()
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
             }
+            .background(GroceryBrand.cream)
             .navigationTitle("Balances")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Settle", systemImage: "checkmark.circle") { showSettlement = true } } }
             .sheet(isPresented: $showSettlement) { AddSettlementView() }
+            .toolbarBackground(GroceryBrand.paper, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
+        .tint(GroceryBrand.pine)
     }
 }
 
@@ -51,6 +91,7 @@ private struct AddSettlementView: View {
                 TextField("Amount", text: $amount).keyboardType(.decimalPad)
                 TextField("Note (optional)", text: $note)
             }
+            .brandScreen()
             .navigationTitle("Record settlement")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
