@@ -44,10 +44,11 @@ learning model. The minimum recommendation is three additive household-private
 tables for package-specific products, primarily reviewed-name aliases with
 optional barcode corroboration, and append-only purchase-item identity
 links/corrections. Ranking is derived from evidence rather than stored as an
-opaque score. The note also defines a consent-gated Edge Function/provider
-boundary and separates product repurchase cadence from batch-specific use-by
-dates. No migration or remote-processing integration has been created or
-approved.
+opaque score. The note also mandates local allowlist sanitization and a rebuilt
+derivative before any consent-gated Edge Function/provider flow: originals and
+unredacted extracted text never leave the client, while provider keys remain
+server-only. It separates product repurchase cadence from batch-specific use-by
+dates. No migration or remote-processing integration has been created or approved.
 
 ## Live incremental migration — member names and selected payer
 

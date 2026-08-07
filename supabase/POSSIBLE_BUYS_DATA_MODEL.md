@@ -118,33 +118,67 @@ without an unrestricted before/after text or JSON field.
 
 ## AI-assisted receipt processing boundary
 
-The primary flow may use an external document model such as Sarvam Vision, but
-the model output is always an untrusted draft. The user must review and edit the
-same bounded structured fields already accepted by `import_reviewed_purchase`.
-Only that reviewed projection and opaque duplicate hashes may persist in the
-Grocery Ledger database.
+The primary flow may use an external document model such as Sarvam Vision only
+after mandatory local sanitization. The original PDF/image and all original or
+unredacted extracted text stay transiently on the client and are never uploaded
+or stored. The remote model receives only a newly constructed, already-redacted
+derivative. Its output remains an untrusted draft: the user must review and edit
+the same bounded structured fields accepted by `import_reviewed_purchase`. Only
+that reviewed projection and opaque duplicate hashes may persist.
 
 This changes the current privacy promise: a receipt sent to a remote model is
 no longer “processed locally” or “never uploaded.” It requires a separate,
 explicit opt-in before each upload (or a clearly revocable preference with a
-per-upload reminder), a named processor notice, and an always-available local
-parser/manual-entry path. Consent to processing must not imply consent to model
-training, longer retention, product learning, or barcode enrichment.
+per-upload reminder), a preview of exactly what the sanitized derivative
+contains, a named processor notice, and an always-available local parser/manual-
+entry path. Consent to processing must not imply consent to model training,
+longer retention, product learning, or barcode enrichment.
+
+### Mandatory local sanitization
+
+The client first parses locally in memory, applies an allowlist, and constructs
+a new derivative document from allowed values. It must not upload the original
+page with visual black boxes or PDF annotations: underlying text, layers,
+metadata, thumbnails, attachments, QR codes, and cropped pixels can remain
+recoverable. The derivative should be a fresh minimal PDF/image/structured
+document containing only:
+
+- coarse merchant label, purchase date, category, total, and currency;
+- candidate item name, quantity, unit, unit price, and line total; and
+- optional printed batch/use-by value only when the user explicitly leaves it
+  visible for remote extraction.
+
+Remove names of people, email/phone, delivery/billing address, order/invoice and
+customer/loyalty identifiers, payment method, card/UPI/bank data, tax identifiers,
+delivery instructions, location, receipt-level barcode/QR content, hidden PDF
+objects, filenames, and device metadata. Product barcode remains optional and
+must be separately confirmed; it is not copied automatically from an arbitrary
+receipt QR/barcode.
+
+Before upload, show a local preview and require confirmation. If local parsing
+cannot confidently isolate the allowlisted fields or rebuild a derivative with
+no original pixels/text/metadata, disable cloud processing for that document and
+continue with local/manual review. Sanitizer output and redaction decisions are
+security-sensitive code and require adversarial fixture tests.
 
 ### Recommended Edge Function shape
 
-1. The authenticated client asks a narrow Supabase Edge Function to create a
-   processing job. The function verifies the JWT, active household membership,
-   consent version, file type/page/size limits, per-user quota, and duplicate
-   request idempotency key.
+1. After local preview/consent, the client asks a narrow Supabase Edge Function
+   to create a processing job. The control request contains only sanitizer
+   version, derivative MIME type/byte count/page count, consent version, and an
+   idempotency key—never original text, extracted text, item values, or bytes.
+   The function verifies the JWT, active household membership, allowlisted
+   derivative type/size/pages, quotas, budget, and idempotency.
 2. The function calls the provider with a server-held API key and returns a
    short-lived provider presigned upload URL plus an opaque client job token.
-   The PDF goes directly from the device to the provider; it never enters
-   Supabase Storage, Postgres, Edge logs, analytics, or error bodies.
+   The client uploads only the locally rebuilt derivative directly to the
+   provider. Original bytes and unredacted text never enter the Edge Function,
+   provider, Supabase Storage/Postgres, logs, analytics, or error bodies.
 3. A second authenticated function starts/checks the provider job and fetches
-   its output. It immediately projects the response into a strict draft schema
-   (merchant label, purchase date/category/amount, and bounded item fields),
-   rejects unknown fields, and returns the draft without saving provider output.
+   its output with strict response byte/time limits. It immediately projects the
+   response into a strict draft schema (merchant label, purchase date/category/
+   amount, and bounded item fields), rejects unknown or oversized fields, and
+   returns the draft without saving provider output.
 4. The client presents the editable draft. Saving uses the existing reviewed
    import RPC; canceling or timing out writes no purchase data.
 
@@ -154,26 +188,44 @@ never in Postgres, client configuration, source control, logs, telemetry, crash
 reports, URLs, or returned errors. Separate webhook verification secrets from
 the API key and rotate both. Prefer authenticated polling initially; if
 webhooks are used, verify the callback token and map provider job IDs through a
-short-lived server record containing no receipt content.
+short-lived server record containing no receipt content. The Edge Function must
+disable request/response body capture, avoid interpolating provider errors, and
+emit fixed public error codes plus an opaque request ID only.
 
 ### Retention and deletion
 
-- Grocery Ledger retention for raw PDF bytes and provider extraction output is
-  zero: neither is stored in its database, Storage, caches, or observability.
+- Grocery Ledger retention for originals, unredacted extracted text, sanitized
+  derivative bytes, and provider extraction output is zero: none is stored in
+  its database, Storage, caches, queues, logs, traces, crash reports, or analytics.
 - Keep presigned URLs and provider job IDs in memory where possible. If an
   asynchronous registry is unavoidable, persist only household/user ID, opaque
   provider job ID, consent version, page count, state, timestamps, and cost
   units; expire it in hours, not days.
-- Client drafts remain memory-only. Only reviewed fields persist after Save;
-  draft recovery may store only those bounded fields, never PDF bytes or full
+- Original/unredacted client material is memory-only and wiped on cancel,
+  completion, timeout, navigation, or app background termination. The sanitized
+  derivative is discarded immediately after upload. Draft recovery may store
+  only user-reviewed bounded fields, never original/derivative bytes or full
   extracted output.
 - Provider retention is a separate subprocessor contract. Do not launch until
   its production plan provides acceptable deletion/retention controls. Sarvam's
   general policy currently says inputs/outputs default to 30 days after last
   access and deletion requests may take 30 days; do not call Vision zero-
   retention without a written plan-specific commitment.
-- Household deletion removes reviewed data, identities, aliases, links, and any
-  remaining job metadata. Provider deletion requests must be tracked separately.
+- On completion, cancellation, or timeout, call a provider deletion endpoint if
+  available and expire any presigned URLs. Household deletion removes reviewed
+  data, identities, aliases, links, consent references, and remaining job
+  metadata. Provider deletion requests must be tracked separately by opaque ID.
+
+### Content-free audit record
+
+If an audit table is approved, permit only: household/user ID, consent-policy and
+sanitizer versions, derivative MIME/page/byte counts, provider name, opaque job
+ID, state, charged units, fixed error code, and created/expires/deleted times.
+Apply household RLS, active-member writes, bounded enums/counts, and automatic
+job-row expiry in hours. Never store original or derivative filenames, field
+values, merchant/item text, raw/provider responses, presigned URLs, IP/device
+fingerprints, or receipt hashes in this operational record. Keep the existing
+household-scoped duplicate hashes only in `invoice_imports` after reviewed save.
 
 ### Consent, abuse, rate, and cost controls
 
@@ -182,13 +234,18 @@ short-lived server record containing no receipt content.
   decision—not receipt content.
 - One member may process their receipt, but nothing becomes household-visible
   until that member reviews and saves the structured draft.
-- Enforce limits below provider maxima: supported files only, conservative
-  bytes/pages, one active job per user, daily household page cap, monthly
-  project budget, and idempotency to prevent double billing.
+- Enforce limits below provider maxima on both client and Edge control plane:
+  allowlisted MIME and magic bytes, conservative derivative bytes/pages/page
+  dimensions, decompression ratio, field/output lengths, one active job per
+  user, daily household page cap, monthly project budget, and idempotency.
 - Count pages before creating a paid job where feasible. Reject encrypted,
   malformed, oversized, or unsupported files locally. Do not retry 4xx errors;
   retry only 429/500/503 with capped exponential backoff, without creating a new
   paid job.
+- Reject archives, active content, attachments, encrypted PDFs, malformed page
+  trees, excessive object/image counts, and derivatives lacking the current
+  sanitizer marker/version. Treat the marker as routing metadata, not proof of
+  sanitization; the trusted client construction and preview remain essential.
 - Track only aggregate page count, provider, state, latency, and charged units.
   Never log filenames, merchant/item text, extracted fields, presigned URLs,
   provider output, or document hashes usable outside the household.
