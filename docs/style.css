@@ -72,6 +72,10 @@ nav { display:flex; flex-wrap:wrap; gap:10px; padding:10px 0 25px; }
 .settings>summary small { color:var(--muted); font-weight:normal; }
 .settings[open]>summary { border-bottom:1px solid var(--line); }
 .settings-body { padding:18px; }
+.account-session { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-top:22px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
+.account-session>div { display:grid; gap:4px; }
+.account-session small { color:var(--muted); line-height:1.4; }
+.session-sign-out { flex:0 0 auto; min-width:110px; }
 .danger-zone { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; align-items:center; margin-top:22px; padding:16px; border:1px solid #d7aaa0; border-radius:12px; background:#fff8f4; }
 .danger-zone small { grid-column:1; color:var(--muted); }
 .danger-zone button { grid-column:2; grid-row:1/3; }
@@ -224,6 +228,8 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .purchase-row>[data-label]::before { content:attr(data-label); color:var(--muted); font-weight:bold; }
   .purchase-row>.entry-actions { grid-column:1/-1; }
   .settings>summary { align-items:flex-start; }
+  .account-session { align-items:stretch; flex-direction:column; }
+  .session-sign-out { width:100%; }
   .danger-zone { grid-template-columns:1fr; }
   .danger-zone button,.danger-zone small { grid-column:1; grid-row:auto; }
   dialog { padding:20px 16px; }

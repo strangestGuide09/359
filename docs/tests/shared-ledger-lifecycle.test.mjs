@@ -182,6 +182,10 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.match(app, /id="household-settings" class="panel settings"/);
+  assert.match(app, /<section class="account-session" aria-labelledby="account-session-title">/);
+  assert.match(app, /id="account-session-title">Account and session/);
+  assert.match(app, /id="sign-out" class="secondary session-sign-out">Sign out/);
+  assert.ok(app.indexOf("accountSession}${ownerControls}") >= 0, "account/session section remains separate from destructive household controls");
   assert.match(app, /class="member-block"/);
   assert.match(app, /<strong>\$\{esc\(displayedMemberName\(member\)\)\}<\/strong><span aria-hidden="true">·<\/span><span>\$\{member\.role/);
   assert.match(app, /class="you-badge">you<\/small>/);
@@ -197,6 +201,9 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.match(style, /\.page-meta \{ width:100%;/);
   assert.doesNotMatch(style, /\.activity,\.settings \{ margin-top:/);
   assert.match(style, /\.insight-card,\.expenses-panel \{ margin:0; \}/);
+  assert.match(style, /\.account-session \{ display:flex; justify-content:space-between;/);
+  assert.match(style, /\.session-sign-out \{ flex:0 0 auto; min-width:110px; \}/);
+  assert.match(style, /\.session-sign-out \{ width:100%; \}/);
 });
 
 test("repository declares docs as the production web client", async () => {
