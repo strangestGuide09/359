@@ -24,6 +24,7 @@ const $ = id => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
 const money = n => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(Number(n) || 0);
 const fmt = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${d}T12:00:00`));
+const fmtTimestamp = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(d));
 const esc = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 const retryKey = "grocery-ledger-email-retry-at";
 const rememberedEmailKey = "grocery-ledger-last-email";
@@ -209,7 +210,7 @@ function row(item, type) {
   const heading = type === "purchase" ? esc(item.label) : `${esc(memberName(item.payer))} paid ${esc(memberName(item.receiver))}`;
   if (type === "purchase") {
     const itemCount = item.purchase_items?.length || 0;
-    return `<div class="expense purchase-row"><div class="purchase-merchant"><b>${heading}</b><span>${esc(item.category)}${item.is_personal ? " · personal" : ""}</span></div><span data-label="Paid by">${esc(memberName(item.paid_by))}</span><time data-label="Date">${fmt(item.purchased_on)}</time><span data-label="Items">${itemCount ? `${itemCount} reviewed` : "Manual entry"}</span><div class="entry-actions" data-label="Amount"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
+    return `<div class="expense purchase-row"><div class="purchase-merchant"><b>${heading}</b><span>${esc(item.category)}${item.is_personal ? " · personal" : ""}</span></div><span data-label="Paid by">${esc(memberName(item.paid_by))}</span><time data-label="Date">${fmt(item.purchased_on)}</time><span data-label="Items">${itemCount ? `${itemCount} reviewed` : "Manual entry"}</span><div class="entry-actions" data-label="Amount"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-delete-receipt="${item.id}">Delete receipt</button>` : ""}</div></div>`;
   }
   return `<div class="expense"><div><b>${heading}</b><span>${fmt(item.settled_on)}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
@@ -400,9 +401,9 @@ function renderSettings(balance, archived, recoveryOpen) {
   const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
   const memberRows = members.map(member => `<div class="expense"><div><b>${esc(displayedMemberName(member))}</b><span>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</span></div></div>`).join("");
   const nameForm = archived ? "" : `<form id="display-name-form" class="inline-form"><label>Your display name<input id="display-name" maxlength="80" required autocomplete="name" value="${esc(memberDisplayName(members.find(member => member.user_id === session.user.id)))}"></label><button class="secondary">Update name</button></form>`;
-  const archiveList = archivedEntries.length ? `<details class="archive-list"><summary>Archived entries (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? esc(item.label) : "Archived settlement"}</b><span>${money(item.amount)}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">Restore</button>` : ""}</div>`).join("")}</details>` : "";
+  const archiveList = archivedEntries.length ? `<details class="archive-list"><summary>Deleted receipts & archived settlements (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? `Deleted receipt: ${esc(item.label)}` : "Archived settlement"}</b><span>${money(item.amount)} · ${item.type === "purchase" ? `Deleted ${fmtTimestamp(item.archived_at)}${item.archived_by ? ` by ${esc(memberName(item.archived_by))}` : ""}` : `Archived ${fmtTimestamp(item.archived_at)}`}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">${item.type === "purchase" ? "Restore receipt" : "Restore settlement"}</button>` : ""}</div>`).join("")}</details>` : "";
   const accountSession = `<section class="account-session" aria-labelledby="account-session-title"><div><b id="account-session-title">Account and session</b><small>Sign out of Grocery Ledger on this browser.</small></div><button id="sign-out" class="secondary session-sign-out">Sign out</button></section>`;
-  return `<details id="household-settings" class="panel settings"><summary><span><b>Household settings</b><small>Names, archived entries and recovery</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body"><div class="member-list">${memberRows}</div>${nameForm}${archiveList}${accountSession}${ownerControls}</div></details>`;
+  return `<details id="household-settings" class="panel settings"><summary><span><b>Household settings</b><small>Names, deleted receipts and recovery</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body"><div class="member-list">${memberRows}</div>${nameForm}${archiveList}${accountSession}${ownerControls}</div></details>`;
 }
 function renderDashboard() {
   const balance = balanceFor(session.user.id);
@@ -452,6 +453,7 @@ function bindDashboard(balance) {
   $("restore-household") && ($("restore-household").onclick = () => rpcReload("restore_household", { p_household_id: current.id }, "Household restored."));
   $("delete-household") && ($("delete-household").onclick = async () => { if (confirm("Permanently delete this household and its reviewed ledger data? This cannot be undone.")) await rpcReload("permanently_delete_household", { p_household_id: current.id }, "Household permanently deleted."); });
   document.querySelectorAll("[data-archive]").forEach(button => button.onclick = () => archiveEntry(button.dataset.archive, button.dataset.id));
+  document.querySelectorAll("[data-delete-receipt]").forEach(button => button.onclick = () => deleteReceipt(button.dataset.deleteReceipt));
   document.querySelectorAll("[data-restore-entry]").forEach(button => button.onclick = () => restoreEntry(button.dataset.restoreEntry, button.dataset.id));
 }
 async function rpcReload(name, args, success) {
@@ -739,16 +741,27 @@ $("entry-form").onsubmit = async event => {
 };
 
 async function archiveEntry(type, id) {
+  if (type === "purchase") return deleteReceipt(id);
   if (!confirm("Archive this entry? It will stop affecting balances and restock suggestions.")) return;
-  const table = type === "purchase" ? "purchases" : "settlements";
-  const { error } = await supabase.from(table).update({ archived_at: new Date().toISOString(), archived_by: session.user.id }).eq("id", id);
+  const { error } = await supabase.from("settlements").update({ archived_at: new Date().toISOString(), archived_by: session.user.id }).eq("id", id);
   note(error ? error.message : "Entry archived.");
   if (!error) await loadLedger();
 }
 async function restoreEntry(type, id) {
-  const table = type === "purchase" ? "purchases" : "settlements";
-  const { error } = await supabase.from(table).update({ archived_at: null, archived_by: null }).eq("id", id);
-  note(error ? error.message : "Entry restored; balances and suggestions were recalculated.");
+  if (type === "purchase") {
+    const { error } = await supabase.rpc("restore_purchase_receipt", { p_purchase_id: id });
+    note(error ? error.message : "Receipt restored; balances and suggestions were recalculated.");
+    if (!error) await loadLedger();
+    return;
+  }
+  const { error } = await supabase.from("settlements").update({ archived_at: null, archived_by: null }).eq("id", id);
+  note(error ? error.message : "Settlement restored; balance was recalculated.");
+  if (!error) await loadLedger();
+}
+async function deleteReceipt(id) {
+  if (!confirm("Delete this receipt from the active ledger? It will stop affecting balances and restock suggestions. A record of who deleted it and when will remain in Household settings.")) return;
+  const { error } = await supabase.rpc("delete_purchase_receipt", { p_purchase_id: id });
+  note(error ? error.message : "Receipt deleted. The audit record is retained in Household settings.");
   if (!error) await loadLedger();
 }
 async function sha256(value) {
