@@ -10,10 +10,12 @@ import { formatMemberName } from "./member-names.js";
 import { parseReceipt } from "./receipt-parser.js";
 import { qualifiesForRestockSuggestion, restockHistory } from "./restock.js";
 import { settlementAmountError, settlementConfirmation, settlementState } from "./settlement-flow.js";
+import { createResilientAuthStorage, restoreSessionWithRetry, sessionErrorKind } from "./session-restore.js";
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
 
+const authStorage = createResilientAuthStorage(window.localStorage);
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage }
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: authStorage }
 });
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.mjs";
 
@@ -23,6 +25,7 @@ const money = n => new Intl.NumberFormat("en-IN", { style: "currency", currency:
 const fmt = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${d}T12:00:00`));
 const esc = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 const retryKey = "grocery-ledger-email-retry-at";
+const rememberedEmailKey = "grocery-ledger-last-email";
 const dialog = $("entry");
 const clientBuild = window.GROCERY_LEDGER_BUILD || "local-dev";
 const reloadVersionKey = "grocery-ledger-reloading-version";
@@ -44,6 +47,9 @@ let pendingPdfImport;
 let reviewedItems = [];
 let lastPdfFeedback;
 let formDirty = false;
+let explicitSignOut = false;
+let restorePromise;
+let verifyingOtp = false;
 
 document.addEventListener("input", event => { if (event.target.closest?.("form")) formDirty = true; });
 document.addEventListener("change", event => { if (event.target.closest?.("form")) formDirty = true; });
@@ -119,10 +125,65 @@ function renderLoading(message = "Opening your household ledger…") {
   setScreen(statePanel("PLEASE WAIT", "Opening Grocery Ledger", `<span class="spinner" aria-hidden="true"></span>${esc(message)}`), { busy: true });
   note("");
 }
+function renderRestoring(attempt = 0) {
+  $("sync-state").textContent = "Restoring session…";
+  const detail = attempt ? "The secure connection is taking a little longer. Your saved session and local drafts are still here." : "Your saved session is still on this browser. Waking the ledger and reconnecting securely…";
+  setScreen(statePanel("RESTORING SESSION", "Waking your ledger", `<span class="spinner" aria-hidden="true"></span>${detail}`), { busy: true });
+  note("");
+}
+function renderRestoreRetry() {
+  $("sync-state").textContent = "Still reconnecting";
+  setScreen(statePanel("CONNECTION PROBLEM", "Your session is still saved", "The ledger did not wake within a few seconds. Nothing was signed out or cleared, and local drafts remain in this browser.", '<button id="retry-session">Try restoring again</button>'));
+  $("retry-session").onclick = restoreSavedSession;
+}
+function confirmedInvalidSession() {
+  authStorage.discard();
+  clearSignedInState();
+  renderSignedOut("signin", "Your saved session has expired or was revoked. Sign in again to continue.");
+}
+async function runSessionRestore() {
+  const result = await restoreSessionWithRetry({
+    getSession: () => supabase.auth.getSession(),
+    getUser: () => supabase.auth.getUser(),
+    storage: authStorage,
+    onAttempt: renderRestoring
+  });
+  if (result.status === "invalid") return confirmedInvalidSession();
+  if (result.status === "signed-out") return renderSignedOut();
+  if (result.status === "transient") return renderRestoreRetry();
+  session = result.session;
+  explicitSignOut = false;
+  return loadHousehold();
+}
+function restoreSavedSession() {
+  if (!restorePromise) restorePromise = runSessionRestore().finally(() => { restorePromise = undefined; });
+  return restorePromise;
+}
 function renderLoadError(title, detail, retry) {
   $("sync-state").textContent = "Could not sync";
   setScreen(statePanel("CONNECTION PROBLEM", esc(title), `${esc(detail)} Your balance is hidden until current ledger data loads.`, `<button id="retry-load">Try again</button>`));
   $("retry-load").onclick = retry;
+}
+function clearSignedInState() {
+  session = undefined;
+  current = undefined;
+  members = [];
+  ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSettlements: [] };
+  channel?.unsubscribe();
+}
+async function signOutSafely() {
+  explicitSignOut = true;
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    explicitSignOut = false;
+    authStorage.restore();
+    note("Could not sign out while the connection is unavailable. Try again when the ledger reconnects.");
+    restoreSavedSession();
+    return;
+  }
+  authStorage.discard();
+  clearSignedInState();
+  renderSignedOut();
 }
 function roleName() { return isOwner() ? "Owner" : "Partner"; }
 function sharedPurchaseAmount(purchase) {
@@ -168,13 +229,45 @@ function suggestionCards() {
   };
 }
 
-function renderSignedOut(authMode = "signin") {
+function renderOtpChallenge(email, creating) {
+  $("sync-state").textContent = "Check your email";
+  setScreen(`<section class="panel account-gate"><p>CHECK YOUR EMAIL</p><h1 tabindex="-1">Enter your sign-in code</h1><article>Enter the one-time code sent to <b>${esc(email)}</b>. It works in this browser without switching away from the ledger.</article><form id="otp-form" class="auth-form"><label>One-time code<input id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required placeholder="6-digit code"></label><button>Verify code</button></form><p class="auth-status">If your email contains a secure sign-in link instead, open that link in this same browser. The link remains available as a fallback.</p><button id="send-another-code" type="button" class="plain">Use another email or send again</button><p id="auth-status" class="auth-status" role="status"></p></section>`);
+  $("send-another-code").onclick = () => renderSignedOut(creating ? "signup" : "signin");
+  $("otp-form").onsubmit = async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button");
+    const input = $("login-code");
+    const token = input.value.trim();
+    button.disabled = true;
+    button.textContent = "Verifying…";
+    verifyingOtp = true;
+    const { data, error } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+    verifyingOtp = false;
+    input.value = "";
+    if (error) {
+      const invalid = sessionErrorKind(error) === "invalid";
+      $("auth-status").className = "auth-status error";
+      $("auth-status").textContent = invalid ? "That code is invalid or expired. Request a new code and try again." : "We couldn’t verify the code while the ledger reconnects. Try again in a moment; your email is remembered.";
+      button.disabled = false;
+      button.textContent = "Try verification again";
+      return;
+    }
+    if (data.session) {
+      session = data.session;
+      renderRestoring();
+      await loadHousehold();
+    }
+  };
+}
+
+function renderSignedOut(authMode = "signin", statusMessage = "") {
   $("sync-state").textContent = "Sign in required";
   const creating = authMode === "signup";
+  const rememberedEmail = localStorage.getItem(rememberedEmailKey) || "";
   const retryAt = Number(localStorage.getItem(retryKey) || 0);
   const waiting = retryAt > Date.now();
   const time = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>${creating ? "Create your account with your name and email." : "Sign in to your existing account."} We’ll email a secure one-time link; open it in this same laptop browser.</article><div class="auth-choice" aria-label="Account access"><button id="show-signin" type="button" class="${creating ? "secondary" : ""}" aria-pressed="${!creating}">Sign in</button><button id="show-signup" type="button" class="${creating ? "" : "secondary"}" aria-pressed="${creating}">Create account</button></div><form id="login-form" class="auth-form${creating ? " auth-signup" : ""}">${creating ? '<label>Your name<input id="signup-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>' : ""}<label>Email<input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : creating ? "Create account" : "Send sign-in link"}</button></form><p id="auth-status" class="auth-status${waiting ? " error" : ""}">${waiting ? `Try again at ${time}.` : creating ? "Your name is shared only with your household partner." : "Sign in will not create a new account."}</p></section>`);
+  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>${creating ? "Create your account with your name and email." : "Sign in to your existing account."} We’ll email a one-time code you can enter here. A secure same-browser sign-in link remains available as a fallback.</article><div class="auth-choice" aria-label="Account access"><button id="show-signin" type="button" class="${creating ? "secondary" : ""}" aria-pressed="${!creating}">Sign in</button><button id="show-signup" type="button" class="${creating ? "" : "secondary"}" aria-pressed="${creating}">Create account</button></div><form id="login-form" class="auth-form${creating ? " auth-signup" : ""}">${creating ? '<label>Your name<input id="signup-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>' : ""}<label>Email<input id="login-email" type="email" required autocomplete="email" value="${esc(rememberedEmail)}" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : creating ? "Create account" : "Email me a code"}</button></form><p id="auth-status" class="auth-status${waiting || statusMessage ? " error" : ""}">${esc(statusMessage || (waiting ? `Try again at ${time}.` : creating ? "Your name is shared only with your household partner." : "Sign in will not create a new account."))}</p></section>`);
   $("show-signin").onclick = () => renderSignedOut("signin");
   $("show-signup").onclick = () => renderSignedOut("signup");
   $("login-form").onsubmit = async event => {
@@ -187,6 +280,7 @@ function renderSignedOut(authMode = "signin") {
     button.textContent = "Sending…";
     const options = { emailRedirectTo: `${location.origin}${location.pathname}${location.search}`, shouldCreateUser: creating };
     if (creating) options.data = { display_name: displayName };
+    localStorage.setItem(rememberedEmailKey, email);
     const { error } = await supabase.auth.signInWithOtp({ email, options });
     if (error) {
       const diagnostic = classifySignInError(error);
@@ -200,10 +294,7 @@ function renderSignedOut(authMode = "signin") {
       button.textContent = "Try again";
       return;
     }
-    $("auth-status").className = "auth-status success";
-    $("auth-status").textContent = `${creating ? "Account link" : "Sign-in link"} sent to ${email}. Check Inbox and Spam, then open the newest link in this browser.`;
-    button.disabled = false;
-    button.textContent = "Send another link";
+    renderOtpChallenge(email, creating);
   };
 }
 function renderHouseholdSetup() {
@@ -234,7 +325,7 @@ function renderHouseholdSetup() {
     clearInviteFromUrl();
     await loadHousehold();
   };
-  $("sign-out").onclick = () => supabase.auth.signOut();
+  $("sign-out").onclick = signOutSafely;
 }
 function renderDisplayNameGate(member) {
   $("sync-state").textContent = "Name required";
@@ -247,7 +338,7 @@ function renderDisplayNameGate(member) {
     if (error) { note(error.message); button.disabled = false; return; }
     await loadLedger();
   };
-  $("sign-out").onclick = () => supabase.auth.signOut();
+  $("sign-out").onclick = signOutSafely;
 }
 function renderPartnerInvite() {
   $("sync-state").textContent = "Waiting for partner";
@@ -256,7 +347,7 @@ function renderPartnerInvite() {
   $("email-invite").onclick = () => shareInvite("email");
   $("add-personal").onclick = () => openEntry("expense", { personal: true });
   $("refresh-partner").onclick = loadLedger;
-  $("sign-out").onclick = () => supabase.auth.signOut();
+  $("sign-out").onclick = signOutSafely;
 }
 async function issueInvite() {
   const { data, error } = await supabase.rpc("create_household_invite", { p_household_id: current.id });
@@ -331,7 +422,7 @@ function bindDashboard(balance) {
     if (count) count.textContent = expanded ? "" : `Showing ${id === "restock-preview" ? 4 : 3} of ${button.dataset.total}`;
     button.textContent = expanded ? "Show fewer" : `Review all ${button.dataset.total}`;
   });
-  $("sign-out").onclick = () => supabase.auth.signOut();
+  $("sign-out").onclick = signOutSafely;
   $("display-name-form") && ($("display-name-form").onsubmit = async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector("button");
@@ -666,11 +757,14 @@ window.addEventListener("focus", checkForSiteUpdate);
 renderLoading("Checking your saved session…");
 window.addEventListener("offline", () => { $("sync-state").textContent = "Offline"; note("You’re offline. Unsaved form and PDF review fields remain in this browser; reconnect before saving."); });
 window.addEventListener("online", () => { $("sync-state").textContent = "Back online"; note("Connection restored. Retry the last action when you’re ready."); });
-supabase.auth.onAuthStateChange((_event, nextSession) => {
-  session = nextSession;
-  if (!session) { current = undefined; members = []; ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSettlements: [] }; channel?.unsubscribe(); renderSignedOut(); }
-  else loadHousehold();
+supabase.auth.onAuthStateChange((event, nextSession) => {
+  if (event === "INITIAL_SESSION") return;
+  if (nextSession) {
+    session = nextSession;
+    if (!restorePromise && !verifyingOtp) loadHousehold();
+    return;
+  }
+  if (event === "SIGNED_OUT" && explicitSignOut) return;
+  setTimeout(restoreSavedSession, 0);
 });
-const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-if (sessionError) renderLoadError("We couldn’t check your session.", sessionError.message, () => location.reload());
-else { session = sessionData.session; if (session) loadHousehold(); else renderSignedOut(); }
+restoreSavedSession();

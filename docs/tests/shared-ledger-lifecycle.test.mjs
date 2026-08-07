@@ -19,7 +19,8 @@ test("shared web flow has explicit safe loading and recovery states", async () =
   assert.match(app, /function renderDashboard/);
   assert.match(app, /persistSession: true/);
   assert.match(app, /autoRefreshToken: true/);
-  assert.match(app, /open it in this same laptop browser/);
+  assert.match(app, /one-time code you can enter here/);
+  assert.match(app, /same-browser sign-in link remains available as a fallback/);
   assert.match(app, /emailRedirectTo: `\$\{location\.origin\}\$\{location\.pathname\}\$\{location\.search\}`/);
   assert.match(app, /shouldCreateUser: creating/);
   assert.match(app, /options\.data = \{ display_name: displayName \}/);
