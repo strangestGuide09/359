@@ -8,7 +8,7 @@ import { clearImportFeedback, showImportFeedback as renderImportFeedback } from 
 import { previewState } from "./dashboard-view.js";
 import { formatMemberName } from "./member-names.js";
 import { parseReceipt } from "./receipt-parser.js";
-import { qualifiesForRestockSuggestion, restockEmptyState, restockHistory } from "./restock.js";
+import { isRestockMerchandise, qualifiesForRestockSuggestion, restockEligibility, restockEmptyState } from "./restock.js";
 import { settlementAmountError, settlementConfirmation, settlementState } from "./settlement-flow.js";
 import { createResilientAuthStorage, restoreSessionWithRetry, sessionErrorKind } from "./session-restore.js";
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
@@ -212,7 +212,7 @@ function row(item, type) {
   return `<div class="expense"><div><b>${heading}</b><span>${fmt(item.settled_on)}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
 function suggestionCards() {
-  const groups = restockHistory(ledger.purchases);
+  const { groups, stats } = restockEligibility(ledger.purchases);
   const cards = [...groups.values()].map(items => {
     items.sort((a, b) => a.purchased_on.localeCompare(b.purchased_on));
     const dates = [...new Set(items.map(item => item.purchased_on))];
@@ -225,7 +225,7 @@ function suggestionCards() {
   }).filter(Boolean);
   return {
     cards,
-    empty: `<p class="empty-state">${esc(restockEmptyState(groups))}</p>`
+    empty: `<p class="empty-state">${esc(restockEmptyState(groups, stats))}</p>`
   };
 }
 
@@ -484,10 +484,11 @@ async function loadLedger() {
 
 function emptyReviewedItem(values = {}) {
   const personal = !!values.is_personal;
-  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: personal ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "" };
+  const merchandise = isRestockMerchandise(values.name);
+  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "" };
 }
 function renderItemRows() {
-  $("item-rows").innerHTML = reviewedItems.map((item, index) => `<fieldset class="item-row" data-item="${index}"><legend>Item ${index + 1}</legend><div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock ? " checked" : ""}${item.is_personal ? " disabled" : ""}> Track for restock</label><details class="item-details"><summary>More details</summary><div><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></details></div></fieldset>`).join("");
+  $("item-rows").innerHTML = reviewedItems.map((item, index) => { const restockAllowed = !item.is_personal && isRestockMerchandise(item.name); return `<fieldset class="item-row" data-item="${index}"><legend>Item ${index + 1}</legend><div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label><details class="item-details"><summary>More details</summary><div><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></details></div></fieldset>`; }).join("");
   bindItemRows();
   updateItemTotal();
 }
@@ -496,9 +497,12 @@ function bindItemRows() {
     const index = Number(rowElement.dataset.item);
     rowElement.querySelectorAll("[data-field]").forEach(input => input.oninput = () => {
       const field = input.dataset.field;
+      const wasMerchandise = isRestockMerchandise(reviewedItems[index].name);
       reviewedItems[index][field] = input.type === "checkbox" ? input.checked : input.value;
-      if (field === "is_personal") reviewedItems[index].is_tracked_for_restock = !input.checked;
+      if (field === "is_personal") reviewedItems[index].is_tracked_for_restock = !input.checked && isRestockMerchandise(reviewedItems[index].name);
+      if (field === "name") reviewedItems[index].is_tracked_for_restock = isRestockMerchandise(input.value) && (reviewedItems[index].is_tracked_for_restock || !wasMerchandise);
       if (field === "is_personal") renderItemRows();
+      if (field === "name") { const restock = rowElement.querySelector('[data-field="is_tracked_for_restock"]'); restock.checked = reviewedItems[index].is_tracked_for_restock; restock.disabled = reviewedItems[index].is_personal || !isRestockMerchandise(input.value); }
       updateItemTotal();
     });
     rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); renderItemRows(); };
@@ -588,7 +592,7 @@ $("entry-form").onsubmit = async event => {
     const personal = $("personal").checked;
     if (!personal && !hasPartner()) { errorBox.textContent = "Your partner must join before saving a shared expense."; button.disabled = false; button.textContent = "Save"; return; }
     if (pendingPdfImport) {
-      const items = reviewedItems.map((item, display_order) => ({ name: item.name.trim(), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: !item.is_personal && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
+      const items = reviewedItems.map((item, display_order) => ({ name: item.name.trim(), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: !item.is_personal && isRestockMerchandise(item.name) && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
       if (!items.length || items.some(item => !item.name)) { errorBox.textContent = "Every reviewed item needs a name."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.line_total == null)) { errorBox.textContent = "Every reviewed item needs a line total."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.quantity != null && (!Number.isFinite(item.quantity) || item.quantity <= 0))) { errorBox.textContent = "Item quantities must be above zero."; button.disabled = false; button.textContent = "Save"; return; }

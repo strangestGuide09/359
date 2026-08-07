@@ -136,9 +136,10 @@ test("mixed reviewed receipts use shared item totals for balances and restock", 
   const [app, restock] = await Promise.all([read("docs/app.js"), read("docs/restock.js")]);
   assert.match(app, /function sharedPurchaseAmount/);
   assert.match(app, /item\.is_personal \? 0/);
-  assert.match(restock, /if \(item\.is_personal \|\| !item\.is_tracked_for_restock/);
-  assert.match(app, /restockEmptyState\(groups\)/);
-  assert.match(restock, /same normalized item is bought on a second date/);
+  assert.match(restock, /if \(item\.is_personal\)/);
+  assert.match(restock, /if \(!isRestockMerchandise\(item\.name\)\)/);
+  assert.match(app, /restockEmptyState\(groups, stats\)/);
+  assert.match(restock, /same normalized tracked merchandise item on 2 distinct dates/);
 });
 
 test("itemized review is editable and retains failed drafts", async () => {
@@ -150,8 +151,9 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{/);
   assert.match(app, /Your draft is still here; check your connection and retry/);
-  assert.match(app, /is_tracked_for_restock: personal \? false : values\.is_tracked_for_restock \?\? true/);
-  assert.match(app, /if \(field === "is_personal"\) reviewedItems\[index\]\.is_tracked_for_restock = !input\.checked/);
+  assert.match(app, /is_tracked_for_restock: personal \|\| !merchandise \? false : values\.is_tracked_for_restock \?\? true/);
+  assert.match(app, /if \(field === "is_personal"\) reviewedItems\[index\]\.is_tracked_for_restock = !input\.checked && isRestockMerchandise/);
+  assert.match(app, /is_tracked_for_restock: !item\.is_personal && isRestockMerchandise\(item\.name\)/);
   assert.match(app, /<summary>More details<\/summary>/);
   assert.match(style, /\.item-primary \{ display:grid;/);
   assert.match(style, /\.item-details>div \{ display:grid;/);

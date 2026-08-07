@@ -1,10 +1,21 @@
-const cleanDisplayName = value => String(value || "").replace(/^\s*\d{1,2}\.\s+/, "").replace(/\s+/g, " ").trim();
+const cleanDisplayName = value => String(value || "")
+  .replace(/^\s*\d{1,2}\.\s+/, "")
+  .replace(/^\d{4,8}\s+(?=[A-Za-z])/, "")
+  .replace(/(?:\s+-?\d+(?:,\d{3})*(?:\.\d+)?){2,}\s*$/, "")
+  .replace(/\s*\(\s*pack\s*\)\s*/gi, " ")
+  .replace(/\s+/g, " ").trim();
 const brandPrefix = /^(?:akshayakalpa|anveshan|amul|mother dairy|tata sampann|tata|fortune|aashirvaad|everyday)\b\s*/;
-const nonMerchandise = /\b(?:delivery|handling|platform|convenience|packing|service)\s*(?:fee|fees|charge|charges)?\b|\b(?:fee|fees|charges?|tax|gst|cgst|sgst|cess|subtotal|grand total|total payable|amount paid|discount|savings?)\b/i;
+const nonMerchandise = /\b(?:delivery|shipping|handling|platform|convenience|packing|service)\s*(?:fee|fees|charge|charges)?\b|\b(?:fee|fees|charges?|tax|gst|cgst|sgst|cess|subtotal|total|amount payable|amount paid|discount|savings?)\b/i;
+const localAlias = /\([^)]*\b(?:hasiru|menasinakaayi|nimbe|hannu|nellikaayi|dappa|soutekaayi|bendekaayi|baalehannu|hagalakaayi)\b[^)]*\)/gi;
+
+export function isRestockMerchandise(value) {
+  return !nonMerchandise.test(String(value || ""));
+}
 
 export function canonicalRestockKey(value) {
   return cleanDisplayName(value)
     .toLowerCase()
+    .replace(localAlias, " ")
     .replace(/^\d{4,8}\s+(?=[a-z])/, "")
     .replace(/(?:\s+-?\d+(?:\.\d+)?){2,}\s*$/, "")
     .replace(/\b(instamart|blinkit)\b/g, " ")
@@ -23,26 +34,36 @@ export function canonicalRestockKey(value) {
 }
 
 export function restockHistory(purchases) {
+  return restockEligibility(purchases).groups;
+}
+
+export function restockEligibility(purchases) {
   const groups = new Map();
+  const stats = { excludedCategory: 0, excludedFees: 0, excludedPersonal: 0, excludedUntracked: 0, qualifyingItems: 0, purchaseDates: new Set() };
   for (const purchase of purchases) {
-    if (purchase.category && purchase.category !== "Groceries") continue;
+    if (purchase.category && purchase.category !== "Groceries") { stats.excludedCategory += (purchase.purchase_items || []).length; continue; }
     for (const item of purchase.purchase_items || []) {
-      if (item.is_personal || !item.is_tracked_for_restock || nonMerchandise.test(item.name)) continue;
+      if (item.is_personal) { stats.excludedPersonal += 1; continue; }
+      if (!isRestockMerchandise(item.name)) { stats.excludedFees += 1; continue; }
+      if (!item.is_tracked_for_restock) { stats.excludedUntracked += 1; continue; }
       const key = canonicalRestockKey(item.name);
       if (!key) continue;
       const entries = groups.get(key) || [];
       entries.push({ ...item, display_name: cleanDisplayName(item.name), purchased_on: purchase.purchased_on });
       groups.set(key, entries);
+      stats.qualifyingItems += 1;
+      stats.purchaseDates.add(purchase.purchased_on);
     }
   }
-  return groups;
+  return { groups, stats: { ...stats, purchaseDates: stats.purchaseDates.size, repeatTypes: [...groups.values()].filter(qualifiesForRestockSuggestion).length } };
 }
 
-export function restockEmptyState(groups) {
+export function restockEmptyState(groups, stats = {}) {
   const entries = [...groups.values()].flat();
-  if (!entries.length) return "No tracked grocery items yet. Import a grocery receipt and keep Track for restock selected on merchandise.";
-  const dates = new Set(entries.map(item => item.purchased_on));
-  return `Tracking ${groups.size} grocery item type${groups.size === 1 ? "" : "s"} across ${dates.size} purchase date${dates.size === 1 ? "" : "s"}. A suggestion appears after the same normalized item is bought on a second date; none has repeated yet.`;
+  const exclusions = [`${stats.excludedFees || 0} fee, tax, or delivery`, `${stats.excludedPersonal || 0} personal`, `${stats.excludedUntracked || 0} untracked`, `${stats.excludedCategory || 0} outside groceries`].join(" · ");
+  if (!entries.length) return `No eligible tracked grocery merchandise yet. Excluded: ${exclusions}. Import a grocery receipt and keep Track for restock selected only on merchandise.`;
+  const dateCount = stats.purchaseDates ?? new Set(entries.map(item => item.purchased_on)).size;
+  return `Tracking ${groups.size} normalized grocery item type${groups.size === 1 ? "" : "s"} across ${dateCount} purchase date${dateCount === 1 ? "" : "s"}; ${stats.repeatTypes || 0} repeat on a second date. Possible buys requires the same normalized tracked merchandise item on 2 distinct dates. Excluded: ${exclusions}.`;
 }
 
 export function qualifiesForRestockSuggestion(items) {
