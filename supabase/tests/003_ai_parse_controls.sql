@@ -1,3 +1,4 @@
+-- Canonical transactional contract for the initial content-free AI controls.
 begin;
 create extension if not exists pgtap with schema extensions;
 select plan(15);

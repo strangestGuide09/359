@@ -1,4 +1,5 @@
 -- Additive control plane for sanitized-derivative AI receipt parsing.
+-- Keep provider access disabled by default and this ledger content-free.
 -- This migration does not enable a provider and stores no document content.
 begin;
 
