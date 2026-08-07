@@ -41,10 +41,13 @@ The design-only recommendation is documented in
 `POSSIBLE_BUYS_DATA_MODEL.md`. The current `purchase_items` table remains the
 reviewed observation record but is not, by itself, a safe product-identity and
 learning model. The minimum recommendation is three additive household-private
-tables for package-specific products, confirmed/proposed name or barcode
-aliases, and append-only purchase-item identity links/corrections. Ranking is
-derived from evidence rather than stored as an opaque score. No migration has
-been created or approved.
+tables for package-specific products, primarily reviewed-name aliases with
+optional barcode corroboration, and append-only purchase-item identity
+links/corrections. Ranking is derived from evidence rather than stored as an
+opaque score. The note also defines a consent-gated Edge Function/provider
+boundary and separates product repurchase cadence from batch-specific use-by
+dates. No migration or remote-processing integration has been created or
+approved.
 
 ## Live incremental migration — member names and selected payer
 
