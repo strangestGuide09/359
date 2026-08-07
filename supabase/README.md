@@ -108,9 +108,12 @@ client code or chat.
 
 ## Restock history audit and legacy flags
 
-Run `support/restock_history_audit.sql` first. It is read-only and reports
-per-purchase personal/tracked/untracked counts, normalized names repeated across
-distinct purchase dates, and exact untracked item UUIDs for manual review.
+Open `support/restock_history_audit.sql`, copy the entire file into Supabase SQL
+Editor, and press **Run** once. It contains one read-only query and returns one
+result only. Do not run only a selected fragment. Each result row names the
+reviewed item, lists all dates and qualifying tracked dates, states whether any
+appearance is personal or a fee/charge, gives `possible_buys_eligible`, and
+explains the result in `eligibility_reason`.
 Multiple receipts on the same date provide only one date of restock history, so
 they do not establish a buying interval by themselves.
 
@@ -118,26 +121,22 @@ The production website does not call a restock RPC. It selects active
 `purchases` with embedded `purchase_items` and computes Possible buys locally.
 An item is eligible only when it is non-personal, tracked, not a fee/charge,
 and its normalized name appears on at least two distinct `purchased_on` dates.
-The second audit result now reports `tracked_distinct_purchase_dates` and
-`possible_buys_eligible`; a repeated name with only one tracked date must not be
-treated as a suggestion. Its SQL normalization is deliberately conservative,
-so the website may also merge obvious merchant/pack/unit formatting variants.
-
-For a hosted-data check, run `support/restock_history_audit.sql` in SQL Editor
-without modifying it. Result 1 confirms that reviewed rows and restock flags
-exist by purchase. Result 2 identifies repeated names and shows whether the
-stored flags satisfy the two-date rule. Result 3 lists untracked rows for manual
-review. A signed-out client or the publishable key alone cannot audit household
-rows because RLS correctly hides them; use an authenticated household session
-or the Dashboard SQL Editor. Do not share the result if reviewed item names are
-sensitive.
+Rows saying `untracked`, `personal item excluded`, `fee/charge excluded`, or
+`needs a tracked purchase on another date` are diagnostics, not suggestions.
+Only `possible_buys_eligible = true` with reason `eligible now` satisfies the
+feature rule. The SQL normalization is deliberately conservative, so the
+website may also merge obvious merchant/pack/unit formatting variants. A
+signed-out client or the publishable key alone cannot audit household rows
+because RLS correctly hides them; use the Dashboard SQL Editor. Do not share
+the result if reviewed item names are sensitive.
 
 There is no reliable database marker distinguishing the former website default
 (`is_tracked_for_restock = false`) from a user's explicit opt-out. `created_at`
 is not sufficient evidence, so there is intentionally no date-based or blanket
-backfill. After the user confirms individual items, copy only those exact
-`purchase_items.id` values into `support/manual_restock_backfill.sql`, uncomment
-the insert, and run it. The transaction rejects an empty list, rejects missing
-or personal IDs, and updates only still-untracked non-personal items. The update
-is idempotent, but a mistakenly confirmed UUID would override that item's prior
-opt-out and must therefore be reviewed carefully.
+backfill. The simplified report intentionally omits item UUIDs and performs no
+update. If the user later approves a specific backfill, obtain the exact
+`purchase_items.id` values in a separate, explicitly scoped review, then place
+only those IDs into `support/manual_restock_backfill.sql`. That transaction
+rejects an empty list, rejects missing or personal IDs, and updates only still-
+untracked non-personal items. A mistakenly confirmed UUID would override that
+item's prior opt-out and must therefore be reviewed carefully.

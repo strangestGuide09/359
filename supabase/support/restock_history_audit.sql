@@ -1,89 +1,71 @@
--- Read-only, idempotent restock-history audit.
--- Safe to run repeatedly in Supabase SQL Editor after the clean bootstrap.
--- Returns reviewed structured fields only; it never reads receipt/PDF content.
+-- ONE read-only Possible buys eligibility report.
+-- Run this entire file unchanged in Supabase SQL Editor. It returns one result
+-- row per normalized reviewed item and never updates production data.
+-- Raw PDFs, extracted receipt text, and item UUIDs are intentionally absent.
 
--- 1. Per-purchase allocation and restock-state counts.
-select
-  p.household_id,
-  p.id as purchase_id,
-  p.purchased_on,
-  p.created_at as purchase_created_at,
-  p.label as reviewed_purchase_label,
-  count(i.id)::integer as reviewed_item_count,
-  count(i.id) filter (where i.is_personal)::integer as personal_item_count,
-  count(i.id) filter (where not i.is_personal)::integer as shared_item_count,
-  count(i.id) filter (where not i.is_personal and i.is_tracked_for_restock)::integer as shared_tracked_count,
-  count(i.id) filter (where not i.is_personal and not i.is_tracked_for_restock)::integer as shared_untracked_count
-from public.purchases p
-left join public.purchase_items i on i.purchase_id = p.id
-group by p.household_id, p.id, p.purchased_on, p.created_at, p.label
-order by p.purchased_on, p.created_at, p.id;
-
--- 2. Normalized shared item names seen on two or more DISTINCT purchase dates.
--- Same-day Blinkit receipts count as one date and cannot establish an interval.
-with normalized_items as (
+with reviewed_items as (
   select
     p.household_id,
     p.purchased_on,
-    i.id as item_id,
     i.name,
+    i.is_personal,
     i.is_tracked_for_restock,
+    (i.name ~* '\m(fee|charges?)\M') as is_fee_or_charge,
     trim(regexp_replace(regexp_replace(lower(trim(i.name)), '[^[:alnum:]]+', ' ', 'g'), '\s+', ' ', 'g')) as normalized_name
   from public.purchase_items i
   join public.purchases p on p.id = i.purchase_id
-  where p.archived_at is null and not p.is_personal and not i.is_personal
-)
-select
-  household_id,
-  normalized_name,
-  min(name) as example_reviewed_name,
-  count(*)::integer as reviewed_item_count,
-  count(distinct purchased_on)::integer as distinct_purchase_dates,
-  array_agg(distinct purchased_on order by purchased_on) as purchase_dates,
-  count(*) filter (where is_tracked_for_restock)::integer as tracked_count,
-  count(*) filter (where not is_tracked_for_restock)::integer as untracked_count,
-  count(distinct purchased_on) filter (where is_tracked_for_restock)::integer as tracked_distinct_purchase_dates,
-  (count(distinct purchased_on) filter (where is_tracked_for_restock) >= 2) as possible_buys_eligible
-from normalized_items
-where normalized_name <> ''
-group by household_id, normalized_name
-having count(distinct purchased_on) >= 2
-order by household_id, normalized_name;
-
--- 3. Manual-review candidates. No update is performed.
--- Confirm each item in the product UI before placing its item_id into the
--- separate manual_restock_backfill.sql file. created_at alone is NOT proof
--- that false came from the former default rather than an explicit opt-out.
-with all_shared_history as (
+  where p.archived_at is null
+), candidates as (
   select
-    p.household_id,
-    p.purchased_on,
-    trim(regexp_replace(regexp_replace(lower(trim(i.name)), '[^[:alnum:]]+', ' ', 'g'), '\s+', ' ', 'g')) as normalized_name
-  from public.purchase_items i
-  join public.purchases p on p.id = i.purchase_id
-  where p.archived_at is null and not p.is_personal and not i.is_personal
-), normalized_items as (
-  select
-    p.household_id,
-    p.id as purchase_id,
-    p.label as reviewed_purchase_label,
-    p.purchased_on,
-    p.created_at as purchase_created_at,
-    i.id as item_id,
-    i.name as reviewed_item_name,
-    i.created_at as item_created_at,
-    trim(regexp_replace(regexp_replace(lower(trim(i.name)), '[^[:alnum:]]+', ' ', 'g'), '\s+', ' ', 'g')) as normalized_name
-  from public.purchase_items i
-  join public.purchases p on p.id = i.purchase_id
-  where p.archived_at is null and not p.is_personal
-    and not i.is_personal and not i.is_tracked_for_restock
-), name_history as (
-  select household_id, normalized_name, count(distinct purchased_on)::integer as distinct_purchase_dates
-  from all_shared_history
+    household_id,
+    normalized_name,
+    min(name) as display_item,
+    array_agg(distinct purchased_on order by purchased_on) as all_purchase_dates,
+    coalesce(
+      array_agg(distinct purchased_on order by purchased_on) filter (
+        where not is_personal and not is_fee_or_charge and is_tracked_for_restock
+      ), array[]::date[]
+    ) as qualifying_dates,
+    count(distinct purchased_on) filter (
+      where not is_personal and not is_fee_or_charge and is_tracked_for_restock
+    )::integer as distinct_qualifying_dates,
+    bool_or(not is_personal and not is_fee_or_charge and is_tracked_for_restock) as has_tracked_appearance,
+    bool_or(not is_personal and not is_fee_or_charge and not is_tracked_for_restock) as has_untracked_appearance,
+    bool_and(is_personal) as all_appearances_personal,
+    bool_and(is_fee_or_charge) as all_appearances_fee_or_charge,
+    bool_or(is_personal or is_fee_or_charge) as has_excluded_appearance
+  from reviewed_items
   where normalized_name <> ''
   group by household_id, normalized_name
 )
-select n.*, h.distinct_purchase_dates
-from normalized_items n
-join name_history h using (household_id, normalized_name)
-order by n.purchased_on, n.purchase_id, n.item_id;
+select
+  household_id,
+  display_item,
+  all_purchase_dates,
+  qualifying_dates,
+  distinct_qualifying_dates,
+  case
+    when all_appearances_personal then 'personal'
+    when all_appearances_fee_or_charge then 'fee/charge'
+    when has_tracked_appearance and has_untracked_appearance then 'mixed tracked and untracked'
+    when has_tracked_appearance then 'tracked'
+    when has_untracked_appearance then 'untracked'
+    else 'excluded'
+  end as tracking_status,
+  case
+    when all_appearances_personal then 'personal item excluded'
+    when all_appearances_fee_or_charge then 'fee/charge excluded'
+    when has_excluded_appearance then 'some appearances excluded'
+    else 'none'
+  end as personal_fee_exclusion,
+  (distinct_qualifying_dates >= 2) as possible_buys_eligible,
+  case
+    when distinct_qualifying_dates >= 2 then 'eligible now'
+    when distinct_qualifying_dates = 1 then 'needs a tracked purchase on another date'
+    when has_untracked_appearance then 'untracked'
+    when all_appearances_personal then 'personal item excluded'
+    when all_appearances_fee_or_charge then 'fee/charge excluded'
+    else 'no qualifying tracked purchase'
+  end as eligibility_reason
+from candidates
+order by possible_buys_eligible desc, display_item, household_id;
