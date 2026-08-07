@@ -34,7 +34,7 @@ test("shared web flow has explicit safe loading and recovery states", async () =
   assert.match(style, /\.account-gate \.auth-form input,\.account-gate \.auth-form button \{ height:43px; \}/);
   assert.match(style, /\.account-gate \.auth-status \{ width:100%; \}/);
   assert.match(style, /button \{ min-height:43px;/);
-  assert.match(style, /input,select \{ width:100%; min-height:43px;/);
+  assert.match(style, /input,select,textarea \{ width:100%; min-height:43px;/);
   assert.match(style, /dialog form>div:first-child button \{ width:44px; height:44px;/);
   assert.match(style, /\.state-panel button \{ margin-top:20px; \}/);
 });
@@ -176,7 +176,7 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.doesNotMatch(app, /<main class=/);
   assert.match(app, /class="command-actions primary-actions"/);
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
-  assert.match(page, /<footer>Reviewed shared-ledger entries only/);
+  assert.match(page, /<footer>Original PDFs stay local/);
   assert.match(app, /id="household-settings" class="panel settings"/);
   assert.match(app, /class="member-block"/);
   assert.match(app, /<strong>\$\{esc\(displayedMemberName\(member\)\)\}<\/strong><span aria-hidden="true">·<\/span><span>\$\{member\.role/);
@@ -184,7 +184,7 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.match(app, /data-preview-extra/);
   assert.match(app, /aria-expanded="false">Review all/);
   assert.match(page, /<div class="page-meta"><p id="status"/);
-  assert.match(page, /<footer>Reviewed shared-ledger entries only/);
+  assert.match(page, /<footer>Original PDFs stay local/);
   assert.doesNotMatch(app, /Split the bill\.<br><i>See what’s next/);
   assert.match(style, /\.insights-grid \{ display:grid; grid-template-columns:minmax\(0,2fr\)/);
   assert.match(style, /\.household-masthead \{ display:flex; justify-content:space-between;/);
@@ -210,7 +210,8 @@ test("classic and sketch presentations share one accessible application surface"
   assert.match(page, /type="radio" name="presentation" value="classic" checked/);
   assert.match(page, /type="radio" name="presentation" value="sketch"/);
   assert.equal((page.match(/id="screen"/g) || []).length, 1);
-  assert.equal((page.match(/<dialog /g) || []).length, 1);
+  assert.equal((page.match(/<dialog /g) || []).length, 2);
+  assert.match(page, /id="ai-preview" aria-labelledby="ai-preview-title"/);
   assert.match(app, /applyPresentation\(document, readPresentation\(window\.localStorage\)\)/);
   assert.match(app, /savePresentation\(window\.localStorage, input\.value\)/);
   assert.match(style, /html\[data-presentation="sketch"\] \.panel::after/);

@@ -89,7 +89,8 @@ nav { display:flex; flex-wrap:wrap; gap:10px; padding:10px 0 25px; }
 .hide,[hidden] { display:none!important; }
 footer { padding:10px 0 0; color:var(--muted); font-size:12px; }
 label { display:grid; gap:6px; margin:13px 0; color:#455348; font-size:13px; font-weight:bold; }
-input,select { width:100%; min-height:43px; padding:10px; border:1px solid var(--line); border-radius:8px; background:white; color:var(--ink); font:inherit; }
+input,select,textarea { width:100%; min-height:43px; padding:10px; border:1px solid var(--line); border-radius:8px; background:white; color:var(--ink); font:inherit; }
+textarea { resize:vertical; line-height:1.45; }
 select { height:48px; min-height:48px; padding:10px 42px 10px 12px; overflow:hidden; appearance:none; -webkit-appearance:none; background-color:var(--paper); background-image:linear-gradient(45deg,transparent 50%,var(--pine) 50%),linear-gradient(135deg,var(--pine) 50%,transparent 50%); background-position:calc(100% - 17px) 50%,calc(100% - 11px) 50%; background-repeat:no-repeat; background-size:6px 6px,6px 6px; text-overflow:ellipsis; white-space:nowrap; }
 select:disabled { cursor:not-allowed; opacity:.58; }
 .expense-meta-grid { align-items:start; }
@@ -111,6 +112,9 @@ dialog form>div:first-child button { width:44px; height:44px; padding:0; border:
 menu { display:flex; justify-content:flex-end; gap:9px; margin:16px 0 0; padding:0; }
 .item-heading { margin-top:18px; }
 .item-heading h3 { margin:0; font-size:21px; }
+.ai-improve { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:12px 0; padding:12px; border:1px solid var(--line); border-radius:10px; background:#f1ede4; }
+.ai-improve div { display:grid; gap:4px; }
+.ai-improve small { color:var(--muted); line-height:1.4; }
 .item-row { margin:9px 0; padding:9px 12px 11px; border:1px solid var(--line); border-radius:12px; background:#fffaf0; }
 .item-row legend { padding:0 6px; color:var(--pine); font-size:13px; font-weight:bold; }
 .item-row label { margin:0; }
@@ -224,6 +228,8 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .danger-zone button,.danger-zone small { grid-column:1; grid-row:auto; }
   dialog { padding:20px 16px; }
   .item-row { padding:11px; }
+  .ai-improve { align-items:stretch; flex-direction:column; }
+  .ai-improve button { width:100%; }
   .item-primary { grid-template-columns:1fr 1fr; }
   .item-primary .item-name { grid-column:1/-1; }
   .item-flags { display:grid; grid-template-columns:1fr 1fr; }
