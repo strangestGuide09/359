@@ -34,6 +34,14 @@ test("Possible buys audit distinguishes eligibility from diagnostics", async () 
   assert.match(source, /then 'needs a tracked purchase on another date'/);
   assert.match(source, /then 'untracked'/);
   assert.match(source, /then 'personal item excluded'/);
-  assert.match(source, /then 'fee\/charge excluded'/);
+  assert.match(source, /then 'delivery\/fee\/tax excluded'/);
+  assert.match(source, /then 'non-grocery purchase excluded'/);
+  assert.match(source, /category = 'Groceries'/);
+  for (const exclusion of ["delivery", "handling", "platform", "service", "fee", "tax", "gst", "subtotal", "discount"]) {
+    assert.match(source, new RegExp(`\\b${exclusion}\\b`), `audit must exclude ${exclusion} rows`);
+  }
+  for (const normalization of ["instamart|blinkit", "millilit", "pack", "akshayakalpa", "aashirvaad", "\\^fresh"]) {
+    assert.match(source, new RegExp(normalization), `audit must retain bounded ${normalization} normalization`);
+  }
   assert.doesNotMatch(source, /\bi\.id\b|item_id/);
 });

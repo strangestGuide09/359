@@ -119,16 +119,21 @@ they do not establish a buying interval by themselves.
 
 The production website does not call a restock RPC. It selects active
 `purchases` with embedded `purchase_items` and computes Possible buys locally.
-An item is eligible only when it is non-personal, tracked, not a fee/charge,
-and its normalized name appears on at least two distinct `purchased_on` dates.
-Rows saying `untracked`, `personal item excluded`, `fee/charge excluded`, or
-`needs a tracked purchase on another date` are diagnostics, not suggestions.
+An item is eligible only when its purchase category is Groceries, it is
+non-personal and tracked, it is not a delivery/handling/platform/service charge,
+fee, tax, GST, subtotal, total, discount, or savings row, and its website-
+compatible canonical key appears on at least two distinct `purchased_on` dates.
+Rows saying `untracked`, `personal item excluded`, `delivery/fee/tax excluded`,
+`non-grocery purchase excluded`, or `needs a tracked purchase on another date`
+are diagnostics, not suggestions.
 Only `possible_buys_eligible = true` with reason `eligible now` satisfies the
-feature rule. The SQL normalization is deliberately conservative, so the
-website may also merge obvious merchant/pack/unit formatting variants. A
-signed-out client or the publishable key alone cannot audit household rows
-because RLS correctly hides them; use the Dashboard SQL Editor. Do not share
-the result if reviewed item names are sensitive.
+feature rule. The audit mirrors the website's bounded normalization for leading
+line/SKU numbers, known merchant labels, units, pack formatting, and its short
+approved brand-prefix list. It preserves product sizes and does not use fuzzy
+matching, so similarly named but distinct products are not merged merely by
+similarity. A signed-out client or the publishable key alone cannot audit
+household rows because RLS correctly hides them; use the Dashboard SQL Editor.
+Do not share the result if reviewed item names are sensitive.
 
 There is no reliable database marker distinguishing the former website default
 (`is_tracked_for_restock = false`) from a user's explicit opt-out. `created_at`
@@ -140,3 +145,28 @@ only those IDs into `support/manual_restock_backfill.sql`. That transaction
 rejects an empty list, rejects missing or personal IDs, and updates only still-
 untracked non-personal items. A mistakenly confirmed UUID would override that
 item's prior opt-out and must therefore be reviewed carefully.
+
+### Repairing historic malformed reviewed items
+
+The database deliberately has no raw PDF or extracted receipt text from which
+to reconstruct a malformed line. A parser-looking row is therefore evidence
+for review, not evidence of the correct product name, quantity, or price.
+
+1. Rerun the read-only report. Excluded delivery/fee/tax rows require no urgent
+   database change because they cannot qualify even if their old tracked flag
+   is true.
+2. Compare each malformed merchandise row with a trusted source still held by
+   the user, such as the original local invoice, merchant order history, or a
+   paper receipt. Do not infer corrected fields from the malformed text alone.
+3. For a confirmed non-merchandise row, the safest future repair is an exact-ID
+   update setting only `is_tracked_for_restock = false`; do not delete it because
+   deletion could change itemized shared totals and historical context.
+4. For a confirmed merchandise row, prepare an exact-ID, expected-old-value
+   transaction containing only user-confirmed replacements. Review the proposed
+   before/after rows and transaction row count before committing it.
+5. If no trusted source remains, leave the row unchanged and excluded/unmatched.
+   Never run a date-, merchant-, name-pattern-, or household-wide cleanup.
+
+No repair SQL is supplied by this audit because its output intentionally omits
+item UUIDs. Create a separately reviewed repair script only after the user has
+identified the exact rows and supplied the trustworthy corrected values.
