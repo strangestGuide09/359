@@ -1,0 +1,26 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+select plan(10);
+select has_function('public','claim_ai_parse_completion',array['uuid','uuid','uuid'],'completion claim RPC exists');
+select ok(not has_function_privilege('authenticated','public.claim_ai_parse_completion(uuid,uuid,uuid)','execute'),'clients cannot claim provider jobs');
+select ok(has_function_privilege('service_role','public.claim_ai_parse_completion(uuid,uuid,uuid)','execute'),'only service role can claim completion');
+select has_column('private','ai_parse_jobs','completion_poll_count','durable poll count exists');
+select has_column('private','ai_parse_jobs','last_completion_poll_at','durable poll timestamp exists');
+insert into auth.users(id) values ('51000000-0000-0000-0000-000000000001'),('51000000-0000-0000-0000-000000000002');
+insert into public.households(id,name,created_by) values ('61000000-0000-0000-0000-000000000001','Completion test','51000000-0000-0000-0000-000000000001');
+insert into public.household_members(household_id,user_id,display_name,role) values ('61000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','Member','owner');
+insert into private.ai_parse_jobs(id,household_id,requested_by,idempotency_key,sanitizer_version,derivative_mime,derivative_bytes,page_count,state,provider_job_id)
+values ('71000000-0000-0000-0000-000000000001','61000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001','72000000-0000-0000-0000-000000000001','v1','application/pdf',1000,1,'started','provider-job-1');
+set local role service_role;
+select throws_ok($$select public.claim_ai_parse_completion('71000000-0000-0000-0000-000000000001','61000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001')$$,'P0001','AI processing is disabled','kill switch protects completion');
+reset role;
+update private.ai_processing_config set provider_enabled=true;
+set local role service_role;
+select is((select provider_job_id from public.claim_ai_parse_completion('71000000-0000-0000-0000-000000000001','61000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001')),'provider-job-1','requesting owner can claim only their provider job');
+select is((select retry_after_seconds from public.claim_ai_parse_completion('71000000-0000-0000-0000-000000000001','61000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001')),2,'immediate repeat is throttled idempotently');
+select throws_ok($$select public.claim_ai_parse_completion('71000000-0000-0000-0000-000000000001','61000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000002')$$,'P0001','Active household membership is required','unrelated user cannot claim completion');
+update private.ai_parse_jobs set expires_at=now()-interval '1 second',last_completion_poll_at=null where id='71000000-0000-0000-0000-000000000001';
+select is((select fixed_error_code from public.claim_ai_parse_completion('71000000-0000-0000-0000-000000000001','61000000-0000-0000-0000-000000000001','51000000-0000-0000-0000-000000000001')),'job_expired','expired jobs return a fixed terminal code');
+reset role;
+select * from finish();
+rollback;

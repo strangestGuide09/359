@@ -1,0 +1,17 @@
+{
+  "job_id": "provider-1",
+  "type": "extract",
+  "status": "completed",
+  "usage": { "pages_total": 1, "pages_processed": 1, "pages_succeeded": 1, "pages_failed": 0 },
+  "result": {
+    "merchant_name": "Example Grocer",
+    "purchase_date": "2026-08-07",
+    "receipt_total": 95,
+    "currency": "INR",
+    "line_items": [
+      { "name": "Milk 1 L", "quantity": 1, "unit": "L", "line_total": 65 },
+      { "name": "Tomatoes", "quantity": 1, "unit": "", "line_total": 30 }
+    ]
+  },
+  "annotations": { "private": "must not escape" }
+}

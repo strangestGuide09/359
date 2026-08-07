@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { fixedError, hasAllowedMagic, inspectSanitizedPdf, MAX_DERIVATIVE_BYTES, validateMetadata } from "./validation.mjs";
+import { boundedProviderJson, RECEIPT_EXTRACTION_SCHEMA } from "../_shared/receipt-contract.mjs";
 
 const response = (status: number, code: string, extra = {}, origin?: string) => new Response(status === 204 ? null : JSON.stringify({ code, ...extra }), { status, headers: {
   "content-type": "application/json", "cache-control": "no-store",
@@ -67,7 +68,7 @@ Deno.serve(async request => {
 
     const sarvamKey = Deno.env.get("SARVAM_API_KEY");
     if (!sarvamKey) throw new Error("processing_disabled");
-    const providerJobId = await createAndStartSarvamJob(sarvamKey, derivativeBytes, metadata.mime);
+    const providerJobId = await createSarvamExtractJob(sarvamKey, derivativeBytes, metadata.mime);
     const { error: startedError } = await serverClient.rpc("mark_ai_parse_started", { p_job_id: jobId, p_provider_job_id: providerJobId });
     if (startedError) throw new Error("provider_unavailable");
     return response(202, "accepted", { job_id: jobId }, responseOrigin);
@@ -80,30 +81,17 @@ Deno.serve(async request => {
   }
 });
 
-async function createAndStartSarvamJob(apiKey: string, bytes: Uint8Array, mime: string) {
-  const headers = { "api-subscription-key": apiKey, "content-type": "application/json" };
-  const created = await providerJson("https://api.sarvam.ai/doc-digitization/job/v1", { method: "POST", headers, body: JSON.stringify({ job_parameters: { language: "en-IN", output_format: "json" } }) });
+async function createSarvamExtractJob(apiKey: string, bytes: Uint8Array, mime: string) {
+  const form = new FormData();
+  form.set("file", new File([bytes], "sanitized-receipt.pdf", { type: mime }));
+  form.set("schema", JSON.stringify(RECEIPT_EXTRACTION_SCHEMA));
+  form.set("language", "en-IN");
+  form.set("output_format", "json");
+  form.set("classification", "false");
+  form.set("auto_orient", "true");
+  const created = await boundedProviderJson("https://api.sarvam.ai/doc-ai/v1/job/extract", { method: "POST", headers: { "api-subscription-key": apiKey }, body: form }, 65536);
   const providerJobId = String(created.job_id || "");
-  if (!providerJobId) throw new Error("provider_unavailable");
-  const filename = "sanitized-receipt.pdf";
-  const links = await providerJson("https://api.sarvam.ai/doc-digitization/job/v1/upload-files", { method: "POST", headers, body: JSON.stringify({ job_id: providerJobId, files: [filename] }) });
-  const entry = links.upload_urls?.[filename];
-  const uploadUrl = typeof entry === "string" ? entry : entry?.file_url || entry?.url;
-  if (!uploadUrl) throw new Error("provider_unavailable");
-  const uploaded = await fetch(uploadUrl, { method: "PUT", headers: { "content-type": mime }, body: bytes });
-  if (!uploaded.ok) throw new Error("provider_unavailable");
-  await providerJson(`https://api.sarvam.ai/doc-digitization/job/v1/${providerJobId}/start`, { method: "POST", headers, body: "{}" });
+  const runId = String(created.run_id || "");
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(providerJobId) || !/^[A-Za-z0-9._:-]{1,160}$/.test(runId) || !["pending","queued","running","accepted","created"].includes(String(created.status || "").toLowerCase())) throw new Error("provider_unavailable");
   return providerJobId;
-}
-
-async function providerJson(url: string, init: RequestInit) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  try {
-    const result = await fetch(url, { ...init, signal: controller.signal });
-    if (!result.ok) throw new Error("provider_unavailable");
-    const text = await result.text();
-    if (text.length > 65536) throw new Error("provider_unavailable");
-    return JSON.parse(text);
-  } finally { clearTimeout(timer); }
 }

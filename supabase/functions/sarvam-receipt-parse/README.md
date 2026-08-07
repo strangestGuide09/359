@@ -3,10 +3,12 @@
 This scaffold accepts only a browser-created sanitized derivative. It verifies
 the caller's Supabase JWT, delegates household membership and durable quota
 enforcement to `reserve_ai_parse`, validates declared page/byte limits and file
-magic, and starts an asynchronous Sarvam job. It does not download results,
-persist documents, or write purchases. A future completion function must reduce
-provider output to the reviewed draft allowlist; only the user's later
-`import_reviewed_purchase` call may persist reviewed fields.
+magic, and starts an asynchronous Sarvam Document AI Extract job with an inline
+receipt allowlist schema. It does not download results, persist documents, or
+write purchases. The separate authenticated `sarvam-receipt-result` function
+retrieves the bounded Extract result and reduces it to the editable draft;
+only the user's later `import_reviewed_purchase` call may persist reviewed
+fields.
 
 The server cannot independently prove that a valid sanitized PDF was correctly
 redacted. The `sanitized=true` marker and sanitizer version are assertions, not
@@ -23,10 +25,9 @@ never used as the request body. The client reuses one opaque idempotency key for
 retries of the same in-memory draft. This does not make redaction proof; user
 confirmation remains mandatory.
 
-Do not enable either kill switch yet. Provider completion/result retrieval and
-the allowlisted projection into an editable draft are still intentionally
-unimplemented. Until those exist, the local parser remains the only complete
-receipt-to-reviewed-draft path.
+Do not enable either kill switch until the new Extract submit function, result
+function and completion-control migration are deployed together and pass the
+one-receipt acceptance test. The local parser remains the no-cloud fallback.
 
 Required server-only environment variables:
 
@@ -36,6 +37,13 @@ Required server-only environment variables:
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` — standard
   function environment values. The service role is used only for server-owned
   fixed-state audit updates; never copy or expose it outside the function.
+
+The provider call uses only the current Document AI Extract contract with the
+inline schema in `_shared/receipt-contract.mjs`:
+
+- [Extract fields](https://docs.sarvam.ai/api-reference/doc-ai/job/extract)
+- [Get job status](https://docs.sarvam.ai/api-reference/doc-ai/job/status)
+- [Get job results](https://docs.sarvam.ai/api-reference/doc-ai/job/results)
 
 The database kill switch `private.ai_processing_config.provider_enabled` also
 defaults to `false`. Both switches must be enabled before a provider call. The

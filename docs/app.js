@@ -598,8 +598,11 @@ $("ai-preview-form").onsubmit = async event => {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/sarvam-receipt-parse`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_PUBLISHABLE_KEY }, body: formData });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(aiParseMessage(result.code));
+    if (!/^[0-9a-f-]{36}$/i.test(result.job_id || "")) throw new Error(aiParseMessage("invalid_provider_result"));
+    pendingPdfImport.aiJobId = result.job_id;
     closeAiPreview();
-    note("Redacted derivative accepted. Keep reviewing the local draft; AI result retrieval is not enabled yet.");
+    note("Redacted derivative accepted. Waiting for the private AI draft…");
+    void pollAiReceiptResult(result.job_id, pendingPdfImport);
   } catch (error) {
     errorBox.textContent = error.message || aiParseMessage();
   } finally {
@@ -607,6 +610,47 @@ $("ai-preview-form").onsubmit = async event => {
     button.textContent = "Send redacted derivative";
   }
 };
+async function pollAiReceiptResult(jobId, draftReference) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (pendingPdfImport !== draftReference || draftReference.aiJobId !== jobId) return;
+    try {
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/sarvam-receipt-result`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_PUBLISHABLE_KEY, "content-type": "application/json" }, body: JSON.stringify({ job_id: jobId, household_id: current.id }) });
+      const result = await response.json().catch(() => ({}));
+      if (response.status === 202 && ["pending","provider_pending"].includes(result.code)) {
+        const seconds = Math.min(10, Math.max(2, Number(response.headers.get("retry-after")) || 3));
+        await new Promise(resolve => setTimeout(resolve, seconds * 1000));
+        continue;
+      }
+      if (!response.ok || result.code !== "completed") throw new Error(aiParseMessage(result.code));
+      const aiDraft = validateAiDraft(result.draft);
+      if (pendingPdfImport !== draftReference) return;
+      if (confirm("The private AI draft is ready. Replace the current local item suggestions with it? You must still review every field before saving.")) {
+        $("label").value = aiDraft.defaults.label;
+        if (aiDraft.defaults.amount) $("amount").value = aiDraft.defaults.amount;
+        if (aiDraft.defaults.date) $("date").value = aiDraft.defaults.date;
+        reviewedItems = aiDraft.items.map(emptyReviewedItem);
+        renderItemRows();
+        formDirty = true;
+        note("AI suggestions applied locally. Review every field before saving; nothing was saved automatically.");
+      } else note("AI suggestions were not applied. Your existing local draft is unchanged.");
+      return;
+    } catch (error) {
+      if (pendingPdfImport === draftReference) note(error.message || aiParseMessage());
+      return;
+    }
+  }
+  if (pendingPdfImport === draftReference) note(aiParseMessage("completion_timeout"));
+}
+function validateAiDraft(draft) {
+  if (!draft || typeof draft !== "object" || !draft.defaults || !Array.isArray(draft.items) || !draft.items.length || draft.items.length > 100) throw new Error(aiParseMessage("invalid_provider_result"));
+  const label = String(draft.defaults.label || "").trim().slice(0, 160);
+  const amount = Number(draft.defaults.amount);
+  if (!label || !Number.isFinite(amount) || amount <= 0) throw new Error(aiParseMessage("invalid_provider_result"));
+  const items = draft.items.map(item => emptyReviewedItem(item));
+  if (items.some(item => !item.name.trim() || !Number.isFinite(Number(item.line_total)) || Number(item.line_total) < 0)) throw new Error(aiParseMessage("invalid_provider_result"));
+  if (Math.abs(items.reduce((sum, item) => sum + Number(item.line_total), 0) - amount) > .01) throw new Error(aiParseMessage("invalid_provider_result"));
+  return { defaults: { label, amount: amount.toFixed(2), date: /^\d{4}-\d{2}-\d{2}$/.test(draft.defaults.date || "") ? draft.defaults.date : "" }, items };
+}
 $("close").onclick = closeEntry;
 $("cancel").onclick = closeEntry;
 dialog.addEventListener("cancel", event => { event.preventDefault(); closeEntry(); });

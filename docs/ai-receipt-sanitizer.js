@@ -58,6 +58,11 @@ export function aiParseMessage(code) {
     rate_or_cap_reached: "The private AI usage limit has been reached. Use the local draft or try later.",
     invalid_payload_size: "The sanitized derivative is too large.",
     sanitized_derivative_required: "The sanitized derivative could not be prepared.",
-    provider_unavailable: "The AI provider is temporarily unavailable. Your local draft is unchanged."
+    provider_unavailable: "The AI provider is temporarily unavailable. Your local draft is unchanged.",
+    job_not_found: "This AI receipt job is unavailable for the current household.",
+    job_expired: "The AI receipt job expired. Your local draft is unchanged.",
+    completion_timeout: "AI receipt processing took too long. Your local draft is unchanged.",
+    provider_failed: "The AI provider could not process this redacted derivative. Your local draft is unchanged.",
+    invalid_provider_result: "The AI result did not pass Grocery Ledger’s safety checks. Your local draft is unchanged."
   })[code] || "AI receipt improvement could not start. Your local draft is unchanged.";
 }
