@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1180" viewBox="0 0 1600 1180" role="img" aria-labelledby="map-title map-desc">
+  <title id="map-title">Grocery Ledger visual project map</title>
+  <desc id="map-desc">A structured project map showing the two-person household purpose, laptop web and iPhone clients, reviewed receipt workflow, local privacy boundary, Supabase services, planned privacy-gated Sarvam extraction, current delivery status, and Possible Buys roadmap.</desc>
+  <defs>
+    <style>
+      .bg { fill:#fbf7ea; }
+      .panel { fill:#fffdf7; stroke:#244b3f; stroke-width:2.5; }
+      .green { fill:#dcebd9; stroke:#244b3f; stroke-width:2.5; }
+      .cream { fill:#fff4ce; stroke:#7d6331; stroke-width:2.2; }
+      .orange { fill:#f7c27c; stroke:#8a4c16; stroke-width:2.5; }
+      .soft { fill:#f2ead7; stroke:#765f42; stroke-width:2; }
+      .progress { fill:#ffe0b2; stroke:#a45d1a; stroke-width:2.2; }
+      .working { fill:#dcebd9; stroke:#2c6a50; stroke-width:2.2; }
+      .line { fill:none; stroke:#396454; stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }
+      .dash { fill:none; stroke:#a45d1a; stroke-width:3; stroke-dasharray:9 8; stroke-linecap:round; }
+      .title { font:700 38px system-ui,-apple-system,"Segoe UI",sans-serif; fill:#183f34; }
+      .subtitle { font:500 18px system-ui,-apple-system,"Segoe UI",sans-serif; fill:#4b625a; }
+      .h2 { font:700 22px system-ui,-apple-system,"Segoe UI",sans-serif; fill:#183f34; }
+      .h3 { font:700 17px system-ui,-apple-system,"Segoe UI",sans-serif; fill:#183f34; }
+      .body { font:500 15px system-ui,-apple-system,"Segoe UI",sans-serif; fill:#243b34; }
+      .small { font:500 13px system-ui,-apple-system,"Segoe UI",sans-serif; fill:#3f554d; }
+      .tiny { font:600 12px system-ui,-apple-system,"Segoe UI",sans-serif; fill:#3f554d; letter-spacing:.3px; }
+      .white { fill:#fffdf7; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#396454"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a45d1a"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#183f34" flood-opacity=".13"/>
+    </filter>
+  </defs>
+
+  <rect class="bg" width="1600" height="1180"/>
+  <path d="M55 98 C210 72 315 92 455 79" class="line" opacity=".18"/>
+  <path d="M1170 83 C1300 66 1410 86 1540 72" class="line" opacity=".18"/>
+
+  <text x="70" y="70" class="title">Grocery Ledger — project map</text>
+  <text x="72" y="102" class="subtitle">A private, reviewed household ledger built for two people—not a generic expense tracker.</text>
+
+  <!-- Purpose and people -->
+  <g filter="url(#shadow)">
+    <rect x="70" y="135" width="430" height="132" rx="22" class="green"/>
+    <rect x="525" y="135" width="325" height="132" rx="22" class="cream"/>
+    <rect x="875" y="135" width="325" height="132" rx="22" class="cream"/>
+    <rect x="1225" y="135" width="305" height="132" rx="22" class="panel"/>
+  </g>
+  <text x="94" y="171" class="h2">Purpose</text>
+  <text x="94" y="200" class="body">Turn receipts into a fair, itemized ledger</text>
+  <text x="94" y="224" class="body">without entering every grocery one by one.</text>
+  <text x="94" y="248" class="small">Review first • explain balances • suggest repeat buys</text>
+  <text x="549" y="171" class="h2">Ekta</text>
+  <text x="549" y="201" class="body">Laptop-first web experience</text>
+  <text x="549" y="225" class="small">Receipt review, corrections, household ledger</text>
+  <text x="899" y="171" class="h2">Ritesh</text>
+  <text x="899" y="201" class="body">Native iPhone experience</text>
+  <text x="899" y="225" class="small">Daily ledger, balances, settlement, restock</text>
+  <text x="1249" y="171" class="h2">Household rule</text>
+  <text x="1249" y="201" class="body">Owner + Partner only</text>
+  <text x="1249" y="225" class="small">Exactly two active seats</text>
+  <text x="1249" y="247" class="small">One active household per account</text>
+
+  <!-- Clients and platform -->
+  <text x="70" y="315" class="h2">Where it runs</text>
+  <g filter="url(#shadow)">
+    <rect x="70" y="335" width="350" height="116" rx="20" class="panel"/>
+    <rect x="445" y="335" width="350" height="116" rx="20" class="panel"/>
+    <rect x="820" y="335" width="710" height="116" rx="20" class="green"/>
+  </g>
+  <text x="94" y="370" class="h3">docs/ — laptop web</text>
+  <text x="94" y="398" class="body">GitHub Pages production client</text>
+  <text x="94" y="424" class="small">Passwordless auth • receipt review • ledger</text>
+  <text x="469" y="370" class="h3">GroceryLedger/ — iPhone</text>
+  <text x="469" y="398" class="body">SwiftUI + SwiftData native client</text>
+  <text x="469" y="424" class="small">Local review implemented • sync stabilizing</text>
+  <text x="844" y="370" class="h3">Supabase shared foundation</text>
+  <text x="844" y="399" class="body">Auth • Postgres • RLS • guarded RPCs • Realtime</text>
+  <text x="844" y="425" class="small">Database enforces membership isolation, two seats, atomic reviewed imports and settlements.</text>
+  <path d="M420 393 H445" class="line" marker-end="url(#arrow)"/>
+  <path d="M795 393 H820" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Core flow -->
+  <text x="70" y="505" class="h2">The durable product flow</text>
+  <text x="393" y="505" class="small">The review gate is the boundary between source material and shared household data.</text>
+  <g filter="url(#shadow)">
+    <rect x="70" y="530" width="185" height="88" rx="18" class="cream"/>
+    <rect x="275" y="530" width="170" height="88" rx="18" class="cream"/>
+    <rect x="465" y="530" width="185" height="88" rx="18" class="panel"/>
+    <rect x="670" y="530" width="170" height="88" rx="18" class="panel"/>
+    <rect x="860" y="530" width="180" height="88" rx="18" class="orange"/>
+    <rect x="1060" y="530" width="185" height="88" rx="18" class="green"/>
+    <rect x="1265" y="530" width="265" height="88" rx="18" class="green"/>
+  </g>
+  <text x="88" y="560" class="h3">1. Sign in</text><text x="88" y="585" class="small">Magic link / planned code</text><text x="88" y="603" class="small">Persist returning session</text>
+  <text x="293" y="560" class="h3">2. Household</text><text x="293" y="585" class="small">Create or join</text><text x="293" y="603" class="small">Owner + Partner</text>
+  <text x="483" y="560" class="h3">3. Upload</text><text x="483" y="585" class="small">Receipt / invoice</text><text x="483" y="603" class="small">PDF or image</text>
+  <text x="688" y="560" class="h3">4. Local parse</text><text x="688" y="585" class="small">Transient source</text><text x="688" y="603" class="small">Editable draft</text>
+  <text x="878" y="560" class="h3">5. Review gate</text><text x="878" y="585" class="small">Correct items + totals</text><text x="878" y="603" class="small">User confirms</text>
+  <text x="1078" y="560" class="h3">6. Reviewed sync</text><text x="1078" y="585" class="small">Atomic structured data</text><text x="1078" y="603" class="small">Realtime convergence</text>
+  <text x="1283" y="560" class="h3">7. Household value</text><text x="1283" y="585" class="small">Balances → settlement</text><text x="1283" y="603" class="small">Possible Buys / restock</text>
+  <path d="M255 574 H275 M445 574 H465 M650 574 H670 M840 574 H860 M1040 574 H1060 M1245 574 H1265" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Privacy boundary -->
+  <g filter="url(#shadow)">
+    <rect x="70" y="652" width="960" height="146" rx="22" class="soft"/>
+    <rect x="1055" y="652" width="475" height="146" rx="22" class="green"/>
+  </g>
+  <text x="94" y="687" class="h2">Privacy boundary — source stays local</text>
+  <text x="94" y="716" class="body">Original receipt/PDF/image • raw extracted text • parser working data</text>
+  <text x="94" y="742" class="body">Exact receipt/order/transaction IDs • payment/card/bank/UPI/QR details • address/contact</text>
+  <text x="94" y="773" class="small">Never persist, sync, log, or send as ledger data. Cancel or failure discards the transient draft.</text>
+  <text x="1079" y="687" class="h2">What may sync after review</text>
+  <text x="1079" y="716" class="body">Merchant/date/total/payer</text>
+  <text x="1079" y="742" class="body">Reviewed items, quantities and prices</text>
+  <text x="1079" y="768" class="body">Personal/restock/use-by flags + opaque hashes</text>
+  <path d="M1007 725 H1048" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Planned Sarvam path -->
+  <text x="70" y="848" class="h2">Planned enhanced parsing — privacy-gated, never the default</text>
+  <text x="665" y="848" class="small">Local parser remains complete and available if consent is declined or any step fails.</text>
+  <g filter="url(#shadow)">
+    <rect x="70" y="870" width="245" height="100" rx="18" class="progress"/>
+    <rect x="335" y="870" width="215" height="100" rx="18" class="progress"/>
+    <rect x="570" y="870" width="235" height="100" rx="18" class="progress"/>
+    <rect x="825" y="870" width="245" height="100" rx="18" class="progress"/>
+    <rect x="1090" y="870" width="210" height="100" rx="18" class="progress"/>
+    <rect x="1320" y="870" width="210" height="100" rx="18" class="progress"/>
+  </g>
+  <text x="88" y="903" class="h3">Local privacy gateway</text><text x="88" y="929" class="small">Rebuild minimal derivative</text><text x="88" y="950" class="small">Remove identity/payment/address</text>
+  <text x="353" y="903" class="h3">Preview + consent</text><text x="353" y="929" class="small">Show redactions</text><text x="353" y="950" class="small">Per upload • fail closed</text>
+  <text x="588" y="903" class="h3">Authenticated function</text><text x="588" y="929" class="small">Server-held Sarvam key</text><text x="588" y="950" class="small">No secret client-side</text>
+  <text x="843" y="903" class="h3">Rate + budget controls</text><text x="843" y="929" class="small">Membership • limits • retries</text><text x="843" y="950" class="small">Content-free audit only</text>
+  <text x="1108" y="903" class="h3">Sarvam extraction</text><text x="1108" y="929" class="small">Structured proposal</text><text x="1108" y="950" class="small">Confidence, not truth</text>
+  <text x="1338" y="903" class="h3">Editable draft</text><text x="1338" y="929" class="small">Returns to review gate</text><text x="1338" y="950" class="small">Transient payload discarded</text>
+  <path d="M315 920 H335 M550 920 H570 M805 920 H825 M1070 920 H1090 M1300 920 H1320" class="dash" marker-end="url(#arrow-orange)"/>
+
+  <!-- Status and restock -->
+  <g filter="url(#shadow)">
+    <rect x="70" y="1015" width="720" height="120" rx="22" class="working"/>
+    <rect x="815" y="1015" width="715" height="120" rx="22" class="progress"/>
+  </g>
+  <text x="94" y="1050" class="h2">Working now</text>
+  <text x="94" y="1079" class="body">Web + passwordless auth • receipt review • shared ledger • balances • settlements</text>
+  <text x="94" y="1107" class="small">Restock: existing repeated-purchase evidence produces transparent cues.</text>
+  <text x="839" y="1050" class="h2">In progress / next</text>
+  <text x="839" y="1079" class="body">Native stabilization • secure Sarvam job completion • local sanitizer integration</text>
+  <text x="839" y="1107" class="small">Possible Buys: stronger cadence, confidence and “use soon” explanations without expiry claims.</text>
+
+  <text x="70" y="1164" class="tiny">STATUS KEY</text>
+  <circle cx="174" cy="1159" r="8" fill="#dcebd9" stroke="#2c6a50" stroke-width="2"/><text x="190" y="1164" class="small">working / verified foundation</text>
+  <circle cx="415" cy="1159" r="8" fill="#ffe0b2" stroke="#a45d1a" stroke-width="2"/><text x="431" y="1164" class="small">in progress / planned path</text>
+  <text x="1530" y="1164" text-anchor="end" class="small">No secrets or project URLs shown</text>
+</svg>

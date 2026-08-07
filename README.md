@@ -29,14 +29,12 @@ in `GroceryLedger/` and `GroceryLedgerTests/`.
 
 ## Database status
 
-The previous hosted database is no longer accessible. Treat the next database
-as a clean deployment: review the schema, enforce the two-member limit, add
-integration tests, and then create a new free-tier backend. Do not assume the
-old migration history exists in the replacement database.
-
-The SQL files in `supabase/` document the previous Supabase implementation.
-They are reference material until a clean bootstrap migration is prepared and
-verified. Do not run the historical migrations blindly against a new project.
+The inaccessible previous database has been replaced. The clean Supabase
+bootstrap is deployed and verified, including the two-member contract, RLS,
+guarded RPCs, Realtime publication, grant audit, and hosted pgTAP checks. Website
+and native clients must still complete their own cross-client production
+acceptance; do not treat the verified database foundation as proof of every
+client flow.
 
 ## Project documents
 
@@ -46,3 +44,11 @@ verified. Do not run the historical migrations blindly against a new project.
   verification, defects, and operational decisions.
 
 The corresponding Python builders are the editable sources for these files.
+
+## Visual orientation
+
+See the [Grocery Ledger project map](project-map/README.md) for an easy-to-scan
+view of the product purpose, clients, reviewed receipt flow, privacy boundary,
+Supabase foundation, optional Sarvam path, current status, and Possible Buys
+direction. The companion [Evolution Map](project-map/grocery-ledger-evolution-map.svg)
+traces adopted decisions, dropped or deferred ideas, and next milestones.
