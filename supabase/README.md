@@ -50,6 +50,51 @@ unredacted extracted text never leave the client, while provider keys remain
 server-only. It separates product repurchase cadence from batch-specific use-by
 dates. No migration or remote-processing integration has been created or approved.
 
+## Sanitized Sarvam Edge Function scaffold (not deployed)
+
+`migrations/20260807000000_ai_parse_controls.sql` adds a private content-free
+job ledger, a database kill switch, monthly household cap, and a serialized
+rolling limit of three reservations per authenticated user per hour. It grants
+only narrow authenticated RPCs; clients receive no table privileges. Run
+`tests/003_ai_parse_controls.sql` after applying the migration.
+
+`functions/sarvam-receipt-parse/` contains the Edge Function scaffold. It
+requires a verified JWT and active household membership, accepts only a locally
+rebuilt sanitized derivative, validates MIME/magic bytes and byte/page limits,
+and reads `SARVAM_API_KEY` only from server environment. Its standard server-
+only service role can update fixed audit state but is never returned to clients.
+The function never stores or logs the document body. The server cannot prove
+that the browser redacted correctly; sanitizer integrity, local preview, and
+the mandatory manual fallback remain part of the security boundary.
+
+Deployment remains disabled at two layers: `AI_PROCESSING_ENABLED` must equal
+`true`, and `private.ai_processing_config.provider_enabled` must be enabled
+explicitly. Do not enable either until processor terms, consent UX, the browser
+sanitizer, result-projection endpoint, and budget controls are accepted.
+
+Eventual setup order (not performed by Codex):
+
+1. Run `migrations/20260807000000_ai_parse_controls.sql` in SQL Editor, then run
+   `tests/003_ai_parse_controls.sql` and require all 15 assertions to pass. The
+   migration leaves the database kill switch off.
+2. In Edge Function secrets, set `SARVAM_API_KEY` privately, set
+   `AI_ALLOWED_ORIGIN=https://strangestguide09.github.io`, and keep
+   `AI_PROCESSING_ENABLED=false`. Do not send or paste any secret into code,
+   SQL, chat, screenshots, or client settings. Supabase supplies its standard
+   URL/anon/service-role function variables; never expose the service role.
+3. Deploy `sarvam-receipt-parse` with JWT verification enabled. Test only its
+   disabled/auth/origin/validation paths; do not submit a document or enable the
+   provider yet.
+4. Implement and approve the browser sanitizer plus bounded result-projection
+   completion endpoint. This start-job scaffold alone is not a complete user
+   flow and must remain disabled.
+5. After privacy and cost acceptance, set the environment switch to `true`, then
+   make the database switch the final activation step:
+   `update private.ai_processing_config set provider_enabled=true,updated_at=now() where singleton;`
+6. To stop all new provider work, set either switch to false; prefer turning off
+   both. Periodically delete expired content-free job rows only after required
+   cost/deletion reconciliation is complete.
+
 ## Live incremental migration — member names and selected payer
 
 After the clean bootstrap is already live, run exactly

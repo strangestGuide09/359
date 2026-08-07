@@ -1,0 +1,109 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { fixedError, hasAllowedMagic, inspectSanitizedPdf, MAX_DERIVATIVE_BYTES, validateMetadata } from "./validation.mjs";
+
+const response = (status: number, code: string, extra = {}, origin?: string) => new Response(status === 204 ? null : JSON.stringify({ code, ...extra }), { status, headers: {
+  "content-type": "application/json", "cache-control": "no-store",
+  ...(origin ? { "access-control-allow-origin": origin, "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "authorization, apikey, content-type", "vary": "Origin" } : {})
+} });
+
+Deno.serve(async request => {
+  let jobId: string | undefined;
+  let userClient;
+  let serverClient;
+  let derivativeBytes: Uint8Array | undefined;
+  let responseOrigin: string | undefined;
+  try {
+    const allowedOrigin = Deno.env.get("AI_ALLOWED_ORIGIN");
+    const requestOrigin = request.headers.get("origin") || "";
+    if (allowedOrigin && requestOrigin === allowedOrigin) responseOrigin = allowedOrigin;
+    if (request.method === "OPTIONS") return responseOrigin ? response(204, "ok", {}, responseOrigin) : response(403, "origin_not_allowed");
+    if (request.method !== "POST") return response(405, "method_not_allowed", {}, responseOrigin);
+    if (Deno.env.get("AI_PROCESSING_ENABLED") !== "true") throw new Error("processing_disabled");
+    if (!responseOrigin) throw new Error("origin_not_allowed");
+    const authorization = request.headers.get("authorization") || "";
+    if (!authorization.startsWith("Bearer ")) throw new Error("authentication_required");
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (contentLength && contentLength > MAX_DERIVATIVE_BYTES + 65536) throw new Error("invalid_payload_size");
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !anonKey || !serviceRoleKey) throw new Error("processing_disabled");
+    userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } }, auth: { persistSession: false } });
+    serverClient = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const { data: authData, error: authError } = await userClient.auth.getUser();
+    if (authError || !authData.user) throw new Error("authentication_required");
+
+    const form = await request.formData();
+    const derivative = form.get("derivative");
+    if (!(derivative instanceof File)) throw new Error("sanitized_derivative_required");
+    derivativeBytes = new Uint8Array(await derivative.arrayBuffer());
+    const metadata = {
+      householdId: String(form.get("household_id") || ""),
+      idempotencyKey: String(form.get("idempotency_key") || ""),
+      sanitizerVersion: String(form.get("sanitizer_version") || ""),
+      mime: derivative.type,
+      pageCount: Number(form.get("page_count")),
+      byteCount: derivativeBytes.byteLength,
+      sanitized: String(form.get("sanitized") || "")
+    };
+    validateMetadata(metadata);
+    if (!hasAllowedMagic(derivativeBytes, metadata.mime)) throw new Error("invalid_file_signature");
+    inspectSanitizedPdf(derivativeBytes, metadata.sanitizerVersion, metadata.pageCount);
+
+    const { data: reserved, error: reserveError } = await userClient.rpc("reserve_ai_parse", {
+      p_household_id: metadata.householdId,
+      p_idempotency_key: metadata.idempotencyKey,
+      p_sanitizer_version: metadata.sanitizerVersion,
+      p_derivative_mime: metadata.mime,
+      p_derivative_bytes: metadata.byteCount,
+      p_page_count: metadata.pageCount
+    });
+    if (reserveError) throw new Error(/limit|cap/i.test(reserveError.message) ? "rate_or_cap_reached" : "processing_disabled");
+    const reservation = Array.isArray(reserved) ? reserved[0] : reserved;
+    jobId = reservation?.job_id;
+    if (!jobId) throw new Error("processing_disabled");
+    if (!reservation.is_new) return response(202, "accepted", { job_id: jobId }, responseOrigin);
+
+    const sarvamKey = Deno.env.get("SARVAM_API_KEY");
+    if (!sarvamKey) throw new Error("processing_disabled");
+    const providerJobId = await createAndStartSarvamJob(sarvamKey, derivativeBytes, metadata.mime);
+    const { error: startedError } = await serverClient.rpc("mark_ai_parse_started", { p_job_id: jobId, p_provider_job_id: providerJobId });
+    if (startedError) throw new Error("provider_unavailable");
+    return response(202, "accepted", { job_id: jobId }, responseOrigin);
+  } catch (error) {
+    const code = fixedError(error);
+    if (jobId && serverClient) await serverClient.rpc("mark_ai_parse_finished", { p_job_id: jobId, p_state: "failed", p_fixed_error_code: code, p_charged_units: 0 });
+    return response(code === "authentication_required" ? 401 : code === "origin_not_allowed" ? 403 : code === "rate_or_cap_reached" ? 429 : code === "processing_disabled" ? 503 : 400, code, {}, responseOrigin);
+  } finally {
+    derivativeBytes?.fill(0);
+  }
+});
+
+async function createAndStartSarvamJob(apiKey: string, bytes: Uint8Array, mime: string) {
+  const headers = { "api-subscription-key": apiKey, "content-type": "application/json" };
+  const created = await providerJson("https://api.sarvam.ai/doc-digitization/job/v1", { method: "POST", headers, body: JSON.stringify({ job_parameters: { language: "en-IN", output_format: "json" } }) });
+  const providerJobId = String(created.job_id || "");
+  if (!providerJobId) throw new Error("provider_unavailable");
+  const filename = "sanitized-receipt.pdf";
+  const links = await providerJson("https://api.sarvam.ai/doc-digitization/job/v1/upload-files", { method: "POST", headers, body: JSON.stringify({ job_id: providerJobId, files: [filename] }) });
+  const entry = links.upload_urls?.[filename];
+  const uploadUrl = typeof entry === "string" ? entry : entry?.file_url || entry?.url;
+  if (!uploadUrl) throw new Error("provider_unavailable");
+  const uploaded = await fetch(uploadUrl, { method: "PUT", headers: { "content-type": mime }, body: bytes });
+  if (!uploaded.ok) throw new Error("provider_unavailable");
+  await providerJson(`https://api.sarvam.ai/doc-digitization/job/v1/${providerJobId}/start`, { method: "POST", headers, body: "{}" });
+  return providerJobId;
+}
+
+async function providerJson(url: string, init: RequestInit) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const result = await fetch(url, { ...init, signal: controller.signal });
+    if (!result.ok) throw new Error("provider_unavailable");
+    const text = await result.text();
+    if (text.length > 65536) throw new Error("provider_unavailable");
+    return JSON.parse(text);
+  } finally { clearTimeout(timer); }
+}

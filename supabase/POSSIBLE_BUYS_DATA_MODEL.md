@@ -163,17 +163,17 @@ security-sensitive code and require adversarial fixture tests.
 
 ### Recommended Edge Function shape
 
-1. After local preview/consent, the client asks a narrow Supabase Edge Function
-   to create a processing job. The control request contains only sanitizer
-   version, derivative MIME type/byte count/page count, consent version, and an
-   idempotency key—never original text, extracted text, item values, or bytes.
-   The function verifies the JWT, active household membership, allowlisted
-   derivative type/size/pages, quotas, budget, and idempotency.
-2. The function calls the provider with a server-held API key and returns a
-   short-lived provider presigned upload URL plus an opaque client job token.
-   The client uploads only the locally rebuilt derivative directly to the
-   provider. Original bytes and unredacted text never enter the Edge Function,
-   provider, Supabase Storage/Postgres, logs, analytics, or error bodies.
+1. After local preview/consent, the client sends the newly rebuilt sanitized PDF
+   to a narrow Supabase Edge Function with sanitizer version, page count,
+   household ID, and idempotency key. It never sends the original document or
+   unredacted extraction. The function verifies the JWT, active household
+   membership, origin, PDF signature/sanitizer marker/passive features,
+   type/size/pages, quotas, budget, and idempotency before any provider call.
+2. The function keeps the derivative only in request memory, creates the
+   provider job with its server-held key, and uploads the derivative through the
+   provider's short-lived presigned URL. Original bytes and unredacted text
+   never enter the Edge Function or provider; derivative bytes never enter
+   Supabase Storage/Postgres, logs, analytics, or error bodies.
 3. A second authenticated function starts/checks the provider job and fetches
    its output with strict response byte/time limits. It immediately projects the
    response into a strict draft schema (merchant label, purchase date/category/
