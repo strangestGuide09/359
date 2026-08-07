@@ -137,7 +137,8 @@ test("mixed reviewed receipts use shared item totals for balances and restock", 
   assert.match(app, /function sharedPurchaseAmount/);
   assert.match(app, /item\.is_personal \? 0/);
   assert.match(restock, /if \(item\.is_personal \|\| !item\.is_tracked_for_restock/);
-  assert.match(app, /Tracking \$\{groups\.size\} item/);
+  assert.match(app, /restockEmptyState\(groups\)/);
+  assert.match(restock, /same normalized item is bought on a second date/);
 });
 
 test("itemized review is editable and retains failed drafts", async () => {

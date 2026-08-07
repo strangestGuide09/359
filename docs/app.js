@@ -8,7 +8,7 @@ import { clearImportFeedback, showImportFeedback as renderImportFeedback } from 
 import { previewState } from "./dashboard-view.js";
 import { formatMemberName } from "./member-names.js";
 import { parseReceipt } from "./receipt-parser.js";
-import { qualifiesForRestockSuggestion, restockHistory } from "./restock.js";
+import { qualifiesForRestockSuggestion, restockEmptyState, restockHistory } from "./restock.js";
 import { settlementAmountError, settlementConfirmation, settlementState } from "./settlement-flow.js";
 import { createResilientAuthStorage, restoreSessionWithRetry, sessionErrorKind } from "./session-restore.js";
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
@@ -225,7 +225,7 @@ function suggestionCards() {
   }).filter(Boolean);
   return {
     cards,
-    empty: groups.size ? `<p class="empty-state">Tracking ${groups.size} item${groups.size === 1 ? "" : "s"}. Buy a tracked item again on another date to see a suggestion.</p>` : '<p class="empty-state">No tracked grocery items yet. Import a receipt and keep “Track for restock” selected.</p>'
+    empty: `<p class="empty-state">${esc(restockEmptyState(groups))}</p>`
   };
 }
 
