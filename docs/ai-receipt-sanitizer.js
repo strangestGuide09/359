@@ -62,6 +62,7 @@ export function aiParseMessage(code) {
     provider_request_rejected: "Sarvam rejected this redacted derivative or extraction request. Your local draft is unchanged.",
     provider_rate_limited: "Sarvam's request limit has been reached. Your local draft is unchanged; try later.",
     provider_connection_failed: "Grocery Ledger could not reach Sarvam. Your local draft is unchanged.",
+    provider_timeout: "Sarvam took too long to accept this request. Your local draft is unchanged; try again later.",
     provider_invalid_response: "Sarvam returned an unexpected response. Your local draft is unchanged.",
     provider_job_record_failed: "Sarvam accepted the request, but Grocery Ledger could not safely record its job. Your local draft is unchanged.",
     submission_claim_failed: "Grocery Ledger could not safely start this AI request. Your local draft is unchanged.",

@@ -38,7 +38,7 @@ export function fixedError(error) {
     "origin_not_allowed","processing_disabled","rate_or_cap_reached","provider_unavailable",
     "provider_access_denied","provider_request_rejected","provider_rate_limited",
     "provider_invalid_response","provider_connection_failed","provider_job_record_failed",
-    "submission_claim_failed"
+    "submission_claim_failed","provider_timeout"
   ]);
   return allowed.has(error?.message) ? error.message : "provider_unavailable";
 }

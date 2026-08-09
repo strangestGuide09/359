@@ -10,6 +10,7 @@ export const RECEIPT_EXTRACTION_SCHEMA = {
       description: "Purchased product and explicit fee lines only. Never return payment, address, contact, order, invoice, customer, tax-summary or identifier fields.",
       items: {
         type: "object",
+        description: "One purchased item or explicit fee line, with only the approved receipt fields.",
         properties: {
           name: { type: "string", description: "Purchased item or explicit fee name." },
           quantity: { type: "number", description: "Purchased quantity when stated; use 1 when the receipt clearly shows one item." },
@@ -29,7 +30,13 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    let response;
+    try {
+      response = await fetch(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (error?.name === "AbortError") throw new Error("provider_timeout");
+      throw error;
+    }
     if (!response.ok) {
       const error = new Error(response.status === 409 ? "provider_pending" : "provider_unavailable");
       error.status = response.status;
