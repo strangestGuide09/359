@@ -28,3 +28,8 @@ test("provider HTTP statuses map to privacy-safe recovery codes",()=>{
   assert.equal(fixedError(Object.assign(new Error("provider body"),{status:400})),"provider_request_rejected");
   assert.equal(fixedError(Object.assign(new Error("provider body"),{status:429})),"provider_rate_limited");
 });
+test("submission-stage diagnostics remain fixed and content-free",()=>{
+  for (const code of ["provider_invalid_response","provider_connection_failed","provider_job_record_failed","submission_claim_failed"]) {
+    assert.equal(fixedError(new Error(code)),code);
+  }
+});

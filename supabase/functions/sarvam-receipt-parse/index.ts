@@ -65,14 +65,19 @@ Deno.serve(async request => {
     jobId = reservation?.job_id;
     if (!jobId) throw new Error("processing_disabled");
     const { data: claimed, error: claimError } = await serverClient.rpc("claim_ai_parse_submission", { p_job_id: jobId, p_requesting_user: authData.user.id });
-    if (claimError) throw new Error(/disabled/i.test(claimError.message) ? "processing_disabled" : "provider_unavailable");
+    if (claimError) throw new Error(/disabled/i.test(claimError.message) ? "processing_disabled" : "submission_claim_failed");
     if (claimed !== true) return response(202, "accepted", { job_id: jobId }, responseOrigin);
 
     const sarvamKey = Deno.env.get("SARVAM_API_KEY");
     if (!sarvamKey) throw new Error("processing_disabled");
-    const providerJobId = await createSarvamExtractJob(sarvamKey, derivativeBytes, metadata.mime);
+    let providerJobId: string;
+    try {
+      providerJobId = await createSarvamExtractJob(sarvamKey, derivativeBytes, metadata.mime);
+    } catch (error) {
+      throw new Error(providerSubmissionCode(error));
+    }
     const { error: startedError } = await serverClient.rpc("mark_ai_parse_started", { p_job_id: jobId, p_provider_job_id: providerJobId });
-    if (startedError) throw new Error("provider_unavailable");
+    if (startedError) throw new Error("provider_job_record_failed");
     return response(202, "accepted", { job_id: jobId }, responseOrigin);
   } catch (error) {
     const code = fixedError(error);
@@ -91,6 +96,15 @@ async function createSarvamExtractJob(apiKey: string, bytes: Uint8Array, mime: s
   form.set("output_format", "json");
   const created = await boundedProviderJson("https://api.sarvam.ai/doc-ai/v1/job/extract", { method: "POST", headers: { "api-subscription-key": apiKey }, body: form }, 65536);
   const providerJobId = String(created.job_id || "");
-  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(providerJobId) || !["pending","queued","running","accepted","created"].includes(String(created.status || "").toLowerCase())) throw new Error("provider_unavailable");
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(providerJobId) || !["pending","queued","running","accepted","created"].includes(String(created.status || "").toLowerCase())) throw new Error("provider_invalid_response");
   return providerJobId;
+}
+
+function providerSubmissionCode(error: unknown) {
+  const status = Number((error as { status?: number })?.status);
+  if ([401, 402, 403].includes(status)) return "provider_access_denied";
+  if ([400, 413, 422].includes(status)) return "provider_request_rejected";
+  if (status === 429) return "provider_rate_limited";
+  if ((error as Error)?.message === "invalid_provider_result" || (error as Error)?.message === "provider_invalid_response") return "provider_invalid_response";
+  return "provider_connection_failed";
 }

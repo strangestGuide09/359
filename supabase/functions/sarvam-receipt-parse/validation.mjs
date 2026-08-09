@@ -36,7 +36,9 @@ export function fixedError(error) {
     "sanitized_derivative_required","unsupported_derivative_type","invalid_page_count",
     "invalid_payload_size","invalid_file_signature","unsafe_pdf_feature","authentication_required",
     "origin_not_allowed","processing_disabled","rate_or_cap_reached","provider_unavailable",
-    "provider_access_denied","provider_request_rejected","provider_rate_limited"
+    "provider_access_denied","provider_request_rejected","provider_rate_limited",
+    "provider_invalid_response","provider_connection_failed","provider_job_record_failed",
+    "submission_claim_failed"
   ]);
   return allowed.has(error?.message) ? error.message : "provider_unavailable";
 }

@@ -26,6 +26,8 @@ test("disabled processing has a non-destructive explanation", () => {
   assert.match(aiParseMessage("processing_disabled"), /not enabled yet/i);
   assert.match(aiParseMessage("provider_access_denied"), /API key|Extract access/i);
   assert.match(aiParseMessage("provider_request_rejected"), /rejected/i);
+  assert.match(aiParseMessage("provider_connection_failed"), /reach Sarvam/i);
+  assert.match(aiParseMessage("provider_job_record_failed"), /record its job/i);
   assert.match(aiParseMessage("completion_timeout"), /too long/i);
   assert.match(aiParseMessage("invalid_provider_result"), /safety checks/i);
 });
