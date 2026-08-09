@@ -25,10 +25,11 @@ export const RECEIPT_EXTRACTION_SCHEMA = {
 };
 
 export const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
+export const PROVIDER_TIMEOUT_MS = 45_000;
 
 export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RESPONSE_BYTES) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) {

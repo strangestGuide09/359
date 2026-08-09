@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundedProviderJson, RECEIPT_EXTRACTION_SCHEMA } from "./receipt-contract.mjs";
+import { boundedProviderJson, PROVIDER_TIMEOUT_MS, RECEIPT_EXTRACTION_SCHEMA } from "./receipt-contract.mjs";
 
 test("Document AI Extract schema requests only the reviewed receipt allowlist", () => {
   assert.deepEqual(Object.keys(RECEIPT_EXTRACTION_SCHEMA.properties).sort(), ["currency","line_items","merchant_name","purchase_date","receipt_total"]);
@@ -24,6 +24,7 @@ test("provider JSON reader rejects declared, streamed, typed, and syntactic viol
 });
 
 test("provider request timeouts stay distinguishable from connection failures", async t => {
+  assert.equal(PROVIDER_TIMEOUT_MS, 45_000);
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
   globalThis.fetch = async () => { throw new DOMException("aborted", "AbortError"); };
