@@ -7,9 +7,11 @@ const usage = { pages_total: 1, pages_processed: 1, pages_succeeded: 1, pages_fa
 
 test("provider status is bound to the expected submitted job", () => {
   assert.equal(providerState({ job_id: "provider-1", status: "running", pipeline: "extract", usage }, "provider-1", 1), "pending");
+  assert.equal(providerState({ job_id: "provider-1", run_id: "run-1", status: "pending", pipeline: "extract", usage }, "provider-1", 1), "pending");
   assert.equal(providerState({ job_id: "provider-1", status: "completed", pipeline: "extract", usage }, "provider-1", 1), "completed");
   assert.throws(() => providerState({ job_id: "other", status: "completed", pipeline: "extract", usage }, "provider-1", 1), /invalid_provider_result/);
   assert.throws(() => providerState({ job_id: "provider-1", status: "completed", pipeline: "extract", usage, raw_text: "forbidden" }, "provider-1", 1), /invalid_provider_result/);
+  assert.throws(() => providerState({ job_id: "provider-1", run_id: "run\n1", status: "completed", pipeline: "extract", usage }, "provider-1", 1), /invalid_provider_result/);
 });
 
 test("synthetic structured output maps only reviewed draft fields", async () => {

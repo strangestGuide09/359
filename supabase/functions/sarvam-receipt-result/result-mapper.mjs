@@ -44,7 +44,7 @@ const safeProviderStatus = value => {
 // Status responses arrive before receipt data. This stays structural so it can
 // explain an upstream contract mismatch without recording document content.
 export function providerStatusShapeDiagnostic(payload, expectedJobId) {
-  const payloadFields = ["job_id","status","pipeline","usage","created_at","updated_at"];
+  const payloadFields = ["job_id","run_id","status","pipeline","usage","created_at","updated_at"];
   const usageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed"];
   const usage = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.usage : null;
   return {
@@ -100,8 +100,12 @@ export function validateProviderUsage(payload, maxPages, { allowZero = false } =
 
 export function providerState(payload, expectedJobId, maxPages) {
   if (!payload || typeof payload !== "object" || cleanStatus(payload.job_id, 160) !== expectedJobId) throw new Error("invalid_provider_result");
-  const allowedKeys = new Set(["job_id","status","pipeline","usage","created_at","updated_at"]);
+  // Extract runs asynchronously. Sarvam documents the opaque run_id on its
+  // Extract job contract; accept only its bounded identifier, not arbitrary
+  // provider fields, so the status boundary remains fail-closed.
+  const allowedKeys = new Set(["job_id","run_id","status","pipeline","usage","created_at","updated_at"]);
   if (Object.keys(payload).some(key => !allowedKeys.has(key))) throw new Error("invalid_provider_result");
+  if (payload.run_id != null && (typeof payload.run_id !== "string" || !/^[A-Za-z0-9._:-]{1,160}$/.test(payload.run_id))) throw new Error("invalid_provider_result");
   if (cleanStatus(payload.pipeline, 20).toLowerCase() !== "extract") throw new Error("invalid_provider_result");
   validateProviderUsage(payload, maxPages, { allowZero: true });
   const state = cleanStatus(payload.status, 40).toLowerCase();
