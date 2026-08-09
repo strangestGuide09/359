@@ -33,6 +33,31 @@ const safeResultStatus = value => {
   const state = cleanStatus(value, 40).toLowerCase();
   return ["completed", "partially_completed", "partiallycompleted"].includes(state) ? state : "other";
 };
+const safeProviderStatus = value => {
+  const state = cleanStatus(value, 40).toLowerCase();
+  if (["accepted", "pending", "queued", "running", "inprogress", "in_progress", "started"].includes(state)) return "pending";
+  if (["completed", "partiallycompleted", "partially_completed"].includes(state)) return "completed";
+  if (["failed", "rejected", "cancelled", "canceled"].includes(state)) return "failed";
+  return "other";
+};
+
+// Status responses arrive before receipt data. This stays structural so it can
+// explain an upstream contract mismatch without recording document content.
+export function providerStatusShapeDiagnostic(payload, expectedJobId) {
+  const payloadFields = ["job_id","status","pipeline","usage","created_at","updated_at"];
+  const usageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed"];
+  const usage = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.usage : null;
+  return {
+    payload_kind: valueKind(payload),
+    payload_expected_job_matches: Boolean(payload && payload.job_id === expectedJobId),
+    payload_unknown_field_count: unknownFieldCount(payload, payloadFields),
+    pipeline_is_extract: Boolean(payload && cleanStatus(payload.pipeline, 20).toLowerCase() === "extract"),
+    provider_status: safeProviderStatus(payload?.status),
+    usage_kind: valueKind(usage),
+    usage_fields: fieldPresence(usage, usageFields),
+    usage_unknown_field_count: unknownFieldCount(usage, usageFields)
+  };
+}
 
 export function resultShapeDiagnostic(payload, expectedJobId) {
   const payloadFields = ["job_id","type","status","usage","result","annotations","version"];

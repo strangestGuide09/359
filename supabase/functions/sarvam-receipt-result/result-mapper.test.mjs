@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { fixedCompletionError, mapProviderReceipt, providerState, resultShapeDiagnostic, validateProviderUsage } from "./result-mapper.mjs";
+import { fixedCompletionError, mapProviderReceipt, providerState, providerStatusShapeDiagnostic, resultShapeDiagnostic, validateProviderUsage } from "./result-mapper.mjs";
 
 const usage = { pages_total: 1, pages_processed: 1, pages_succeeded: 1, pages_failed: 0 };
 
@@ -27,6 +27,15 @@ test("rejected-result diagnostics expose shape but never extracted values", asyn
   assert.equal(diagnostic.first_line_item_fields.name, true);
   assert.equal(diagnostic.amounts_reconcile, true);
   assert.doesNotMatch(JSON.stringify(diagnostic), /Shop|Milk|2026-08-07|100/);
+});
+
+test("status diagnostics expose structure but never provider values", () => {
+  const diagnostic = providerStatusShapeDiagnostic({ job_id: "provider-1", status: "completed", pipeline: "extract", usage }, "provider-1");
+  assert.equal(diagnostic.payload_expected_job_matches, true);
+  assert.equal(diagnostic.pipeline_is_extract, true);
+  assert.equal(diagnostic.provider_status, "completed");
+  assert.deepEqual(diagnostic.usage_fields, { pages_total: true, pages_processed: true, pages_succeeded: true, pages_failed: true });
+  assert.doesNotMatch(JSON.stringify(diagnostic), /provider-1/);
 });
 
 test("malformed, oversized, or unreconciled drafts fail closed", () => {

@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { boundedProviderJson } from "../_shared/receipt-contract.mjs";
-import { fixedCompletionError, mapProviderReceipt, providerState, resultShapeDiagnostic } from "./result-mapper.mjs";
+import { fixedCompletionError, mapProviderReceipt, providerState, providerStatusShapeDiagnostic, resultShapeDiagnostic } from "./result-mapper.mjs";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const response = (status: number, code: string, extra = {}, origin?: string, retryAfter?: number) => new Response(JSON.stringify({ code, ...extra }), { status, headers: {
@@ -57,7 +57,13 @@ Deno.serve(async request => {
     } catch (error) {
       throw new Error(providerCompletionCode(error));
     }
-    const state = providerState(status, providerJobId, Number(claim.page_count));
+    let state;
+    try {
+      state = providerState(status, providerJobId, Number(claim.page_count));
+    } catch (error) {
+      console.error(JSON.stringify({ event: "sarvam_status_rejected", ...providerStatusShapeDiagnostic(status, providerJobId) }));
+      throw error;
+    }
     if (state === "pending") return response(202, "pending", {}, responseOrigin, 3);
     if (state === "failed") {
       await finish(serverClient, jobId, "failed", "provider_failed", 0);
