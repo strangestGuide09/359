@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundedProviderJson, PROVIDER_TIMEOUT_MS, RECEIPT_EXTRACTION_SCHEMA } from "./receipt-contract.mjs";
+import { boundedProviderJson, PROVIDER_TIMEOUT_MS, providerFailureDiagnostic, RECEIPT_EXTRACTION_SCHEMA } from "./receipt-contract.mjs";
 
 test("Document AI Extract schema requests only the reviewed receipt allowlist", () => {
   assert.deepEqual(Object.keys(RECEIPT_EXTRACTION_SCHEMA.properties).sort(), ["currency","line_items","merchant_name","purchase_date","receipt_total"]);
@@ -29,4 +29,11 @@ test("provider request timeouts stay distinguishable from connection failures", 
   t.after(() => { globalThis.fetch = originalFetch; });
   globalThis.fetch = async () => { throw new DOMException("aborted", "AbortError"); };
   await assert.rejects(() => boundedProviderJson("https://example.invalid", {}), /provider_timeout/);
+});
+
+test("provider diagnostics contain only fixed transport metadata", () => {
+  assert.deepEqual(providerFailureDiagnostic(Object.assign(new Error("must not log"), { status: 503, cause: Object.assign(new Error("hidden"), { code: "ETIMEDOUT" }) }), true), {
+    event: "sarvam_provider_failure", timed_out: true, http_status: 503,
+    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT"
+  });
 });

@@ -59,7 +59,23 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
     bytes.fill(0);
     try { return JSON.parse(text); } catch { throw new Error("invalid_provider_result"); }
   } catch (error) {
+    console.error(JSON.stringify(providerFailureDiagnostic(error, controller.signal.aborted)));
     if (controller.signal.aborted || error?.name === "AbortError") throw new Error("provider_timeout");
     throw error;
   } finally { clearTimeout(timer); }
+}
+
+export function providerFailureDiagnostic(error, timedOut) {
+  const source = error && typeof error === "object" ? error : {};
+  const cause = source.cause && typeof source.cause === "object" ? source.cause : {};
+  const boundedToken = value => typeof value === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test(value) ? value : "unknown";
+  const httpStatus = Number(source.status);
+  return {
+    event: "sarvam_provider_failure",
+    timed_out: timedOut === true,
+    http_status: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
+    error_name: boundedToken(source.name),
+    cause_name: boundedToken(cause.name),
+    cause_code: boundedToken(cause.code)
+  };
 }
