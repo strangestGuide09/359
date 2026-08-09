@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { fixedCompletionError, mapProviderReceipt, providerState, validateProviderUsage } from "./result-mapper.mjs";
+import { fixedCompletionError, mapProviderReceipt, providerState, resultShapeDiagnostic, validateProviderUsage } from "./result-mapper.mjs";
 
 const usage = { pages_total: 1, pages_processed: 1, pages_succeeded: 1, pages_failed: 0 };
 
@@ -18,6 +18,15 @@ test("synthetic structured output maps only reviewed draft fields", async () => 
   assert.deepEqual(Object.keys(draft).sort(), ["defaults","items"]);
   assert.deepEqual(Object.keys(draft.items[0]).sort(), ["display_order","estimated_use_by","is_personal","is_tracked_for_restock","line_total","name","quantity","unit","unit_price"]);
   assert.doesNotMatch(JSON.stringify(draft), /customer|raw_text|must not escape/);
+});
+
+test("rejected-result diagnostics expose shape but never extracted values", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  const diagnostic = resultShapeDiagnostic(fixture, "provider-1");
+  assert.deepEqual(diagnostic.result_fields, { merchant_name: true, purchase_date: true, receipt_total: true, currency: true, line_items: true });
+  assert.equal(diagnostic.first_line_item_fields.name, true);
+  assert.equal(diagnostic.amounts_reconcile, true);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /Shop|Milk|2026-08-07|100/);
 });
 
 test("malformed, oversized, or unreconciled drafts fail closed", () => {

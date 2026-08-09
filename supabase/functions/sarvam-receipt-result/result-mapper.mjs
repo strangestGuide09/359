@@ -21,6 +21,48 @@ const exactDate = value => {
   return text;
 };
 
+// A rejected provider result must not make its extracted receipt content
+// observable in logs. These fixed booleans and counts are enough to identify a
+// contract mismatch while revealing neither values nor unapproved field names.
+const valueKind = value => value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+const fieldPresence = (record, fields) => Object.fromEntries(fields.map(field => [field, Boolean(record && Object.hasOwn(record, field))]));
+const unknownFieldCount = (record, allowed) => record && typeof record === "object" && !Array.isArray(record)
+  ? Object.keys(record).filter(field => !allowed.includes(field)).length
+  : null;
+const safeResultStatus = value => {
+  const state = cleanStatus(value, 40).toLowerCase();
+  return ["completed", "partially_completed", "partiallycompleted"].includes(state) ? state : "other";
+};
+
+export function resultShapeDiagnostic(payload, expectedJobId) {
+  const payloadFields = ["job_id","type","status","usage","result","annotations","version"];
+  const receiptFields = ["merchant_name","purchase_date","receipt_total","currency","line_items"];
+  const itemFields = ["name","quantity","unit","line_total"];
+  const receipt = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.result : null;
+  const items = receipt && typeof receipt === "object" && !Array.isArray(receipt) ? receipt.line_items : null;
+  const firstItem = Array.isArray(items) ? items[0] : null;
+  const numericItems = Array.isArray(items) && items.every(item => item && typeof item === "object" && typeof item.line_total === "number" && Number.isFinite(item.line_total));
+  const receiptTotal = receipt && typeof receipt === "object" ? receipt.receipt_total : null;
+  return {
+    payload_kind: valueKind(payload),
+    payload_expected_job_matches: Boolean(payload && payload.job_id === expectedJobId),
+    payload_type_is_extract: Boolean(payload && payload.type === "extract"),
+    payload_status: safeResultStatus(payload?.status),
+    payload_unknown_field_count: unknownFieldCount(payload, payloadFields),
+    result_kind: valueKind(receipt),
+    result_fields: fieldPresence(receipt, receiptFields),
+    result_unknown_field_count: unknownFieldCount(receipt, receiptFields),
+    line_items_kind: valueKind(items),
+    line_item_count: Array.isArray(items) && items.length <= MAX_RESULT_ITEMS ? items.length : null,
+    first_line_item_kind: valueKind(firstItem),
+    first_line_item_fields: fieldPresence(firstItem, itemFields),
+    first_line_item_unknown_field_count: unknownFieldCount(firstItem, itemFields),
+    receipt_total_kind: valueKind(receiptTotal),
+    currency_is_inr: Boolean(receipt && receipt.currency === "INR"),
+    amounts_reconcile: Boolean(numericItems && typeof receiptTotal === "number" && Number.isFinite(receiptTotal) && Math.abs(receiptTotal - items.reduce((sum, item) => sum + item.line_total, 0)) <= .01)
+  };
+}
+
 export function validateProviderUsage(payload, maxPages, { allowZero = false } = {}) {
   const usage = payload?.usage;
   if (!usage || typeof usage !== "object" || !Number.isInteger(maxPages) || maxPages < 1) throw new Error("invalid_provider_result");
