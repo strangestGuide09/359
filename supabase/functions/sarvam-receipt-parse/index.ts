@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import https from "node:https";
 import { fixedError, hasAllowedMagic, inspectSanitizedPdf, MAX_DERIVATIVE_BYTES, validateMetadata } from "./validation.mjs";
 import { boundedProviderJson, RECEIPT_EXTRACTION_SCHEMA } from "../_shared/receipt-contract.mjs";
 
@@ -71,6 +72,7 @@ Deno.serve(async request => {
     const sarvamKey = Deno.env.get("SARVAM_API_KEY");
     if (!sarvamKey) throw new Error("processing_disabled");
     await probeSarvamExtractEndpoint(sarvamKey);
+    await probeSarvamExtractEndpointHttp1(sarvamKey);
     let providerJobId: string;
     try {
       providerJobId = await createSarvamExtractJob(sarvamKey, derivativeBytes, metadata.mime);
@@ -119,6 +121,35 @@ async function probeSarvamExtractEndpoint(apiKey: string) {
       ? (error as Error).name
       : "unknown";
     console.error(JSON.stringify({ event: "sarvam_extract_probe", reachable: false, error_name: name }));
+  }
+}
+
+// Node's HTTPS client uses HTTP/1.1, unlike fetch's HTTP/2-capable path. This
+// no-body probe is deliberately separate from receipt submission so a runtime
+// transport workaround is proven before it is used with sensitive derivatives.
+async function probeSarvamExtractEndpointHttp1(apiKey: string) {
+  try {
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = https.request({
+        hostname: "api.sarvam.ai",
+        port: 443,
+        path: "/doc-ai/v1/job/extract",
+        method: "OPTIONS",
+        headers: { "api-subscription-key": apiKey }
+      }, response => {
+        response.resume();
+        response.once("end", () => resolve(response.statusCode || 0));
+      });
+      request.once("error", reject);
+      request.setTimeout(10_000, () => request.destroy(new Error("probe_timeout")));
+      request.end();
+    });
+    console.log(JSON.stringify({ event: "sarvam_extract_http1_probe", reachable: true, http_status: status }));
+  } catch (error) {
+    const name = typeof (error as Error)?.name === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test((error as Error).name)
+      ? (error as Error).name
+      : "unknown";
+    console.error(JSON.stringify({ event: "sarvam_extract_http1_probe", reachable: false, error_name: name }));
   }
 }
 
