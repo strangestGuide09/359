@@ -34,6 +34,7 @@ test("provider request timeouts stay distinguishable from connection failures", 
 test("provider diagnostics contain only fixed transport metadata", () => {
   assert.deepEqual(providerFailureDiagnostic(Object.assign(new Error("must not log"), { status: 503, cause: Object.assign(new Error("hidden"), { code: "ETIMEDOUT" }) }), true), {
     event: "sarvam_provider_failure", timed_out: true, http_status: 503,
-    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT"
+    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT", transport_kind: "unknown", elapsed_ms: 0
   });
+  assert.equal(providerFailureDiagnostic(new TypeError("error sending request: TLS certificate failure"), false, 123).transport_kind, "tls");
 });

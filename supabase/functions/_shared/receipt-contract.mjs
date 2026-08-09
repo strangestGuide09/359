@@ -29,6 +29,7 @@ export const PROVIDER_TIMEOUT_MS = 45_000;
 
 export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RESPONSE_BYTES) {
   const controller = new AbortController();
+  const startedAt = Date.now();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
@@ -59,16 +60,23 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
     bytes.fill(0);
     try { return JSON.parse(text); } catch { throw new Error("invalid_provider_result"); }
   } catch (error) {
-    console.error(JSON.stringify(providerFailureDiagnostic(error, controller.signal.aborted)));
+    console.error(JSON.stringify(providerFailureDiagnostic(error, controller.signal.aborted, Date.now() - startedAt)));
     if (controller.signal.aborted || error?.name === "AbortError") throw new Error("provider_timeout");
     throw error;
   } finally { clearTimeout(timer); }
 }
 
-export function providerFailureDiagnostic(error, timedOut) {
+export function providerFailureDiagnostic(error, timedOut, elapsedMs = 0) {
   const source = error && typeof error === "object" ? error : {};
   const cause = source.cause && typeof source.cause === "object" ? source.cause : {};
   const boundedToken = value => typeof value === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test(value) ? value : "unknown";
+  const safeMessage = [source.message, cause.message].filter(value => typeof value === "string").join(" ").toLowerCase();
+  const transportKind = /(?:certificate|tls|ssl|x509)/.test(safeMessage) ? "tls"
+    : /(?:dns|resolve|lookup|name.*service)/.test(safeMessage) ? "dns"
+    : /(?:connect|connection refused|network is unreachable)/.test(safeMessage) ? "connect"
+    : /(?:invalid.*url|unsupported.*scheme)/.test(safeMessage) ? "request"
+    : /(?:fetch|sending request|network)/.test(safeMessage) ? "fetch"
+    : "unknown";
   const httpStatus = Number(source.status);
   return {
     event: "sarvam_provider_failure",
@@ -76,6 +84,8 @@ export function providerFailureDiagnostic(error, timedOut) {
     http_status: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
     error_name: boundedToken(source.name),
     cause_name: boundedToken(cause.name),
-    cause_code: boundedToken(cause.code)
+    cause_code: boundedToken(cause.code),
+    transport_kind: transportKind,
+    elapsed_ms: Number.isInteger(elapsedMs) && elapsedMs >= 0 && elapsedMs <= 60_000 ? elapsedMs : null
   };
 }
