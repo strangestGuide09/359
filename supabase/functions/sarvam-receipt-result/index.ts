@@ -79,7 +79,7 @@ Deno.serve(async request => {
     try {
       draft = mapProviderReceipt(result, providerJobId, Number(claim.page_count));
     } catch (error) {
-      console.error(JSON.stringify({ event: "sarvam_result_rejected", ...resultShapeDiagnostic(result, providerJobId) }));
+      console.error(JSON.stringify({ event: "sarvam_result_rejected", ...resultShapeDiagnostic(result, providerJobId, Number(claim.page_count)) }));
       throw error;
     }
     const pages = Number(result?.usage?.pages_processed);

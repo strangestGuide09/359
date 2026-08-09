@@ -26,11 +26,29 @@ test("synthetic structured output maps only reviewed draft fields", async () => 
 
 test("rejected-result diagnostics expose shape but never extracted values", async () => {
   const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
-  const diagnostic = resultShapeDiagnostic(fixture, "provider-1");
+  const diagnostic = resultShapeDiagnostic(fixture, "provider-1", 1);
   assert.deepEqual(diagnostic.result_fields, { merchant_name: true, purchase_date: true, receipt_total: true, currency: true, line_items: true });
   assert.equal(diagnostic.first_line_item_fields.name, true);
   assert.equal(diagnostic.amounts_reconcile, true);
+  assert.equal(diagnostic.provider_usage_is_valid, true);
+  assert.equal(diagnostic.merchant_name_is_valid, true);
+  assert.equal(diagnostic.purchase_date_is_valid, true);
+  assert.equal(diagnostic.receipt_total_is_valid, true);
+  assert.equal(diagnostic.line_items_are_valid_records, true);
+  assert.equal(diagnostic.line_item_names_are_valid, true);
+  assert.equal(diagnostic.line_item_quantities_are_valid, true);
+  assert.equal(diagnostic.line_item_units_are_valid, true);
+  assert.equal(diagnostic.line_item_totals_are_valid, true);
   assert.doesNotMatch(JSON.stringify(diagnostic), /Shop|Milk|2026-08-07|100/);
+});
+
+test("rejected-result diagnostics identify a rule without exposing result values", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  const malformed = { ...fixture, result: { ...fixture.result, purchase_date: "not-a-date" } };
+  const diagnostic = resultShapeDiagnostic(malformed, "provider-1", 1);
+  assert.equal(diagnostic.purchase_date_is_valid, false);
+  assert.equal(diagnostic.merchant_name_is_valid, true);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /not-a-date|Shop|Milk/);
 });
 
 test("status diagnostics expose structure but never provider values", () => {
