@@ -70,6 +70,7 @@ Deno.serve(async request => {
 
     const sarvamKey = Deno.env.get("SARVAM_API_KEY");
     if (!sarvamKey) throw new Error("processing_disabled");
+    await probeSarvamExtractEndpoint(sarvamKey);
     let providerJobId: string;
     try {
       providerJobId = await createSarvamExtractJob(sarvamKey, derivativeBytes, metadata.mime);
@@ -98,6 +99,27 @@ async function createSarvamExtractJob(apiKey: string, bytes: Uint8Array, mime: s
   const providerJobId = String(created.job_id || "");
   if (!/^[A-Za-z0-9._:-]{1,160}$/.test(providerJobId) || !["pending","queued","running","accepted","created"].includes(String(created.status || "").toLowerCase())) throw new Error("provider_invalid_response");
   return providerJobId;
+}
+
+// A no-body probe distinguishes reachability of the exact documented route from
+// multipart submission. It logs fixed metadata only and never affects a receipt job.
+async function probeSarvamExtractEndpoint(apiKey: string) {
+  try {
+    const response = await fetch("https://api.sarvam.ai/doc-ai/v1/job/extract", {
+      method: "OPTIONS",
+      headers: { "api-subscription-key": apiKey }
+    });
+    console.log(JSON.stringify({
+      event: "sarvam_extract_probe",
+      reachable: true,
+      http_status: response.status
+    }));
+  } catch (error) {
+    const name = typeof (error as Error)?.name === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test((error as Error).name)
+      ? (error as Error).name
+      : "unknown";
+    console.error(JSON.stringify({ event: "sarvam_extract_probe", reachable: false, error_name: name }));
+  }
 }
 
 function providerSubmissionCode(error: unknown) {
