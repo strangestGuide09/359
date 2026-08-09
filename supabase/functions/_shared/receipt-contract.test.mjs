@@ -31,10 +31,23 @@ test("provider request timeouts stay distinguishable from connection failures", 
   await assert.rejects(() => boundedProviderJson("https://example.invalid", {}), /provider_timeout/);
 });
 
+test("failed provider responses retain only the documented bounded error fields", async t => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: "invalid_request_error", message: "schema is invalid for <https://api.sarvam.ai/internal>" } }), {
+    status: 400,
+    headers: { "content-type": "application/json" }
+  });
+  await assert.rejects(
+    () => boundedProviderJson("https://example.invalid", {}),
+    error => error.status === 400 && error.providerErrorCode === "invalid_request_error" && error.message === "schema is invalid for <url>"
+  );
+});
+
 test("provider diagnostics retain a short redacted transport message", () => {
   assert.deepEqual(providerFailureDiagnostic(Object.assign(new Error("must not log"), { status: 503, cause: Object.assign(new Error("hidden"), { code: "ETIMEDOUT" }) }), true), {
     event: "sarvam_provider_failure", timed_out: true, http_status: 503,
-    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT", transport_kind: "unknown", error_message: "must not log | hidden", elapsed_ms: 0
+    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT", provider_error_code: "unknown", transport_kind: "unknown", error_message: "must not log | hidden", elapsed_ms: 0
   });
   assert.equal(providerFailureDiagnostic(new TypeError("error sending request: TLS certificate failure"), false, 123).transport_kind, "tls");
   assert.equal(safeTransportErrorMessage(new Error("fetch <https://api.sarvam.ai/secret?token=abcdefghijklmnopqrstuvwxyz0123456789> authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789")), "fetch <url> <redacted-header> <redacted-token>");

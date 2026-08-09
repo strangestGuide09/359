@@ -34,8 +34,10 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) {
-      const error = new Error(response.status === 409 ? "provider_pending" : "provider_unavailable");
+      const providerError = await safeProviderError(response);
+      const error = new Error(response.status === 409 ? "provider_pending" : (providerError.message || "provider_unavailable"));
       error.status = response.status;
+      error.providerErrorCode = providerError.code;
       throw error;
     }
     const contentType = response.headers.get("content-type") || "";
@@ -85,10 +87,46 @@ export function providerFailureDiagnostic(error, timedOut, elapsedMs = 0) {
     error_name: boundedToken(source.name),
     cause_name: boundedToken(cause.name),
     cause_code: boundedToken(cause.code),
+    provider_error_code: boundedToken(source.providerErrorCode),
     transport_kind: transportKind,
     error_message: safeTransportErrorMessage(error),
     elapsed_ms: Number.isInteger(elapsedMs) && elapsedMs >= 0 && elapsedMs <= 60_000 ? elapsedMs : null
   };
+}
+
+// Sarvam documents a compact JSON error shape: { error: { code, message } }.
+// Retain just that bounded diagnostic for failed HTTP responses. The original
+// response is discarded; neither a receipt nor a provider response body is
+// otherwise persisted.
+async function safeProviderError(response) {
+  const defaultError = { code: "unknown", message: "provider_unavailable" };
+  const contentType = response.headers.get("content-type") || "";
+  if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) return defaultError;
+  const declared = Number(response.headers.get("content-length") || 0);
+  if (declared > 4096) return defaultError;
+  try {
+    const body = await response.text();
+    if (body.length > 4096) return defaultError;
+    const candidate = JSON.parse(body)?.error;
+    const code = typeof candidate?.code === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(candidate.code)
+      ? candidate.code
+      : "unknown";
+    const message = safeProviderErrorMessage(candidate?.message);
+    return { code, message: message || defaultError.message };
+  } catch { return defaultError; }
+}
+
+function safeProviderErrorMessage(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/<?https?:\/\/[^\s)'\">]+>?/gi, "<url>")
+    .replace(/(?:api[-_ ]?(?:subscription[-_ ]?)?key|authorization|bearer)\s*[:=]\s*[^\s,;]+/gi, "<redacted-header>")
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "<redacted-token>")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[^\x20-\x7E]/g, "?")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
 }
 
 // Provider transport errors can be diagnostic, but must never become a path for
