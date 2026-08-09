@@ -51,14 +51,24 @@ Deno.serve(async request => {
 
     const providerJobId = String(claim.provider_job_id);
     const headers = { "api-subscription-key": sarvamKey };
-    const status = await boundedProviderJson(`https://api.sarvam.ai/doc-ai/v1/job/${encodeURIComponent(providerJobId)}/status`, { method: "GET", headers }, 65536);
+    let status;
+    try {
+      status = await boundedProviderJson(`https://api.sarvam.ai/doc-ai/v1/job/${encodeURIComponent(providerJobId)}/status`, { method: "GET", headers }, 65536);
+    } catch (error) {
+      throw new Error(providerCompletionCode(error));
+    }
     const state = providerState(status, providerJobId, Number(claim.page_count));
     if (state === "pending") return response(202, "pending", {}, responseOrigin, 3);
     if (state === "failed") {
       await finish(serverClient, jobId, "failed", "provider_failed", 0);
       throw new Error("provider_failed");
     }
-    const result = await boundedProviderJson(`https://api.sarvam.ai/doc-ai/v1/job/${encodeURIComponent(providerJobId)}/results?format=json`, { method: "GET", headers });
+    let result;
+    try {
+      result = await boundedProviderJson(`https://api.sarvam.ai/doc-ai/v1/job/${encodeURIComponent(providerJobId)}/results?format=json`, { method: "GET", headers });
+    } catch (error) {
+      throw new Error(providerCompletionCode(error));
+    }
     const draft = mapProviderReceipt(result, providerJobId, Number(claim.page_count));
     const pages = Number(result?.usage?.pages_processed);
     const chargedUnits = Number.isInteger(pages) && pages >= 0 && pages <= Number(claim.page_count) ? pages : Number(claim.page_count);
@@ -67,7 +77,7 @@ Deno.serve(async request => {
   } catch (error) {
     const code = fixedCompletionError(error);
     if (jobId && serverClient && code === "invalid_provider_result") await finish(serverClient, jobId, "failed", code, 0).catch(() => undefined);
-    const status = code === "authentication_required" ? 401 : code === "origin_not_allowed" ? 403 : code === "job_not_found" ? 404 : code === "processing_disabled" || code === "provider_unavailable" ? 503 : code === "provider_pending" ? 202 : 422;
+    const status = code === "authentication_required" ? 401 : code === "origin_not_allowed" || code === "provider_access_denied" ? 403 : code === "job_not_found" ? 404 : code === "processing_disabled" || ["provider_unavailable", "provider_connection_failed", "provider_timeout", "provider_job_unavailable"].includes(code) ? 503 : code === "provider_rate_limited" ? 429 : code === "provider_pending" ? 202 : 422;
     return response(status, code, {}, responseOrigin, code === "provider_pending" ? 3 : undefined);
   }
 });
@@ -75,4 +85,15 @@ Deno.serve(async request => {
 async function finish(client, jobId: string, state: string, errorCode: string | null, chargedUnits: number) {
   const { error } = await client.rpc("mark_ai_parse_finished", { p_job_id: jobId, p_state: state, p_fixed_error_code: errorCode, p_charged_units: chargedUnits });
   if (error) throw new Error("provider_unavailable");
+}
+
+function providerCompletionCode(error: unknown) {
+  const status = Number((error as { status?: number })?.status);
+  if ([401, 402, 403].includes(status)) return "provider_access_denied";
+  if (status === 404) return "provider_job_unavailable";
+  if ([400, 413, 422].includes(status)) return "provider_request_rejected";
+  if (status === 429) return "provider_rate_limited";
+  if ((error as Error)?.message === "provider_timeout") return "provider_timeout";
+  if ((error as Error)?.message === "invalid_provider_result") return "invalid_provider_result";
+  return "provider_connection_failed";
 }

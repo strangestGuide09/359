@@ -73,6 +73,6 @@ export function mapProviderReceipt(payload, expectedJobId, maxPages) {
 }
 
 export function fixedCompletionError(error) {
-  const allowed = new Set(["authentication_required","origin_not_allowed","processing_disabled","job_not_found","job_expired","completion_timeout","submission_retry_exhausted","provider_pending","provider_failed","provider_unavailable","invalid_provider_result"]);
+  const allowed = new Set(["authentication_required","origin_not_allowed","processing_disabled","job_not_found","job_expired","completion_timeout","submission_retry_exhausted","provider_pending","provider_failed","provider_unavailable","invalid_provider_result","provider_access_denied","provider_job_unavailable","provider_request_rejected","provider_rate_limited","provider_timeout","provider_connection_failed"]);
   return allowed.has(error?.message) ? error.message : "provider_unavailable";
 }

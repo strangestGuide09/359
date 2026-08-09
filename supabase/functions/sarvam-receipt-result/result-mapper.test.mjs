@@ -41,4 +41,6 @@ test("provider usage cannot exceed the sanitized derivative page reservation", (
 test("unknown failures collapse to a fixed privacy-safe code", () => {
   assert.equal(fixedCompletionError(new Error("secret provider body")), "provider_unavailable");
   assert.equal(fixedCompletionError(new Error("job_expired")), "job_expired");
+  assert.equal(fixedCompletionError(new Error("provider_timeout")), "provider_timeout");
+  assert.equal(fixedCompletionError(new Error("provider_job_unavailable")), "provider_job_unavailable");
 });
