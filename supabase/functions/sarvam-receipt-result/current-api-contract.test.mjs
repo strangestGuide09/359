@@ -14,6 +14,6 @@ test("integration uses only current Document AI Extract, status, and results end
   assert.doesNotMatch(source, /doc-digitization|upload-files|download-files|\/start\b/);
   assert.match(submit, /form\.set\("file"/);
   assert.match(submit, /form\.set\("schema"/);
-  assert.doesNotMatch(submit, /upload_ids|config_id/);
+  assert.doesNotMatch(submit, /run_id|upload_ids|config_id|classification|auto_orient/);
   assert.ok(submit.indexOf('rpc("claim_ai_parse_submission"') < submit.indexOf("createSarvamExtractJob"), "durable submission claim precedes provider creation");
 });

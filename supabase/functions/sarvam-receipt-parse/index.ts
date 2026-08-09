@@ -89,11 +89,8 @@ async function createSarvamExtractJob(apiKey: string, bytes: Uint8Array, mime: s
   form.set("schema", JSON.stringify(RECEIPT_EXTRACTION_SCHEMA));
   form.set("language", "en-IN");
   form.set("output_format", "json");
-  form.set("classification", "false");
-  form.set("auto_orient", "true");
   const created = await boundedProviderJson("https://api.sarvam.ai/doc-ai/v1/job/extract", { method: "POST", headers: { "api-subscription-key": apiKey }, body: form }, 65536);
   const providerJobId = String(created.job_id || "");
-  const runId = String(created.run_id || "");
-  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(providerJobId) || !/^[A-Za-z0-9._:-]{1,160}$/.test(runId) || !["pending","queued","running","accepted","created"].includes(String(created.status || "").toLowerCase())) throw new Error("provider_unavailable");
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(providerJobId) || !["pending","queued","running","accepted","created"].includes(String(created.status || "").toLowerCase())) throw new Error("provider_unavailable");
   return providerJobId;
 }
