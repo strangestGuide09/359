@@ -24,6 +24,8 @@ test("rebuilt derivative is a bounded marked PDF with one page", async () => {
 
 test("disabled processing has a non-destructive explanation", () => {
   assert.match(aiParseMessage("processing_disabled"), /not enabled yet/i);
+  assert.match(aiParseMessage("provider_access_denied"), /API key|Extract access/i);
+  assert.match(aiParseMessage("provider_request_rejected"), /rejected/i);
   assert.match(aiParseMessage("completion_timeout"), /too long/i);
   assert.match(aiParseMessage("invalid_provider_result"), /safety checks/i);
 });

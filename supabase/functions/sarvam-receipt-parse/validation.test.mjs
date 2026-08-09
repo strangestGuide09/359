@@ -23,3 +23,8 @@ test("requires sanitizer marker, exact pages, and passive PDF",()=>{
   assert.throws(()=>inspectSanitizedPdf(active,"receipt-redactor-1",1),/unsafe_pdf_feature/);
 });
 test("unknown errors collapse to fixed provider code",()=>assert.equal(fixedError(new Error("secret provider detail")),"provider_unavailable"));
+test("provider HTTP statuses map to privacy-safe recovery codes",()=>{
+  assert.equal(fixedError(Object.assign(new Error("provider body"),{status:403})),"provider_access_denied");
+  assert.equal(fixedError(Object.assign(new Error("provider body"),{status:400})),"provider_request_rejected");
+  assert.equal(fixedError(Object.assign(new Error("provider body"),{status:429})),"provider_rate_limited");
+});
