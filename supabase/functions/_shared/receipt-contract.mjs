@@ -59,7 +59,7 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
     bytes.fill(0);
     try { return JSON.parse(text); } catch { throw new Error("invalid_provider_result"); }
   } catch (error) {
-    if (error?.name === "AbortError") throw new Error("provider_timeout");
+    if (controller.signal.aborted || error?.name === "AbortError") throw new Error("provider_timeout");
     throw error;
   } finally { clearTimeout(timer); }
 }
