@@ -40,14 +40,27 @@ test("failed provider responses retain only the documented bounded error fields"
   });
   await assert.rejects(
     () => boundedProviderJson("https://example.invalid", {}),
-    error => error.status === 400 && error.providerErrorCode === "invalid_request_error" && error.message === "schema is invalid for <url>"
+    error => error.status === 400 && error.providerErrorCode === "invalid_request_error" && error.providerContentType === "application/json" && error.message === "schema is invalid for <url>"
+  );
+});
+
+test("failed non-JSON provider responses retain a redacted, bounded reason", async t => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => new Response("invalid multipart field at https://api.sarvam.ai/internal", {
+    status: 400,
+    headers: { "content-type": "text/plain; charset=utf-8" }
+  });
+  await assert.rejects(
+    () => boundedProviderJson("https://example.invalid", {}),
+    error => error.status === 400 && error.providerErrorCode === "unknown" && error.providerContentType === "text/plain" && error.message === "invalid multipart field at <url>"
   );
 });
 
 test("provider diagnostics retain a short redacted transport message", () => {
   assert.deepEqual(providerFailureDiagnostic(Object.assign(new Error("must not log"), { status: 503, cause: Object.assign(new Error("hidden"), { code: "ETIMEDOUT" }) }), true), {
     event: "sarvam_provider_failure", timed_out: true, http_status: 503,
-    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT", provider_error_code: "unknown", transport_kind: "unknown", error_message: "must not log | hidden", elapsed_ms: 0
+    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT", provider_error_code: "unknown", provider_content_type: "unknown", transport_kind: "unknown", error_message: "must not log | hidden", elapsed_ms: 0
   });
   assert.equal(providerFailureDiagnostic(new TypeError("error sending request: TLS certificate failure"), false, 123).transport_kind, "tls");
   assert.equal(safeTransportErrorMessage(new Error("fetch <https://api.sarvam.ai/secret?token=abcdefghijklmnopqrstuvwxyz0123456789> authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789")), "fetch <url> <redacted-header> <redacted-token>");

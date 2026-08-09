@@ -38,6 +38,7 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
       const error = new Error(response.status === 409 ? "provider_pending" : (providerError.message || "provider_unavailable"));
       error.status = response.status;
       error.providerErrorCode = providerError.code;
+      error.providerContentType = providerError.contentType;
       throw error;
     }
     const contentType = response.headers.get("content-type") || "";
@@ -72,6 +73,7 @@ export function providerFailureDiagnostic(error, timedOut, elapsedMs = 0) {
   const source = error && typeof error === "object" ? error : {};
   const cause = source.cause && typeof source.cause === "object" ? source.cause : {};
   const boundedToken = value => typeof value === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test(value) ? value : "unknown";
+  const boundedMediaType = value => typeof value === "string" && /^[a-z0-9.+-]{1,48}\/[a-z0-9.+-]{1,48}$/.test(value) ? value : "unknown";
   const safeMessage = [source.message, cause.message].filter(value => typeof value === "string").join(" ").toLowerCase();
   const transportKind = /(?:certificate|tls|ssl|x509)/.test(safeMessage) ? "tls"
     : /(?:dns|resolve|lookup|name.*service)/.test(safeMessage) ? "dns"
@@ -88,6 +90,7 @@ export function providerFailureDiagnostic(error, timedOut, elapsedMs = 0) {
     cause_name: boundedToken(cause.name),
     cause_code: boundedToken(cause.code),
     provider_error_code: boundedToken(source.providerErrorCode),
+    provider_content_type: boundedMediaType(source.providerContentType),
     transport_kind: transportKind,
     error_message: safeTransportErrorMessage(error),
     elapsed_ms: Number.isInteger(elapsedMs) && elapsedMs >= 0 && elapsedMs <= 60_000 ? elapsedMs : null
@@ -99,21 +102,26 @@ export function providerFailureDiagnostic(error, timedOut, elapsedMs = 0) {
 // response is discarded; neither a receipt nor a provider response body is
 // otherwise persisted.
 async function safeProviderError(response) {
-  const defaultError = { code: "unknown", message: "provider_unavailable" };
-  const contentType = response.headers.get("content-type") || "";
-  if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) return defaultError;
+  const contentType = safeProviderContentType(response.headers.get("content-type") || "");
+  const defaultError = { code: "unknown", message: "provider_unavailable", contentType };
   const declared = Number(response.headers.get("content-length") || 0);
   if (declared > 4096) return defaultError;
   try {
     const body = await response.text();
     if (body.length > 4096) return defaultError;
-    const candidate = JSON.parse(body)?.error;
+    let candidate;
+    try { candidate = JSON.parse(body)?.error; } catch { candidate = null; }
     const code = typeof candidate?.code === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(candidate.code)
       ? candidate.code
       : "unknown";
-    const message = safeProviderErrorMessage(candidate?.message);
-    return { code, message: message || defaultError.message };
+    const message = safeProviderErrorMessage(candidate?.message || body);
+    return { code, message: message || defaultError.message, contentType };
   } catch { return defaultError; }
+}
+
+function safeProviderContentType(value) {
+  const mediaType = value.split(";", 1)[0].trim().toLowerCase();
+  return /^[a-z0-9.+-]{1,48}\/[a-z0-9.+-]{1,48}$/.test(mediaType) ? mediaType : "unknown";
 }
 
 function safeProviderErrorMessage(value) {
