@@ -31,6 +31,7 @@ export function fixedError(error) {
   if ([401, 402, 403].includes(Number(error?.status))) return "provider_access_denied";
   if ([400, 413, 422].includes(Number(error?.status))) return "provider_request_rejected";
   if (Number(error?.status) === 429) return "provider_rate_limited";
+  if (Number(error?.status) >= 500 && Number(error?.status) <= 599) return "provider_service_unavailable";
   const allowed = new Set([
     "invalid_household","invalid_idempotency_key","invalid_sanitizer_version",
     "sanitized_derivative_required","unsupported_derivative_type","invalid_page_count",
@@ -38,7 +39,7 @@ export function fixedError(error) {
     "origin_not_allowed","processing_disabled","rate_or_cap_reached","provider_unavailable",
     "provider_access_denied","provider_request_rejected","provider_rate_limited",
     "provider_invalid_response","provider_connection_failed","provider_job_record_failed",
-    "submission_claim_failed","provider_timeout"
+    "submission_claim_failed","provider_timeout","provider_service_unavailable"
   ]);
   return allowed.has(error?.message) ? error.message : "provider_unavailable";
 }

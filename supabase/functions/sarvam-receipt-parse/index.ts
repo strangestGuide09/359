@@ -105,6 +105,7 @@ function providerSubmissionCode(error: unknown) {
   if ([401, 402, 403].includes(status)) return "provider_access_denied";
   if ([400, 413, 422].includes(status)) return "provider_request_rejected";
   if (status === 429) return "provider_rate_limited";
+  if (status >= 500 && status <= 599) return "provider_service_unavailable";
   if ((error as Error)?.message === "provider_timeout") return "provider_timeout";
   if ((error as Error)?.message === "invalid_provider_result" || (error as Error)?.message === "provider_invalid_response") return "provider_invalid_response";
   return "provider_connection_failed";

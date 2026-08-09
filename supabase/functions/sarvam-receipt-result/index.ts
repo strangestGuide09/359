@@ -77,7 +77,7 @@ Deno.serve(async request => {
   } catch (error) {
     const code = fixedCompletionError(error);
     if (jobId && serverClient && code === "invalid_provider_result") await finish(serverClient, jobId, "failed", code, 0).catch(() => undefined);
-    const status = code === "authentication_required" ? 401 : code === "origin_not_allowed" || code === "provider_access_denied" ? 403 : code === "job_not_found" ? 404 : code === "processing_disabled" || ["provider_unavailable", "provider_connection_failed", "provider_timeout", "provider_job_unavailable"].includes(code) ? 503 : code === "provider_rate_limited" ? 429 : code === "provider_pending" ? 202 : 422;
+    const status = code === "authentication_required" ? 401 : code === "origin_not_allowed" || code === "provider_access_denied" ? 403 : code === "job_not_found" ? 404 : code === "processing_disabled" || ["provider_unavailable", "provider_connection_failed", "provider_timeout", "provider_job_unavailable", "provider_service_unavailable"].includes(code) ? 503 : code === "provider_rate_limited" ? 429 : code === "provider_pending" ? 202 : 422;
     return response(status, code, {}, responseOrigin, code === "provider_pending" ? 3 : undefined);
   }
 });
@@ -93,6 +93,7 @@ function providerCompletionCode(error: unknown) {
   if (status === 404) return "provider_job_unavailable";
   if ([400, 413, 422].includes(status)) return "provider_request_rejected";
   if (status === 429) return "provider_rate_limited";
+  if (status >= 500 && status <= 599) return "provider_service_unavailable";
   if ((error as Error)?.message === "provider_timeout") return "provider_timeout";
   if ((error as Error)?.message === "invalid_provider_result") return "invalid_provider_result";
   return "provider_connection_failed";

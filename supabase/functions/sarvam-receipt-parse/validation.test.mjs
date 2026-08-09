@@ -27,6 +27,7 @@ test("provider HTTP statuses map to privacy-safe recovery codes",()=>{
   assert.equal(fixedError(Object.assign(new Error("provider body"),{status:403})),"provider_access_denied");
   assert.equal(fixedError(Object.assign(new Error("provider body"),{status:400})),"provider_request_rejected");
   assert.equal(fixedError(Object.assign(new Error("provider body"),{status:429})),"provider_rate_limited");
+  assert.equal(fixedError(Object.assign(new Error("provider body"),{status:503})),"provider_service_unavailable");
 });
 test("submission-stage diagnostics remain fixed and content-free",()=>{
   for (const code of ["provider_invalid_response","provider_connection_failed","provider_job_record_failed","submission_claim_failed","provider_timeout"]) {

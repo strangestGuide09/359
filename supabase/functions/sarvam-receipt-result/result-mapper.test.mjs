@@ -43,4 +43,5 @@ test("unknown failures collapse to a fixed privacy-safe code", () => {
   assert.equal(fixedCompletionError(new Error("job_expired")), "job_expired");
   assert.equal(fixedCompletionError(new Error("provider_timeout")), "provider_timeout");
   assert.equal(fixedCompletionError(new Error("provider_job_unavailable")), "provider_job_unavailable");
+  assert.equal(fixedCompletionError(new Error("provider_service_unavailable")), "provider_service_unavailable");
 });
