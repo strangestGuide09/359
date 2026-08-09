@@ -22,3 +22,10 @@ test("provider JSON reader rejects declared, streamed, typed, and syntactic viol
   globalThis.fetch = async () => new Response('     {"ok":true}', { headers: { "content-type": "application/json" } });
   await assert.rejects(() => boundedProviderJson("https://example.invalid", {}, 10), /invalid_provider_result/);
 });
+
+test("provider request timeouts stay distinguishable from connection failures", async t => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => { throw new DOMException("aborted", "AbortError"); };
+  await assert.rejects(() => boundedProviderJson("https://example.invalid", {}), /provider_timeout/);
+});

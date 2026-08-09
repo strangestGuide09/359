@@ -30,13 +30,7 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    let response;
-    try {
-      response = await fetch(url, { ...init, signal: controller.signal });
-    } catch (error) {
-      if (error?.name === "AbortError") throw new Error("provider_timeout");
-      throw error;
-    }
+    const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) {
       const error = new Error(response.status === 409 ? "provider_pending" : "provider_unavailable");
       error.status = response.status;
@@ -63,5 +57,8 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
     const text = new TextDecoder().decode(bytes);
     bytes.fill(0);
     try { return JSON.parse(text); } catch { throw new Error("invalid_provider_result"); }
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("provider_timeout");
+    throw error;
   } finally { clearTimeout(timer); }
 }
