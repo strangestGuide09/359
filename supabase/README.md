@@ -115,6 +115,42 @@ direct Dashboard validation and deployment on 2026-07-15. The public client
 credentials are now configured in the production web client after the bootstrap
 and checks below passed.
 
+## Incremental migration — deterministic duplicate receipt restoration
+
+Apply migrations in filename order: `20260809000000_receipt_soft_delete_audit.sql`,
+`20260809010000_ai_submission_claim.sql` if it is pending, and then
+`20260809020000_invoice_import_purchase_link.sql`. Run
+`tests/006_invoice_import_purchase_link.sql` and require all 19 assertions to
+pass. The last migration adds a nullable `invoice_imports.purchase_id` foreign key
+plus a trigger that prevents cross-household or mutable links.
+Every new import reserves its two opaque hashes, creates the reviewed purchase,
+and links that exact purchase within one transaction. A uniqueness conflict
+rolls back the entire import, so duplicate prevention remains atomic.
+
+Clients should call `find_invoice_duplicate(household_id, exact_hash,
+content_hash)` after local hashing, and again after an import reports the fixed
+duplicate error if needed. It returns exactly one bounded status row:
+
+- `none`: neither fingerprint exists.
+- `linked_active`: the duplicate maps to an active reviewed purchase.
+- `linked_archived_restorable`: it maps to an archived purchase and the caller
+  is its payer or the household owner; `purchase_id` may be passed to
+  `restore_purchase_receipt` after explicit user confirmation.
+- `linked_archived_not_authorized`: it is archived but this member may not
+  restore it.
+- `legacy_unlinked`: a pre-migration fingerprint exists without a durable link.
+- `ambiguous`: the supplied exact and content hashes match different import
+  records.
+
+For `legacy_unlinked` and `ambiguous`, `purchase_id` is deliberately null and
+`can_restore` is false. The client must report that the bill was imported
+previously and offer normal archive browsing; it must not infer a purchase from
+merchant, amount, date, or timestamps. The RPC requires an active household
+member, validates both SHA-256 strings, reveals no other household, and accepts
+or returns no PDF bytes or receipt text. Existing direct `invoice_imports`
+reads remain household-RLS restricted for compatibility, but new duplicate UI
+should use the RPC contract.
+
 ## Hosted validation record — 2026-07-15
 
 - The clean bootstrap executed inside an explicit transaction successfully.

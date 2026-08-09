@@ -55,6 +55,7 @@ async function measure(page, state, presentation = "classic") {
       ledger: rect(".expenses-panel"),
       settings: rect(".settings")
     });
+    if (state === "settings") Object.assign(result, { settingsProfile: rect(".settings-profile"), settingsAccount: rect(".settings-account"), settingsBody: rect(".settings-body") });
     return result;
   }, state);
 }
@@ -95,6 +96,45 @@ test("tablet and mobile retain order without horizontal overflow", async context
     assert.ok(measured.command.top < measured.insights.top);
     assert.ok(measured.insights.top < measured.ledger.top);
     assert.ok(measured.ledger.top < measured.settings.top);
+    await page.close();
+  }
+});
+
+test("open settings use compact columns on desktop and stack cleanly on mobile", async context => {
+  if (!browser) return context.skip("Playwright browser executable is not installed");
+  for (const presentation of ["classic", "sketch"]) for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage({ viewport });
+    const measured = await measure(page, "settings", presentation);
+    assert.equal(measured.scrollWidth, measured.viewport);
+    if (viewport.width > 700) {
+      assert.equal(Math.round(measured.settingsProfile.top), Math.round(measured.settingsAccount.top));
+      assert.ok(measured.settingsProfile.right < measured.settingsAccount.left);
+    } else {
+      assert.ok(measured.settingsProfile.bottom < measured.settingsAccount.top);
+      assert.ok(measured.settingsProfile.width > viewport.width - 60);
+    }
+    await page.close();
+  }
+});
+
+test("Possible Buys guidance wraps naturally within its card", async context => {
+  if (!browser) return context.skip("Playwright browser executable is not installed");
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage({ viewport });
+    await page.goto(`${origin}/tests/fixtures/dashboard-geometry.html?state=dashboard`);
+    const measured = await page.evaluate(() => {
+      const panel = document.querySelector(".restock-panel");
+      panel.insertAdjacentHTML("beforeend", '<div class="restock-empty"><b>Buy a tracked item again to unlock suggestions</b><p>Tracking 14 grocery item types across 1 purchase date. Possible Buys needs the same item on 2 different dates.</p><details><summary>Why nothing is showing yet</summary><p>Excluded fee, tax, delivery, personal and untracked lines.</p></details></div>');
+      const empty = panel.querySelector(".restock-empty").getBoundingClientRect();
+      const paragraph = panel.querySelector(".restock-empty>p");
+      const style = getComputedStyle(paragraph);
+      return { empty, panel: panel.getBoundingClientRect(), scrollWidth: document.documentElement.scrollWidth, viewport: document.documentElement.clientWidth, letterSpacing: style.letterSpacing, transform: style.textTransform };
+    });
+    assert.ok(measured.empty.left >= measured.panel.left);
+    assert.ok(measured.empty.right <= measured.panel.right);
+    assert.equal(measured.scrollWidth, measured.viewport);
+    assert.equal(measured.letterSpacing, "normal");
+    assert.equal(measured.transform, "none");
     await page.close();
   }
 });

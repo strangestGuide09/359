@@ -58,12 +58,25 @@ export function restockEligibility(purchases) {
   return { groups, stats: { ...stats, purchaseDates: stats.purchaseDates.size, repeatTypes: [...groups.values()].filter(qualifiesForRestockSuggestion).length } };
 }
 
-export function restockEmptyState(groups, stats = {}) {
+export function restockEmptyGuidance(groups, stats = {}) {
   const entries = [...groups.values()].flat();
   const exclusions = [`${stats.excludedFees || 0} fee, tax, or delivery`, `${stats.excludedPersonal || 0} personal`, `${stats.excludedUntracked || 0} untracked`, `${stats.excludedCategory || 0} outside groceries`].join(" · ");
-  if (!entries.length) return `No eligible tracked grocery merchandise yet. Excluded: ${exclusions}. Import a grocery receipt and keep Track for restock selected only on merchandise.`;
+  if (!entries.length) return {
+    title: "Track a grocery item to get started",
+    next: "Import a grocery receipt and keep Track for restock selected on merchandise.",
+    detail: `No eligible tracked grocery merchandise yet. Excluded: ${exclusions}.`
+  };
   const dateCount = stats.purchaseDates ?? new Set(entries.map(item => item.purchased_on)).size;
-  return `Tracking ${groups.size} normalized grocery item type${groups.size === 1 ? "" : "s"} across ${dateCount} purchase date${dateCount === 1 ? "" : "s"}; ${stats.repeatTypes || 0} repeat on a second date. Possible buys requires the same normalized tracked merchandise item on 2 distinct dates. Excluded: ${exclusions}.`;
+  return {
+    title: "Buy a tracked item again to unlock suggestions",
+    next: `Tracking ${groups.size} grocery item type${groups.size === 1 ? "" : "s"} across ${dateCount} purchase date${dateCount === 1 ? "" : "s"}. Possible Buys needs the same item on 2 different dates.`,
+    detail: `${stats.repeatTypes || 0} items repeat on a second date. Excluded: ${exclusions}. Names are normalized across common merchant and pack-label variations.`
+  };
+}
+
+export function restockEmptyState(groups, stats = {}) {
+  const guidance = restockEmptyGuidance(groups, stats);
+  return `${guidance.title}. ${guidance.next} ${guidance.detail}`;
 }
 
 export function qualifiesForRestockSuggestion(items) {

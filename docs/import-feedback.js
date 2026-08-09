@@ -15,7 +15,8 @@ export function showImportFeedback(document, message, kind = "info", options = {
   const {
     durationMs = 10000,
     schedule = setTimeout,
-    cancel = clearTimeout
+    cancel = clearTimeout,
+    action
   } = options;
 
   cancelFeedbackTimer(document);
@@ -41,16 +42,29 @@ export function showImportFeedback(document, message, kind = "info", options = {
   dismiss.setAttribute("aria-label", "Dismiss notification");
   dismiss.textContent = "×";
   dismiss.onclick = () => clearImportFeedback(document);
-  feedback.replaceChildren(copy, dismiss);
+  const children = [copy];
+  if (action?.label && typeof action.onClick === "function") {
+    const actionButton = document.createElement("button");
+    actionButton.type = "button";
+    actionButton.className = "secondary feedback-action";
+    actionButton.textContent = action.label;
+    if (action.ariaLabel) actionButton.setAttribute("aria-label", action.ariaLabel);
+    actionButton.onclick = action.onClick;
+    children.push(actionButton);
+  }
+  children.push(dismiss);
+  feedback.replaceChildren(...children);
 
   const globalStatus = document.getElementById("status");
   if (globalStatus) globalStatus.textContent = "";
   feedback.focus({ preventScroll: false });
 
-  const id = schedule(() => {
-    if (document.getElementById("import-feedback") === feedback) feedback.remove();
-    feedbackTimers.delete(document);
-  }, durationMs);
-  feedbackTimers.set(document, { id, cancel });
+  if (durationMs > 0) {
+    const id = schedule(() => {
+      if (document.getElementById("import-feedback") === feedback) feedback.remove();
+      feedbackTimers.delete(document);
+    }, durationMs);
+    feedbackTimers.set(document, { id, cancel });
+  }
   return feedback;
 }

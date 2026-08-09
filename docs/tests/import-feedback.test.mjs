@@ -86,3 +86,24 @@ test("errors remain dismissible and auto-dismiss without affecting dialog valida
   assert.deepEqual([...timers.cancelled], [1]);
   clearImportFeedback(document);
 });
+
+test("an archived duplicate can expose one persistent accessible restore action", async () => {
+  const document = fakeDocument();
+  const timers = fakeScheduler();
+  let restored = false;
+  const feedback = showImportFeedback(document, "Already imported as Instamart (removed).", "duplicate", {
+    durationMs: 0,
+    schedule: timers.schedule,
+    cancel: timers.cancel,
+    action: { label: "Restore removed receipt", ariaLabel: "Restore Instamart to the ledger", onClick: () => { restored = true; } }
+  });
+
+  assert.equal(timers.callbacks.size, 0);
+  assert.equal(feedback.children.length, 3);
+  assert.equal(feedback.children[1].tagName, "button");
+  assert.equal(feedback.children[1].textContent, "Restore removed receipt");
+  assert.equal(feedback.children[1].attributes.get("aria-label"), "Restore Instamart to the ledger");
+  feedback.children[1].onclick({ currentTarget: feedback.children[1] });
+  assert.equal(restored, true);
+  assert.equal(feedback.children[2].attributes.get("aria-label"), "Dismiss notification");
+});

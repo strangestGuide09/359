@@ -98,7 +98,7 @@ test("clean bootstrap enforces the approved two-person lifecycle", async () => {
 });
 
 test("local PDF privacy and duplicate safeguards remain present", async () => {
-  const [app, feedback, restock, sql] = await Promise.all([read("docs/app.js"), read("docs/import-feedback.js"), read("docs/restock.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql")]);
+  const [app, feedback, duplicate, restock, sql, duplicateSql] = await Promise.all([read("docs/app.js"), read("docs/import-feedback.js"), read("docs/invoice-duplicate.js"), read("docs/restock.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql"), read("supabase/migrations/20260809020000_invoice_import_purchase_link.sql")]);
   assert.match(app, /Reading this PDF locally\. It will not be uploaded or stored/);
   assert.match(app, /exactHash/);
   assert.match(app, /contentHash/);
@@ -111,7 +111,8 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(app, /Reviewed item totals must match the receipt total/);
   assert.match(app, /parserWarning/);
   assert.match(app, /parserNotice/);
-  assert.match(app, /showImportFeedback\(message, "duplicate"\)/);
+  assert.match(app, /supabase\.rpc\("find_invoice_duplicate", \{ p_household_id: current\.id, p_exact_pdf_hash: fingerprint\.exactHash, p_content_hash: fingerprint\.contentHash \}\)/);
+  assert.match(app, /showDuplicateImport\(result, imported\)/);
   assert.match(app, /sameFingerprint\(imported, pendingPdfImport\)/);
   assert.match(app, /sameFingerprint\(imported, lastPdfFeedback\)/);
   assert.match(app, /isDuplicateImportError\(error\)/);
@@ -120,7 +121,17 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(app, /\$\("dialog-error"\)\.textContent = message;\n\s+note\(""\);/);
   assert.doesNotMatch(app, /\$\("dialog-error"\)\.textContent = message;\n\s+note\(message\);/);
   assert.match(app, /input\.value = "";\n    setPdfBusy\(false\);/);
-  assert.match(app, /Review Expenses or archived entries instead/);
+  assert.match(app, /Restore removed receipt/);
+  assert.match(app, /No duplicate was created/);
+  assert.doesNotMatch(app, /matchingPurchase|uniqueReceiptMatch|select\("imported_at"\)/);
+  assert.match(duplicate, /linked_archived_restorable/);
+  assert.match(duplicate, /result\?\.can_restore === true/);
+  assert.match(duplicateSql, /create or replace function public\.find_invoice_duplicate/);
+  assert.match(duplicateSql, /'legacy_unlinked'/);
+  assert.match(duplicateSql, /'ambiguous'/);
+  assert.match(app, /restoreButton\.onclick = canRestore \? async/);
+  assert.match(app, /await restoreRemovedReceipt\(restoreId, "duplicate"\)/);
+  assert.match(app, /pendingPdfImport = undefined;[\s\S]{0,220}dialog\.close\(\)/);
   assert.match(feedback, /feedbackTimers/);
   assert.match(feedback, /durationMs = 10000/);
   assert.match(feedback, /Dismiss notification/);
@@ -143,8 +154,8 @@ test("mixed reviewed receipts use shared item totals for balances and restock", 
   assert.match(app, /item\.is_personal \? 0/);
   assert.match(restock, /if \(item\.is_personal\)/);
   assert.match(restock, /if \(!isRestockMerchandise\(item\.name\)\)/);
-  assert.match(app, /restockEmptyState\(groups, stats\)/);
-  assert.match(restock, /same normalized tracked merchandise item on 2 distinct dates/);
+  assert.match(app, /restockEmptyGuidance\(groups, stats\)/);
+  assert.match(restock, /Possible Buys needs the same item on 2 different dates/);
 });
 
 test("itemized review is editable and retains failed drafts", async () => {
@@ -183,10 +194,12 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.match(app, /id="household-settings" class="panel settings"/);
+  assert.match(app, /<section class="settings-profile" aria-labelledby="settings-members-title">/);
+  assert.match(app, /<section class="settings-account" aria-label="Account and recovery">/);
   assert.match(app, /<section class="account-session" aria-labelledby="account-session-title">/);
   assert.match(app, /id="account-session-title">Account and session/);
   assert.match(app, /id="sign-out" class="secondary session-sign-out">Sign out/);
-  assert.ok(app.indexOf("accountSession}${ownerControls}") >= 0, "account/session section remains separate from destructive household controls");
+  assert.ok(app.indexOf("${accountSession}${archiveList}</section>${ownerControls}") >= 0, "account/session section remains separate from destructive household controls");
   assert.match(app, /class="member-block"/);
   assert.match(app, /<strong>\$\{esc\(displayedMemberName\(member\)\)\}<\/strong><span aria-hidden="true">·<\/span><span>\$\{member\.role/);
   assert.match(app, /class="you-badge">you<\/small>/);
@@ -202,7 +215,9 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.match(style, /\.page-meta \{ width:100%;/);
   assert.doesNotMatch(style, /\.activity,\.settings \{ margin-top:/);
   assert.match(style, /\.insight-card,\.expenses-panel \{ margin:0; \}/);
+  assert.match(style, /\.settings-body \{ display:grid; grid-template-columns:/);
   assert.match(style, /\.account-session \{ display:flex; justify-content:space-between;/);
+  assert.match(style, /\.restock-empty \{ max-width:60ch;/);
   assert.match(style, /\.session-sign-out \{ flex:0 0 auto; min-width:110px; \}/);
   assert.match(style, /\.session-sign-out \{ width:100%; \}/);
 });

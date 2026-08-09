@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalRestockKey, isRestockMerchandise, qualifiesForRestockSuggestion, restockEligibility, restockEmptyState, restockHistory } from "../restock.js";
+import { canonicalRestockKey, isRestockMerchandise, qualifiesForRestockSuggestion, restockEligibility, restockEmptyGuidance, restockEmptyState, restockHistory } from "../restock.js";
 
 const purchase = (date, items) => ({ purchased_on: date, purchase_items: items });
 const tracked = (name, extra = {}) => ({ name, is_personal: false, is_tracked_for_restock: true, ...extra });
@@ -56,9 +56,17 @@ test("only tracked non-personal grocery merchandise can suggest", () => {
 test("empty state states the exact distinct-date requirement", () => {
   const { groups, stats } = restockEligibility([purchase("2026-07-01", [tracked("Rice 2 kg"), tracked("Rice 2kg")])]);
   assert.equal(qualifiesForRestockSuggestion([...groups.values()][0]), false);
-  assert.match(restockEmptyState(groups, stats), /1 normalized grocery item type across 1 purchase date/);
-  assert.match(restockEmptyState(groups, stats), /requires the same normalized tracked merchandise item on 2 distinct dates/);
-  assert.match(restockEmptyState(new Map()), /keep Track for restock selected only on merchandise/);
+  assert.match(restockEmptyState(groups, stats), /Tracking 1 grocery item type across 1 purchase date/);
+  assert.match(restockEmptyState(groups, stats), /same item on 2 different dates/);
+  assert.match(restockEmptyState(new Map()), /keep Track for restock selected on merchandise/);
+});
+
+test("empty guidance prioritizes the next action and keeps exclusions secondary", () => {
+  const { groups, stats } = restockEligibility([purchase("2026-07-01", [tracked("Rice 2 kg"), tracked("Delivery fee")])]);
+  const guidance = restockEmptyGuidance(groups, stats);
+  assert.equal(guidance.title, "Buy a tracked item again to unlock suggestions");
+  assert.match(guidance.next, /same item on 2 different dates/);
+  assert.match(guidance.detail, /Excluded: 1 fee, tax, or delivery/);
 });
 
 test("audit-derived malformed Green Chilli rows normalize without admitting charge artifacts", () => {
@@ -95,7 +103,7 @@ test("eligibility reason reports tracked candidates and categorical exclusions",
     tracked("Rice", { is_tracked_for_restock: false })
   ])]);
   const message = restockEmptyState(groups, stats);
-  assert.match(message, /Tracking 1 normalized grocery item type across 1 purchase date/);
-  assert.match(message, /0 repeat on a second date/);
+  assert.match(message, /Tracking 1 grocery item type across 1 purchase date/);
+  assert.match(message, /0 items repeat on a second date/);
   assert.match(message, /Excluded: 2 fee, tax, or delivery · 1 personal · 1 untracked · 0 outside groceries/);
 });
