@@ -33,7 +33,10 @@ const unknownFieldCount = (record, allowed) => record && typeof record === "obje
 const unknownFieldNames = (record, allowed) => record && typeof record === "object" && !Array.isArray(record)
   ? Object.keys(record)
     .filter(field => !allowed.includes(field))
-    .filter(field => /^[a-z][a-z0-9_]{0,63}$/.test(field))
+    // Provider envelope keys may be snake_case or camelCase. Restrict this to
+    // ordinary API identifiers; values and arbitrary/unprintable keys remain
+    // unavailable to logs.
+    .filter(field => /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(field))
     .slice(0, 5)
   : null;
 const safeResultStatus = value => {
