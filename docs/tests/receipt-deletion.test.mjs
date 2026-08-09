@@ -24,7 +24,7 @@ test("receipt deletion is audited, reversible, and payer-or-owner-gated", async 
   assert.match(app, /<svg aria-hidden="true"[^>]*focusable="false"/);
   assert.match(app, /<span>Remove<\/span>/);
   assert.match(app, /<span>Amount<\/span><span>Actions<\/span>/);
-  assert.match(style, /\.ledger-columns,\.purchase-row \{ display:grid; grid-template-columns:[^;}]*142px; gap:12px;/);
+  assert.match(style, /\.ledger-columns,\.purchase-row \{ display:grid; grid-template-columns:[^;}]*minmax\(222px,1fr\); gap:12px;/);
   assert.match(style, /\.purchase-amount \{ text-align:right; \}/);
   assert.match(style, /\.receipt-edit,\.receipt-delete \{ display:inline-flex;[^}]*border-color:var\(--line\);[^}]*color:var\(--muted\);/);
   assert.match(style, /\.receipt-delete:hover \{ border-color:var\(--danger\); background:var\(--danger-soft\); color:var\(--danger\); \}/);
