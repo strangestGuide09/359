@@ -8,6 +8,9 @@ test("Document AI Extract schema requests only the reviewed receipt allowlist", 
   assert.match(RECEIPT_EXTRACTION_SCHEMA.properties.line_items.items.description, /purchased item/i);
   const requestedKeys = [...Object.keys(RECEIPT_EXTRACTION_SCHEMA.properties), ...Object.keys(RECEIPT_EXTRACTION_SCHEMA.properties.line_items.items.properties)];
   assert.ok(requestedKeys.every(key => !["customer_name","address","phone","email","payment_method","order_id"].includes(key)));
+  const serialized = JSON.stringify(RECEIPT_EXTRACTION_SCHEMA);
+  assert.doesNotMatch(serialized, /"(?:required|enum)"/);
+  assert.equal(RECEIPT_EXTRACTION_SCHEMA.properties.currency.type, "string");
 });
 
 test("provider JSON reader rejects declared, streamed, typed, and syntactic violations", async t => {

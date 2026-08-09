@@ -4,7 +4,11 @@ export const RECEIPT_EXTRACTION_SCHEMA = {
     merchant_name: { type: "string", description: "Merchant or store name only. Never return customer names, addresses, contact details, payment details, order identifiers or invoice identifiers." },
     purchase_date: { type: "string", description: "Purchase date in YYYY-MM-DD format only. Never return an order or invoice identifier." },
     receipt_total: { type: "number", description: "Final paid or payable receipt total only." },
-    currency: { type: "string", enum: ["INR"], description: "ISO 4217 receipt currency. Return INR only." },
+    // Sarvam Extract accepts its own compact schema dialect: type, description,
+    // properties and items.  It rejects JSON Schema keywords such as `required`
+    // and `enum`, so currency and field completeness are enforced after receipt
+    // in result-mapper.mjs instead.
+    currency: { type: "string", description: "ISO 4217 receipt currency. Return INR only." },
     line_items: {
       type: "array",
       description: "Purchased product and explicit fee lines only. Never return payment, address, contact, order, invoice, customer, tax-summary or identifier fields.",
@@ -16,12 +20,10 @@ export const RECEIPT_EXTRACTION_SCHEMA = {
           quantity: { type: "number", description: "Purchased quantity when stated; use 1 when the receipt clearly shows one item." },
           unit: { type: "string", description: "Package or quantity unit when stated, otherwise an empty string." },
           line_total: { type: "number", description: "Final line total in INR after line-level discount." }
-        },
-        required: ["name","quantity","line_total"]
+        }
       }
     }
-  },
-  required: ["merchant_name","purchase_date","receipt_total","currency","line_items"]
+  }
 };
 
 export const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
