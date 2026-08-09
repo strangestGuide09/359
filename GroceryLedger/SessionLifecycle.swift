@@ -116,7 +116,29 @@ struct ReturningSessionMachine: Equatable, Sendable {
     }
 }
 
+/// Validation boundary for the upcoming native email-code sign-in UI.
+///
+/// Supabase can issue either six-, seven-, or eight-digit email codes, so the
+/// native client must not assume a fixed code length.
+struct EmailVerificationCode: Equatable, Sendable {
+    static let minimumLength = 6
+    static let maximumLength = 8
+
+    let value: String
+
+    init?(_ value: String) {
+        guard Self.isValid(value) else { return nil }
+        self.value = value
+    }
+
+    static func isValid(_ value: String) -> Bool {
+        let digits = value.utf8
+        return (minimumLength...maximumLength).contains(digits.count)
+            && digits.allSatisfy { $0 >= 48 && $0 <= 57 }
+    }
+}
+
 enum NativeSignInRecommendation {
-    static let primary = "Six-digit email code"
-    static let guidance = "Send a six-digit email code and verify it inside the app. Do not require the person to leave the app to open a sign-in link."
+    static let primary = "Email verification code"
+    static let guidance = "Send a verification code by email and enter it inside the app. Do not require the person to leave the app to open a sign-in link."
 }

@@ -64,7 +64,9 @@ Deno.serve(async request => {
     const reservation = Array.isArray(reserved) ? reserved[0] : reserved;
     jobId = reservation?.job_id;
     if (!jobId) throw new Error("processing_disabled");
-    if (!reservation.is_new) return response(202, "accepted", { job_id: jobId }, responseOrigin);
+    const { data: claimed, error: claimError } = await serverClient.rpc("claim_ai_parse_submission", { p_job_id: jobId, p_requesting_user: authData.user.id });
+    if (claimError) throw new Error(/disabled/i.test(claimError.message) ? "processing_disabled" : "provider_unavailable");
+    if (claimed !== true) return response(202, "accepted", { job_id: jobId }, responseOrigin);
 
     const sarvamKey = Deno.env.get("SARVAM_API_KEY");
     if (!sarvamKey) throw new Error("processing_disabled");

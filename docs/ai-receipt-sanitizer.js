@@ -62,6 +62,7 @@ export function aiParseMessage(code) {
     job_not_found: "This AI receipt job is unavailable for the current household.",
     job_expired: "The AI receipt job expired. Your local draft is unchanged.",
     completion_timeout: "AI receipt processing took too long. Your local draft is unchanged.",
+    submission_retry_exhausted: "AI receipt processing could not start safely after several attempts. Your local draft is unchanged.",
     provider_failed: "The AI provider could not process this redacted derivative. Your local draft is unchanged.",
     invalid_provider_result: "The AI result did not pass Grocery Ledger’s safety checks. Your local draft is unchanged."
   })[code] || "AI receipt improvement could not start. Your local draft is unchanged.";

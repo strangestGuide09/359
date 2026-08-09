@@ -25,6 +25,13 @@ never used as the request body. The client reuses one opaque idempotency key for
 retries of the same in-memory draft. This does not make redaction proof; user
 confirmation remains mandatory.
 
+Before any provider call, the service-role-only `claim_ai_parse_submission` RPC
+leases the content-free reservation for 30 seconds. A concurrent retry receives
+the same opaque job ID without creating another provider job; a stranded
+`reserved` job may be reclaimed after the lease, with at most three submission
+attempts. This recovery contract requires
+`20260809010000_ai_submission_claim.sql` to be deployed with the function.
+
 Do not enable either kill switch until the new Extract submit function, result
 function and completion-control migration are deployed together and pass the
 one-receipt acceptance test. The local parser remains the no-cloud fallback.
@@ -54,3 +61,10 @@ still count so repeated failures cannot bypass the cap.
 Never add request-body logging. Observability may contain only fixed error
 codes, opaque request/job IDs, page/byte counts, state, latency and charged
 units—not filenames, field values, provider bodies, URLs or document hashes.
+
+Before enabling processing, confirm the Supabase project can reach Sarvam, the
+Sarvam account is entitled to Document AI Extract, and Sarvam's current account
+retention/deletion terms are acceptable for the redacted derivative. These
+functions intentionally use only Extract, status and results; they do not have
+a provider-side deletion call. Never send a derivative containing information
+the household has not explicitly approved for provider processing.

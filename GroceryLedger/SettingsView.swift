@@ -83,7 +83,7 @@ struct SettingsView: View {
                     Text("When enabled, Grocery Ledger will restore a saved session silently. Temporary network or service problems will show a waking/retrying state; sign-in appears only after the account service confirms that the session is invalid or revoked.")
                         .font(.footnote)
                         .foregroundStyle(GroceryBrand.muted)
-                    Text("Planned sign-in: six-digit email code.")
+                    Text("Planned sign-in: email verification code.")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(GroceryBrand.pine)
                 }

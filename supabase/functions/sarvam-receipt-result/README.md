@@ -25,11 +25,19 @@ both functions and the incremental migration have been deployed and a single
 sanitized synthetic/manual receipt is approved for a controlled test. Never log
 request or provider bodies.
 
+Client-visible completion codes are fixed to `pending`, `completed`,
+`processing_disabled`, `job_not_found`, `job_expired`, `completion_timeout`,
+`submission_retry_exhausted`, `provider_failed`, `provider_unavailable`, and
+`invalid_provider_result`. Provider messages, filenames, annotations and URLs
+must never be copied into an error response.
+
 ## Deployment prerequisites (do not run until approved)
 
-1. Run `supabase/migrations/20260808000000_ai_parse_completion.sql` in the
-   hosted SQL editor and then run `supabase/tests/004_ai_parse_completion.sql`.
-   The test is transactional and must finish with ten `ok` rows and a rollback.
+1. Run `supabase/migrations/20260808000000_ai_parse_completion.sql`, followed by
+   `supabase/migrations/20260809010000_ai_submission_claim.sql`, in the hosted
+   SQL editor. Then run `supabase/tests/004_ai_parse_completion.sql` and
+   `supabase/tests/005_ai_submission_claim.sql`. The tests are transactional and
+   must finish with ten and eight `ok` rows respectively, followed by rollback.
 2. Deploy `sarvam-receipt-parse` and `sarvam-receipt-result` together from the
    repository with the Supabase CLI so the shared receipt contract is bundled.
    Both functions use custom current-session validation, so deploy them with
@@ -40,6 +48,9 @@ request or provider bodies.
 4. Leave `AI_PROCESSING_ENABLED=false` and
    `private.ai_processing_config.provider_enabled=false` after deployment.
    Enable them only for the bounded acceptance window, then disable them again.
+5. Confirm the Sarvam account's Document AI entitlement and current retention
+   or deletion terms for redacted derivatives. The integration does not call a
+   provider-side deletion endpoint.
 
 The first real acceptance test must use one manually reviewed redacted
 derivative with no personal/payment data. Confirm: submit returns one opaque job

@@ -356,4 +356,17 @@ final class GroceryLedgerCoreTests: XCTestCase {
         XCTAssertEqual(client.sessionState, .localOnly)
         XCTAssertEqual(client.state, .notConfigured)
     }
+
+    func testEmailVerificationCodeAcceptsSixThroughEightDigits() {
+        XCTAssertNotNil(EmailVerificationCode("123456"))
+        XCTAssertNotNil(EmailVerificationCode("1234567"))
+        XCTAssertNotNil(EmailVerificationCode("12345678"))
+    }
+
+    func testEmailVerificationCodeRejectsNonNumericAndOutOfRangeValues() {
+        XCTAssertNil(EmailVerificationCode("12345"))
+        XCTAssertNil(EmailVerificationCode("123456789"))
+        XCTAssertNil(EmailVerificationCode("12345a"))
+        XCTAssertNil(EmailVerificationCode("123 456"))
+    }
 }

@@ -83,8 +83,10 @@ test("restore and email-code UI messaging protects session state and never remem
   assert.match(app, /Nothing was signed out or cleared, and local drafts remain/);
   assert.match(app, /localStorage\.setItem\(rememberedEmailKey, email\)/);
   assert.doesNotMatch(app, /localStorage\.setItem\([^\n]*(?:token|code)/i);
-  assert.match(app, /We’ll email a 6-digit code you can enter here/);
+  assert.match(app, /We’ll email a verification code you can enter here/);
   assert.match(app, /autocomplete="one-time-code"/);
+  assert.match(app, /maxlength="8" pattern="\[0-9\]\{6,8\}"/);
+  assert.match(app, /if \(!\/\^\\d\{6,8\}\$\/\.test\(token\)\)/);
   assert.match(app, /supabase\.auth\.verifyOtp\(\{ email, token, type: "email" \}\)/);
   assert.doesNotMatch(app, /function renderEmailLinkSent/);
   assert.doesNotMatch(app, /Email me a sign-in link/);

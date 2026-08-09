@@ -13,8 +13,15 @@ import { settlementAmountError, settlementConfirmation, settlementState } from "
 import { createResilientAuthStorage, restoreSessionWithRetry, sessionErrorKind } from "./session-restore.js";
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
 import { AI_SANITIZER_VERSION, aiParseMessage, buildSanitizedPdf, suggestedSanitizedLines, validateSanitizedText } from "./ai-receipt-sanitizer.js";
+import { aiNetworkPollDecision, aiPollDecision, aiRetryDelayMs } from "./ai-receipt-flow.js";
 
 const authStorage = createResilientAuthStorage(window.localStorage);
+const AI_IDLE_MESSAGE = "Prepare a separate redacted derivative for optional AI processing. The original PDF is never uploaded.";
+const aiProcessingStatus = document.querySelector(".ai-improve small");
+aiProcessingStatus.id = "ai-processing-status";
+aiProcessingStatus.classList.add("ai-processing-status");
+aiProcessingStatus.setAttribute("role", "status");
+aiProcessingStatus.setAttribute("aria-live", "polite");
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: authStorage }
 });
@@ -234,16 +241,16 @@ function suggestionCards() {
 
 function renderOtpChallenge(email, creating) {
   $("sync-state").textContent = "Check your email";
-  setScreen('<section class="panel account-gate"><p>CHECK YOUR EMAIL</p><h1 tabindex="-1">Enter your 6-digit code</h1><article>Enter the six-digit code sent to <b>' + esc(email) + '</b>. It works here without leaving Grocery Ledger.</article><form id="otp-form" class="auth-form"><label>One-time code<input id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="123456"></label><button>Verify code</button></form><button id="send-another-code" type="button" class="plain">Use another email or send another code</button><p id="auth-status" class="auth-status" role="status"></p></section>');
+  setScreen('<section class="panel account-gate"><p>CHECK YOUR EMAIL</p><h1 tabindex="-1">Enter your verification code</h1><article>Enter the verification code sent to <b>' + esc(email) + '</b>. It works here without leaving Grocery Ledger.</article><form id="otp-form" class="auth-form"><label>Verification code<input id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{6,8}" required placeholder="12345678"></label><button>Verify code</button></form><button id="send-another-code" type="button" class="plain">Use another email or send another code</button><p id="auth-status" class="auth-status" role="status"></p></section>');
   $("send-another-code").onclick = () => renderSignedOut(creating ? "signup" : "signin");
   $("otp-form").onsubmit = async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector("button");
     const input = $("login-code");
     const token = input.value.trim();
-    if (!/^\d{6}$/.test(token)) {
+    if (!/^\d{6,8}$/.test(token)) {
       $("auth-status").className = "auth-status error";
-      $("auth-status").textContent = "Enter the six-digit code from your email.";
+      $("auth-status").textContent = "Enter the 6–8 digit code from your email.";
       input.focus();
       return;
     }
@@ -256,7 +263,7 @@ function renderOtpChallenge(email, creating) {
       if (error || !data?.session) {
         $("auth-status").className = "auth-status error";
         $("auth-status").textContent = error && sessionErrorKind(error) === "invalid"
-          ? "That 6-digit code is invalid or expired. Send another code and try again."
+          ? "That verification code is invalid or expired. Send another code and try again."
           : "We couldn’t verify the code. Send another code and try again.";
         button.disabled = false;
         button.textContent = "Try verification again";
@@ -283,7 +290,7 @@ function renderSignedOut(authMode = "signin", statusMessage = "") {
   const retryAt = Number(localStorage.getItem(retryKey) || 0);
   const waiting = retryAt > Date.now();
   const time = new Date(retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>${creating ? "Create your account with your name and email." : "Sign in to your existing account."} We’ll email a 6-digit code you can enter here.</article><div class="auth-choice" aria-label="Account access"><button id="show-signin" type="button" class="${creating ? "secondary" : ""}" aria-pressed="${!creating}">Sign in</button><button id="show-signup" type="button" class="${creating ? "" : "secondary"}" aria-pressed="${creating}">Create account</button></div><form id="login-form" class="auth-form${creating ? " auth-signup" : ""}">${creating ? '<label>Your name<input id="signup-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>' : ""}<label>Email<input id="login-email" type="email" required autocomplete="email" value="${esc(rememberedEmail)}" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : creating ? "Create account and send code" : "Send 6-digit code"}</button></form><p id="auth-status" class="auth-status${waiting || statusMessage ? " error" : ""}">${esc(statusMessage || (waiting ? `Try again at ${time}.` : creating ? "Your name is shared only with your household partner." : "Sign in will not create a new account."))}</p></section>`);
+  setScreen(`<section class="panel account-gate"><p>WELCOME</p><h1 tabindex="-1">Grocery Ledger</h1><article>${creating ? "Create your account with your name and email." : "Sign in to your existing account."} We’ll email a verification code you can enter here.</article><div class="auth-choice" aria-label="Account access"><button id="show-signin" type="button" class="${creating ? "secondary" : ""}" aria-pressed="${!creating}">Sign in</button><button id="show-signup" type="button" class="${creating ? "" : "secondary"}" aria-pressed="${creating}">Create account</button></div><form id="login-form" class="auth-form${creating ? " auth-signup" : ""}">${creating ? '<label>Your name<input id="signup-name" maxlength="80" required autocomplete="name" placeholder="e.g. Ekta"></label>' : ""}<label>Email<input id="login-email" type="email" required autocomplete="email" value="${esc(rememberedEmail)}" placeholder="you@example.com"></label><button${waiting ? " disabled" : ""}>${waiting ? `Try again at ${time}` : creating ? "Create account and send code" : "Send verification code"}</button></form><p id="auth-status" class="auth-status${waiting || statusMessage ? " error" : ""}">${esc(statusMessage || (waiting ? `Try again at ${time}.` : creating ? "Your name is shared only with your household partner." : "Sign in will not create a new account."))}</p></section>`);
   $("show-signin").onclick = () => renderSignedOut("signin");
   $("show-signup").onclick = () => renderSignedOut("signup");
   $("login-form").onsubmit = async event => {
@@ -564,6 +571,7 @@ function openEntry(next, defaults = {}, pdfImport) {
   $("amount").value = defaults.amount || "";
   $("date").value = defaults.date || today();
   $("dialog-error").textContent = "";
+  setAiProcessing(AI_IDLE_MESSAGE);
   $("save").disabled = false;
   $("save").textContent = "Save";
   if (pdfImport) renderItemRows();
@@ -617,7 +625,7 @@ $("ai-preview-form").onsubmit = async event => {
     if (!/^[0-9a-f-]{36}$/i.test(result.job_id || "")) throw new Error(aiParseMessage("invalid_provider_result"));
     pendingPdfImport.aiJobId = result.job_id;
     closeAiPreview();
-    note("Redacted derivative accepted. Waiting for the private AI draft…");
+    setAiProcessing("Sarvam accepted the redacted derivative and is preparing suggestions…", true);
     void pollAiReceiptResult(result.job_id, pendingPdfImport);
   } catch (error) {
     errorBox.textContent = error.message || aiParseMessage();
@@ -626,20 +634,37 @@ $("ai-preview-form").onsubmit = async event => {
     button.textContent = "Send redacted derivative";
   }
 };
+function setAiProcessing(message, busy = false) {
+  aiProcessingStatus.textContent = message;
+  aiProcessingStatus.classList.toggle("active", message !== AI_IDLE_MESSAGE);
+  $("prepare-ai").disabled = busy;
+  $("prepare-ai").textContent = busy ? "AI processing…" : "Prepare private AI preview";
+}
 async function pollAiReceiptResult(jobId, draftReference) {
+  let transientFailures = 0;
   for (let attempt = 0; attempt < 40; attempt += 1) {
     if (pendingPdfImport !== draftReference || draftReference.aiJobId !== jobId) return;
     try {
       const response = await fetch(`${SUPABASE_URL}/functions/v1/sarvam-receipt-result`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_PUBLISHABLE_KEY, "content-type": "application/json" }, body: JSON.stringify({ job_id: jobId, household_id: current.id }) });
       const result = await response.json().catch(() => ({}));
-      if (response.status === 202 && ["pending","provider_pending"].includes(result.code)) {
+      const decision = aiPollDecision(response.status, result.code, transientFailures);
+      if (decision.kind === "wait") {
+        transientFailures = 0;
+        setAiProcessing("Sarvam is reading the redacted receipt. Your local draft remains available…", true);
         const seconds = Math.min(10, Math.max(2, Number(response.headers.get("retry-after")) || 3));
         await new Promise(resolve => setTimeout(resolve, seconds * 1000));
         continue;
       }
-      if (!response.ok || result.code !== "completed") throw new Error(aiParseMessage(result.code));
+      if (decision.kind === "retry") {
+        transientFailures = decision.nextFailures;
+        setAiProcessing(`Connection interrupted. Retrying AI result ${transientFailures} of 3; your local draft is safe…`, true);
+        await new Promise(resolve => setTimeout(resolve, aiRetryDelayMs(transientFailures)));
+        continue;
+      }
+      if (decision.kind !== "complete") throw new Error(aiParseMessage(result.code));
       const aiDraft = validateAiDraft(result.draft);
       if (pendingPdfImport !== draftReference) return;
+      setAiProcessing("AI suggestions are ready. Choose whether to apply them to this local draft.");
       if (confirm("The private AI draft is ready. Replace the current local item suggestions with it? You must still review every field before saving.")) {
         $("label").value = aiDraft.defaults.label;
         if (aiDraft.defaults.amount) $("amount").value = aiDraft.defaults.amount;
@@ -647,15 +672,22 @@ async function pollAiReceiptResult(jobId, draftReference) {
         reviewedItems = aiDraft.items.map(emptyReviewedItem);
         renderItemRows();
         formDirty = true;
-        note("AI suggestions applied locally. Review every field before saving; nothing was saved automatically.");
-      } else note("AI suggestions were not applied. Your existing local draft is unchanged.");
+        setAiProcessing("AI suggestions applied locally. Review every field before saving; nothing was saved automatically.");
+      } else setAiProcessing("AI suggestions were not applied. Your existing local draft is unchanged.");
       return;
     } catch (error) {
-      if (pendingPdfImport === draftReference) note(error.message || aiParseMessage());
+      const retry = aiNetworkPollDecision(transientFailures);
+      if (error instanceof TypeError && retry.kind === "retry") {
+        transientFailures = retry.nextFailures;
+        setAiProcessing(`Connection interrupted. Retrying AI result ${transientFailures} of 3; your local draft is safe…`, true);
+        await new Promise(resolve => setTimeout(resolve, aiRetryDelayMs(transientFailures)));
+        continue;
+      }
+      if (pendingPdfImport === draftReference) setAiProcessing(`${error.message || aiParseMessage()} Continue reviewing or save the local draft.`);
       return;
     }
   }
-  if (pendingPdfImport === draftReference) note(aiParseMessage("completion_timeout"));
+  if (pendingPdfImport === draftReference) setAiProcessing(`${aiParseMessage("completion_timeout")} Continue reviewing or save the local draft.`);
 }
 function validateAiDraft(draft) {
   if (!draft || typeof draft !== "object" || !draft.defaults || !Array.isArray(draft.items) || !draft.items.length || draft.items.length > 100) throw new Error(aiParseMessage("invalid_provider_result"));

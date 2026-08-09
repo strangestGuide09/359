@@ -128,7 +128,7 @@ and checks below passed.
   `Grocery Ledger` and a 60-second minimum send interval. No SMTP credential is
   stored in this repository.
 - Brevo reports the expected DKIM, DMARC, and free-address deliverability
-  warnings. Successful six-digit email-code delivery and verification for both
+  warnings. Successful email verification-code delivery and verification for both
   users remains a live acceptance-test requirement.
 - Security Advisor reported zero errors, nine expected warnings for the
   authenticated Grocery Ledger `SECURITY DEFINER` RPCs, and one informational
@@ -142,12 +142,16 @@ These warnings are expected only while their grants remain exactly as audited.
 Any future anonymous execute grant, service-role client use, missing RLS policy,
 additional Realtime table, or new Advisor error requires investigation.
 
-## Hosted six-digit email-code configuration
+## Hosted email verification-code configuration
 
 The web client sends passwordless email through `signInWithOtp(...)` and
 verifies the code inside the client with
 `verifyOtp({ email, token, type: "email" })`. The code itself is never persisted
 by the client.
+
+The web and iPhone clients accept a 6–8 digit numeric verification code. The
+hosted email may currently deliver an 8-digit code, so use the code
+received rather than assuming a fixed length.
 
 In Supabase Dashboard → **Authentication** → **Email Templates** → **Magic
 Link**, replace any `{{ .ConfirmationURL }}` use with `{{ .Token }}`. Use this
@@ -183,7 +187,7 @@ email-client-safe, branded template:
 ```
 
 The Supabase editor preview displays `{{ .Token }}` literally; a real email
-replaces it with the six-digit code.
+replaces it with the email verification code.
 
 Save the template only after the matching web build is deployed, then test both
 **Sign in** and **Create account** with an email you control. No database

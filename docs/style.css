@@ -119,6 +119,7 @@ menu { display:flex; justify-content:flex-end; gap:9px; margin:16px 0 0; padding
 .ai-improve { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:12px 0; padding:12px; border:1px solid var(--line); border-radius:10px; background:#f1ede4; }
 .ai-improve div { display:grid; gap:4px; }
 .ai-improve small { color:var(--muted); line-height:1.4; }
+.ai-processing-status.active { margin:2px 0 0; padding:8px 10px; border-left:3px solid var(--orange); background:#fff8e9; color:var(--ink); line-height:1.45; }
 .item-row { margin:9px 0; padding:9px 12px 11px; border:1px solid var(--line); border-radius:12px; background:#fffaf0; }
 .item-row legend { padding:0 6px; color:var(--pine); font-size:13px; font-weight:bold; }
 .item-row label { margin:0; }

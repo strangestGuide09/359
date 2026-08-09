@@ -35,6 +35,8 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
       error.status = response.status;
       throw error;
     }
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType && !/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) throw new Error("invalid_provider_result");
     const declared = Number(response.headers.get("content-length") || 0);
     if (declared > maxBytes) throw new Error("invalid_provider_result");
     const reader = response.body?.getReader();
@@ -53,6 +55,6 @@ export async function boundedProviderJson(url, init, maxBytes = MAX_PROVIDER_RES
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     const text = new TextDecoder().decode(bytes);
     bytes.fill(0);
-    return JSON.parse(text);
+    try { return JSON.parse(text); } catch { throw new Error("invalid_provider_result"); }
   } finally { clearTimeout(timer); }
 }

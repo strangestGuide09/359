@@ -1,0 +1,27 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+select plan(8);
+select has_function('public','claim_ai_parse_submission',array['uuid','uuid'],'submission claim RPC exists');
+select ok(not has_function_privilege('authenticated','public.claim_ai_parse_submission(uuid,uuid)','execute'),'clients cannot claim provider submission');
+select ok(has_function_privilege('service_role','public.claim_ai_parse_submission(uuid,uuid)','execute'),'only service role can claim provider submission');
+insert into auth.users(id) values ('52000000-0000-0000-0000-000000000001');
+insert into public.households(id,name,created_by) values ('62000000-0000-0000-0000-000000000001','Submission test','52000000-0000-0000-0000-000000000001');
+insert into public.household_members(household_id,user_id,display_name,role) values ('62000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001','Member','owner');
+insert into private.ai_parse_jobs(id,household_id,requested_by,idempotency_key,sanitizer_version,derivative_mime,derivative_bytes,page_count)
+values ('73000000-0000-0000-0000-000000000001','62000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001','74000000-0000-0000-0000-000000000001','v1','application/pdf',1000,1);
+set local role service_role;
+select throws_ok($$select public.claim_ai_parse_submission('73000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001')$$,'P0001','AI processing is disabled','kill switch protects submission claim');
+reset role;
+update private.ai_processing_config set provider_enabled=true;
+set local role service_role;
+select is(public.claim_ai_parse_submission('73000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001'),true,'first submission claim succeeds');
+select is(public.claim_ai_parse_submission('73000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001'),false,'concurrent claim is idempotently refused');
+update private.ai_parse_jobs set submission_claimed_at=now()-interval '31 seconds' where id='73000000-0000-0000-0000-000000000001';
+select is(public.claim_ai_parse_submission('73000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001'),true,'stale submission lease can be recovered');
+reset role;
+delete from public.household_members where household_id='62000000-0000-0000-0000-000000000001' and user_id='52000000-0000-0000-0000-000000000001';
+set local role service_role;
+select throws_ok($$select public.claim_ai_parse_submission('73000000-0000-0000-0000-000000000001','52000000-0000-0000-0000-000000000001')$$,'P0001','Active household membership is required','membership is rechecked before retrying provider submission');
+reset role;
+select * from finish();
+rollback;

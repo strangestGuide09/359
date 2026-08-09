@@ -20,9 +20,10 @@ test("shared web flow has explicit safe loading and recovery states", async () =
   assert.match(app, /persistSession: true/);
   assert.match(app, /autoRefreshToken: true/);
   assert.match(app, /function renderOtpChallenge/);
-  assert.match(app, /We’ll email a 6-digit code you can enter here/);
-  assert.match(app, /Send 6-digit code/);
-  assert.match(app, /placeholder="123456"/);
+  assert.match(app, /We’ll email a verification code you can enter here/);
+  assert.match(app, /Send verification code/);
+  assert.match(app, /pattern="\[0-9\]\{6,8\}"/);
+  assert.match(app, /placeholder="12345678"/);
   assert.match(app, /supabase\.auth\.verifyOtp/);
   assert.doesNotMatch(app, /function renderEmailLinkSent/);
   assert.doesNotMatch(app, /emailRedirectTo:/);
