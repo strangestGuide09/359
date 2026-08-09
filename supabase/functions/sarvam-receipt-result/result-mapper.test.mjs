@@ -17,7 +17,9 @@ test("provider status is bound to the expected submitted job", () => {
 test("synthetic structured output maps only reviewed draft fields", async () => {
   const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
   const draft = mapProviderReceipt(fixture, "provider-1", 1);
+  const withFutureEnvelopeMetadata = mapProviderReceipt({ ...fixture, provider_trace: "ignored" }, "provider-1", 1);
   assert.deepEqual(Object.keys(draft).sort(), ["defaults","items"]);
+  assert.deepEqual(withFutureEnvelopeMetadata, draft);
   assert.deepEqual(Object.keys(draft.items[0]).sort(), ["display_order","estimated_use_by","is_personal","is_tracked_for_restock","line_total","name","quantity","unit","unit_price"]);
   assert.doesNotMatch(JSON.stringify(draft), /customer|raw_text|must not escape/);
 });
@@ -49,7 +51,7 @@ test("malformed, oversized, or unreconciled drafts fail closed", () => {
   assert.throws(() => mapProviderReceipt(wrap({ merchant_name: "Shop", purchase_date: "2026-08-07", receipt_total: 1, currency: "INR", customer_name: "forbidden", line_items: [{ name: "x", quantity: 1, line_total: 1 }] }), "p", 1), /invalid_provider_result/);
   assert.throws(() => mapProviderReceipt(wrap({ merchant_name: "Shop", purchase_date: "2026-02-30", receipt_total: 0, currency: "INR", line_items: [{ name: "x", quantity: 1, line_total: null }] }), "p", 1), /invalid_provider_result/);
   assert.throws(() => mapProviderReceipt(wrap({ merchant_name: "x".repeat(161), purchase_date: "2026-08-07", receipt_total: 1, currency: "INR", line_items: [{ name: "x", quantity: 1, line_total: 1 }] }), "p", 1), /invalid_provider_result/);
-  assert.throws(() => mapProviderReceipt({ ...wrap({ merchant_name: "Shop", purchase_date: "2026-08-07", receipt_total: 1, currency: "INR", line_items: [{ name: "x", quantity: 1, line_total: 1 }] }), raw_document: "forbidden" }, "p", 1), /invalid_provider_result/);
+  assert.throws(() => mapProviderReceipt(wrap({ merchant_name: "Shop", purchase_date: "2026-08-07", receipt_total: 1, currency: "INR", raw_document: "forbidden", line_items: [{ name: "x", quantity: 1, line_total: 1 }] }), "p", 1), /invalid_provider_result/);
 });
 
 test("provider usage cannot exceed the sanitized derivative page reservation", () => {

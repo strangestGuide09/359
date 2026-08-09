@@ -125,8 +125,9 @@ export function providerState(payload, expectedJobId, maxPages) {
 
 export function mapProviderReceipt(payload, expectedJobId, maxPages) {
   if (!payload || typeof payload !== "object" || cleanStatus(payload.job_id, 160) !== expectedJobId || payload.type !== "extract" || !["completed","partially_completed"].includes(cleanStatus(payload.status, 40).toLowerCase())) throw new Error("invalid_provider_result");
-  const allowedPayloadKeys = new Set(["job_id","type","status","usage","result","annotations","version"]);
-  if (Object.keys(payload).some(key => !allowedPayloadKeys.has(key))) throw new Error("invalid_provider_result");
+  // The provider may add envelope metadata around a completed result. It is not
+  // part of the caller's schema and is deliberately ignored rather than logged,
+  // persisted, or exposed. The schema-shaped `result` remains strict below.
   validateProviderUsage(payload, maxPages);
   const receipt = payload.result;
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("invalid_provider_result");
