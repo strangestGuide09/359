@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import https from "node:https";
 import { fixedError, hasAllowedMagic, inspectSanitizedPdf, MAX_DERIVATIVE_BYTES, validateMetadata } from "./validation.mjs";
-import { boundedProviderJson, RECEIPT_EXTRACTION_SCHEMA } from "../_shared/receipt-contract.mjs";
+import { boundedProviderJson, RECEIPT_EXTRACTION_SCHEMA, safeTransportErrorMessage } from "../_shared/receipt-contract.mjs";
 
 const response = (status: number, code: string, extra = {}, origin?: string) => new Response(status === 204 ? null : JSON.stringify({ code, ...extra }), { status, headers: {
   "content-type": "application/json", "cache-control": "no-store",
@@ -120,7 +120,7 @@ async function probeSarvamExtractEndpoint(apiKey: string) {
     const name = typeof (error as Error)?.name === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test((error as Error).name)
       ? (error as Error).name
       : "unknown";
-    console.error(JSON.stringify({ event: "sarvam_extract_probe", reachable: false, error_name: name }));
+    console.error(JSON.stringify({ event: "sarvam_extract_probe", reachable: false, error_name: name, error_message: safeTransportErrorMessage(error) }));
   }
 }
 
@@ -149,7 +149,7 @@ async function probeSarvamExtractEndpointHttp1(apiKey: string) {
     const name = typeof (error as Error)?.name === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test((error as Error).name)
       ? (error as Error).name
       : "unknown";
-    console.error(JSON.stringify({ event: "sarvam_extract_http1_probe", reachable: false, error_name: name }));
+    console.error(JSON.stringify({ event: "sarvam_extract_http1_probe", reachable: false, error_name: name, error_message: safeTransportErrorMessage(error) }));
   }
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundedProviderJson, PROVIDER_TIMEOUT_MS, providerFailureDiagnostic, RECEIPT_EXTRACTION_SCHEMA } from "./receipt-contract.mjs";
+import { boundedProviderJson, PROVIDER_TIMEOUT_MS, providerFailureDiagnostic, RECEIPT_EXTRACTION_SCHEMA, safeTransportErrorMessage } from "./receipt-contract.mjs";
 
 test("Document AI Extract schema requests only the reviewed receipt allowlist", () => {
   assert.deepEqual(Object.keys(RECEIPT_EXTRACTION_SCHEMA.properties).sort(), ["currency","line_items","merchant_name","purchase_date","receipt_total"]);
@@ -31,10 +31,11 @@ test("provider request timeouts stay distinguishable from connection failures", 
   await assert.rejects(() => boundedProviderJson("https://example.invalid", {}), /provider_timeout/);
 });
 
-test("provider diagnostics contain only fixed transport metadata", () => {
+test("provider diagnostics retain a short redacted transport message", () => {
   assert.deepEqual(providerFailureDiagnostic(Object.assign(new Error("must not log"), { status: 503, cause: Object.assign(new Error("hidden"), { code: "ETIMEDOUT" }) }), true), {
     event: "sarvam_provider_failure", timed_out: true, http_status: 503,
-    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT", transport_kind: "unknown", elapsed_ms: 0
+    error_name: "Error", cause_name: "Error", cause_code: "ETIMEDOUT", transport_kind: "unknown", error_message: "must not log | hidden", elapsed_ms: 0
   });
   assert.equal(providerFailureDiagnostic(new TypeError("error sending request: TLS certificate failure"), false, 123).transport_kind, "tls");
+  assert.equal(safeTransportErrorMessage(new Error("fetch <https://api.sarvam.ai/secret?token=abcdefghijklmnopqrstuvwxyz0123456789> authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789")), "fetch <url> <redacted-header> <redacted-token>");
 });

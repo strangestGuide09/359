@@ -86,6 +86,25 @@ export function providerFailureDiagnostic(error, timedOut, elapsedMs = 0) {
     cause_name: boundedToken(cause.name),
     cause_code: boundedToken(cause.code),
     transport_kind: transportKind,
+    error_message: safeTransportErrorMessage(error),
     elapsed_ms: Number.isInteger(elapsedMs) && elapsedMs >= 0 && elapsedMs <= 60_000 ? elapsedMs : null
   };
+}
+
+// Provider transport errors can be diagnostic, but must never become a path for
+// receipt contents, request headers, or credentials to enter persistent logs.
+// These errors are produced locally by the HTTP client; retain only a short,
+// normalized message after removing URLs and credential-shaped values.
+export function safeTransportErrorMessage(error) {
+  const message = error && typeof error === "object" && typeof error.message === "string" ? error.message : "";
+  const cause = error && typeof error === "object" && error.cause && typeof error.cause === "object" && typeof error.cause.message === "string"
+    ? error.cause.message
+    : "";
+  const normalized = [message, cause].filter(Boolean).join(" | ")
+    .replace(/<?https?:\/\/[^\s)'\">]+>?/gi, "<url>")
+    .replace(/(?:api[-_ ]?(?:subscription[-_ ]?)?key|authorization|bearer)\s*[:=]\s*[^\s,;]+/gi, "<redacted-header>")
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "<redacted-token>")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized ? normalized.slice(0, 280) : "unavailable";
 }
