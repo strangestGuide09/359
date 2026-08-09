@@ -22,12 +22,19 @@ const exactDate = value => {
 };
 
 // A rejected provider result must not make its extracted receipt content
-// observable in logs. These fixed booleans and counts are enough to identify a
-// contract mismatch while revealing neither values nor unapproved field names.
+// observable in logs. Diagnostics expose only bounded property names, never
+// provider values. That is enough to identify an envelope-contract mismatch
+// without recording receipt text or extracted values.
 const valueKind = value => value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
 const fieldPresence = (record, fields) => Object.fromEntries(fields.map(field => [field, Boolean(record && Object.hasOwn(record, field))]));
 const unknownFieldCount = (record, allowed) => record && typeof record === "object" && !Array.isArray(record)
   ? Object.keys(record).filter(field => !allowed.includes(field)).length
+  : null;
+const unknownFieldNames = (record, allowed) => record && typeof record === "object" && !Array.isArray(record)
+  ? Object.keys(record)
+    .filter(field => !allowed.includes(field))
+    .filter(field => /^[a-z][a-z0-9_]{0,63}$/.test(field))
+    .slice(0, 5)
   : null;
 const safeResultStatus = value => {
   const state = cleanStatus(value, 40).toLowerCase();
@@ -51,6 +58,7 @@ export function providerStatusShapeDiagnostic(payload, expectedJobId) {
     payload_kind: valueKind(payload),
     payload_expected_job_matches: Boolean(payload && payload.job_id === expectedJobId),
     payload_unknown_field_count: unknownFieldCount(payload, payloadFields),
+    payload_unknown_fields: unknownFieldNames(payload, payloadFields),
     pipeline_is_extract: Boolean(payload && cleanStatus(payload.pipeline, 20).toLowerCase() === "extract"),
     provider_status: safeProviderStatus(payload?.status),
     usage_kind: valueKind(usage),

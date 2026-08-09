@@ -32,10 +32,11 @@ test("rejected-result diagnostics expose shape but never extracted values", asyn
 });
 
 test("status diagnostics expose structure but never provider values", () => {
-  const diagnostic = providerStatusShapeDiagnostic({ job_id: "provider-1", status: "completed", pipeline: "extract", usage }, "provider-1");
+  const diagnostic = providerStatusShapeDiagnostic({ job_id: "provider-1", status: "completed", pipeline: "extract", usage, retry_after_seconds: 3 }, "provider-1");
   assert.equal(diagnostic.payload_expected_job_matches, true);
   assert.equal(diagnostic.pipeline_is_extract, true);
   assert.equal(diagnostic.provider_status, "completed");
+  assert.deepEqual(diagnostic.payload_unknown_fields, ["retry_after_seconds"]);
   assert.deepEqual(diagnostic.usage_fields, { pages_total: true, pages_processed: true, pages_succeeded: true, pages_failed: true });
   assert.doesNotMatch(JSON.stringify(diagnostic), /provider-1/);
 });
