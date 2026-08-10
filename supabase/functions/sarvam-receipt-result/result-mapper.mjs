@@ -70,7 +70,9 @@ const safeProviderStatus = value => {
   if (["failed", "rejected", "cancelled", "canceled"].includes(state)) return "failed";
   return "other";
 };
-const providerUsageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed","pages_discarded"];
+const requiredProviderUsageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed"];
+const optionalProviderUsageFields = ["pages_discarded"];
+const providerUsageFields = [...requiredProviderUsageFields, ...optionalProviderUsageFields];
 
 // Status responses arrive before receipt data. This stays structural so it can
 // explain an upstream contract mismatch without recording document content.
@@ -115,9 +117,10 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
   const usageHasOnlyExpectedFields = Boolean(usage && typeof usage === "object" && !Array.isArray(usage)
     && Object.keys(usage).every(field => usageFields.includes(field)));
   const usageValuesAreNonnegativeIntegers = Boolean(usage && typeof usage === "object" && !Array.isArray(usage)
-    && usageFields.every(field => Number.isInteger(usage[field]) && usage[field] >= 0));
+    && requiredProviderUsageFields.every(field => Number.isInteger(usage[field]) && usage[field] >= 0)
+    && optionalProviderUsageFields.every(field => usage[field] === undefined || (Number.isInteger(usage[field]) && usage[field] >= 0)));
   const usageValuesFitReservation = Boolean(usageValuesAreNonnegativeIntegers && Number.isInteger(maxPages) && maxPages >= 1
-    && usageFields.every(field => usage[field] <= maxPages));
+    && providerUsageFields.every(field => usage[field] === undefined || usage[field] <= maxPages));
   const usageProcessedIsNonzero = Boolean(usageValuesAreNonnegativeIntegers && usage.pages_processed >= 1);
   const usageProcessedFitsTotal = Boolean(usageValuesAreNonnegativeIntegers && usage.pages_processed <= usage.pages_total);
   const usageOutcomesFitProcessed = Boolean(usageValuesAreNonnegativeIntegers
@@ -142,6 +145,7 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
     provider_usage_is_valid: usageIsValid,
     provider_usage_kind: valueKind(usage),
     provider_usage_fields: fieldPresence(usage, usageFields),
+    provider_usage_required_fields_present: Boolean(usage && requiredProviderUsageFields.every(field => Object.prototype.hasOwnProperty.call(usage, field))),
     provider_usage_unknown_field_count: unknownFieldCount(usage, usageFields),
     provider_usage_unknown_fields: unknownFieldNames(usage, usageFields),
     provider_usage_has_only_expected_fields: usageHasOnlyExpectedFields,
@@ -166,7 +170,8 @@ export function validateProviderUsage(payload, maxPages, { allowZero = false } =
   if (!usage || typeof usage !== "object" || !Number.isInteger(maxPages) || maxPages < 1) throw new Error("invalid_provider_result");
   const fields = providerUsageFields;
   if (Object.keys(usage).some(key => !fields.includes(key))) throw new Error("invalid_provider_result");
-  if (fields.some(key => !Number.isInteger(usage[key]) || usage[key] < 0 || usage[key] > maxPages)) throw new Error("invalid_provider_result");
+  if (requiredProviderUsageFields.some(key => !Number.isInteger(usage[key]) || usage[key] < 0 || usage[key] > maxPages)) throw new Error("invalid_provider_result");
+  if (optionalProviderUsageFields.some(key => usage[key] !== undefined && (!Number.isInteger(usage[key]) || usage[key] < 0 || usage[key] > maxPages))) throw new Error("invalid_provider_result");
   if ((!allowZero && usage.pages_processed < 1) || usage.pages_processed > usage.pages_total || usage.pages_succeeded + usage.pages_failed > usage.pages_processed) throw new Error("invalid_provider_result");
   return usage;
 }

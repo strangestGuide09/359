@@ -4,10 +4,12 @@ import test from "node:test";
 import { fixedCompletionError, mapProviderReceipt, providerState, providerStatusShapeDiagnostic, resultShapeDiagnostic, validateProviderUsage } from "./result-mapper.mjs";
 
 const usage = { pages_total: 1, pages_processed: 1, pages_succeeded: 1, pages_failed: 0, pages_discarded: 0 };
+const statusUsage = { pages_total: 1, pages_processed: 1, pages_succeeded: 1, pages_failed: 0 };
 
 test("provider status is bound to the expected submitted job", () => {
   assert.equal(providerState({ job_id: "provider-1", status: "running", pipeline: "extract", usage }, "provider-1", 1), "pending");
   assert.equal(providerState({ job_id: "provider-1", run_id: "run-1", status: "pending", pipeline: "extract", usage }, "provider-1", 1), "pending");
+  assert.equal(providerState({ job_id: "provider-1", status: "pending", pipeline: "extract", usage: statusUsage }, "provider-1", 1), "pending");
   assert.equal(providerState({ job_id: "provider-1", status: "completed", pipeline: "extract", usage }, "provider-1", 1), "completed");
   assert.equal(providerState({ job_id: "provider-1", status: "pending", pipeline: "extract", usage, retryAfterSeconds: 3 }, "provider-1", 1), "pending");
   assert.throws(() => providerState({ job_id: "other", status: "completed", pipeline: "extract", usage }, "provider-1", 1), /invalid_provider_result/);
@@ -18,8 +20,10 @@ test("synthetic structured output maps only reviewed draft fields", async () => 
   const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
   const draft = mapProviderReceipt(fixture, "provider-1", 1);
   const withFutureEnvelopeMetadata = mapProviderReceipt({ ...fixture, provider_trace: "ignored" }, "provider-1", 1);
+  const withoutOptionalDiscardedPages = mapProviderReceipt({ ...fixture, usage: statusUsage }, "provider-1", 1);
   assert.deepEqual(Object.keys(draft).sort(), ["defaults","items"]);
   assert.deepEqual(withFutureEnvelopeMetadata, draft);
+  assert.deepEqual(withoutOptionalDiscardedPages, draft);
   assert.deepEqual(Object.keys(draft.items[0]).sort(), ["display_order","estimated_use_by","is_personal","is_tracked_for_restock","line_total","name","quantity","unit","unit_price"]);
   assert.doesNotMatch(JSON.stringify(draft), /customer|raw_text|must not escape/);
 });
@@ -91,8 +95,10 @@ test("malformed, oversized, or unreconciled drafts fail closed", () => {
 
 test("provider usage cannot exceed the sanitized derivative page reservation", () => {
   assert.deepEqual(validateProviderUsage({ usage }, 1), usage);
+  assert.deepEqual(validateProviderUsage({ usage: statusUsage }, 1), statusUsage);
   assert.throws(() => validateProviderUsage({ usage: { ...usage, pages_total: 2, pages_processed: 2, pages_succeeded: 2 } }, 1), /invalid_provider_result/);
   assert.throws(() => validateProviderUsage({ usage: { ...usage, pages_succeeded: 1, pages_failed: 1 } }, 1), /invalid_provider_result/);
+  assert.throws(() => validateProviderUsage({ usage: { ...statusUsage, pages_discarded: "one" } }, 1), /invalid_provider_result/);
   assert.throws(() => validateProviderUsage({ usage: { ...usage, raw_pages: 1 } }, 1), /invalid_provider_result/);
 });
 
