@@ -2,7 +2,7 @@
   "job_id": "provider-1",
   "type": "extract",
   "status": "completed",
-  "usage": { "pages_total": 1, "pages_processed": 1, "pages_succeeded": 1, "pages_failed": 0 },
+  "usage": { "pages_total": 1, "pages_processed": 1, "pages_succeeded": 1, "pages_failed": 0, "pages_discarded": 0 },
   "result": {
     "merchant_name": "Example Grocer",
     "purchase_date": "2026-08-07",

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fixedCompletionError, mapProviderReceipt, providerState, providerStatusShapeDiagnostic, resultShapeDiagnostic, validateProviderUsage } from "./result-mapper.mjs";
 
-const usage = { pages_total: 1, pages_processed: 1, pages_succeeded: 1, pages_failed: 0 };
+const usage = { pages_total: 1, pages_processed: 1, pages_succeeded: 1, pages_failed: 0, pages_discarded: 0 };
 
 test("provider status is bound to the expected submitted job", () => {
   assert.equal(providerState({ job_id: "provider-1", status: "running", pipeline: "extract", usage }, "provider-1", 1), "pending");
@@ -74,7 +74,7 @@ test("status diagnostics expose structure but never provider values", () => {
   assert.equal(diagnostic.pipeline_is_extract, true);
   assert.equal(diagnostic.provider_status, "completed");
   assert.deepEqual(diagnostic.payload_unknown_fields, ["retryAfterSeconds"]);
-  assert.deepEqual(diagnostic.usage_fields, { pages_total: true, pages_processed: true, pages_succeeded: true, pages_failed: true });
+  assert.deepEqual(diagnostic.usage_fields, { pages_total: true, pages_processed: true, pages_succeeded: true, pages_failed: true, pages_discarded: true });
   assert.doesNotMatch(JSON.stringify(diagnostic), /provider-1/);
 });
 

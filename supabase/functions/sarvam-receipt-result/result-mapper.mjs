@@ -70,12 +70,13 @@ const safeProviderStatus = value => {
   if (["failed", "rejected", "cancelled", "canceled"].includes(state)) return "failed";
   return "other";
 };
+const providerUsageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed","pages_discarded"];
 
 // Status responses arrive before receipt data. This stays structural so it can
 // explain an upstream contract mismatch without recording document content.
 export function providerStatusShapeDiagnostic(payload, expectedJobId) {
   const payloadFields = ["job_id","run_id","status","pipeline","usage","created_at","updated_at"];
-  const usageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed"];
+  const usageFields = providerUsageFields;
   const usage = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.usage : null;
   return {
     payload_kind: valueKind(payload),
@@ -94,7 +95,7 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
   const payloadFields = ["job_id","type","status","usage","result","annotations","version"];
   const receiptFields = ["merchant_name","purchase_date","receipt_total","currency","line_items"];
   const itemFields = ["name","quantity","unit","line_total"];
-  const usageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed"];
+  const usageFields = providerUsageFields;
   const receipt = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.result : null;
   const usage = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.usage : null;
   const items = receipt && typeof receipt === "object" && !Array.isArray(receipt) ? receipt.line_items : null;
@@ -163,7 +164,7 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
 export function validateProviderUsage(payload, maxPages, { allowZero = false } = {}) {
   const usage = payload?.usage;
   if (!usage || typeof usage !== "object" || !Number.isInteger(maxPages) || maxPages < 1) throw new Error("invalid_provider_result");
-  const fields = ["pages_total","pages_processed","pages_succeeded","pages_failed"];
+  const fields = providerUsageFields;
   if (Object.keys(usage).some(key => !fields.includes(key))) throw new Error("invalid_provider_result");
   if (fields.some(key => !Number.isInteger(usage[key]) || usage[key] < 0 || usage[key] > maxPages)) throw new Error("invalid_provider_result");
   if ((!allowZero && usage.pages_processed < 1) || usage.pages_processed > usage.pages_total || usage.pages_succeeded + usage.pages_failed > usage.pages_processed) throw new Error("invalid_provider_result");
