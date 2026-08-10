@@ -31,6 +31,12 @@ test("rejected-result diagnostics expose shape but never extracted values", asyn
   assert.equal(diagnostic.first_line_item_fields.name, true);
   assert.equal(diagnostic.amounts_reconcile, true);
   assert.equal(diagnostic.provider_usage_is_valid, true);
+  assert.equal(diagnostic.provider_usage_has_only_expected_fields, true);
+  assert.equal(diagnostic.provider_usage_values_are_nonnegative_integers, true);
+  assert.equal(diagnostic.provider_usage_values_fit_reservation, true);
+  assert.equal(diagnostic.provider_usage_processed_is_nonzero, true);
+  assert.equal(diagnostic.provider_usage_processed_fits_total, true);
+  assert.equal(diagnostic.provider_usage_outcomes_fit_processed, true);
   assert.equal(diagnostic.merchant_name_is_valid, true);
   assert.equal(diagnostic.purchase_date_is_valid, true);
   assert.equal(diagnostic.receipt_total_is_valid, true);
@@ -49,6 +55,17 @@ test("rejected-result diagnostics identify a rule without exposing result values
   assert.equal(diagnostic.purchase_date_is_valid, false);
   assert.equal(diagnostic.merchant_name_is_valid, true);
   assert.doesNotMatch(JSON.stringify(diagnostic), /not-a-date|Shop|Milk/);
+});
+
+test("rejected-result diagnostics isolate usage rules without exposing usage values", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  const malformed = { ...fixture, usage: { ...fixture.usage, provider_latency_ms: 42 } };
+  const diagnostic = resultShapeDiagnostic(malformed, "provider-1", 1);
+  assert.equal(diagnostic.provider_usage_is_valid, false);
+  assert.equal(diagnostic.provider_usage_has_only_expected_fields, false);
+  assert.equal(diagnostic.provider_usage_unknown_field_count, 1);
+  assert.deepEqual(diagnostic.provider_usage_unknown_fields, ["provider_latency_ms"]);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /42|Shop|Milk/);
 });
 
 test("status diagnostics expose structure but never provider values", () => {

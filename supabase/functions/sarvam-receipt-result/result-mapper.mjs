@@ -94,7 +94,9 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
   const payloadFields = ["job_id","type","status","usage","result","annotations","version"];
   const receiptFields = ["merchant_name","purchase_date","receipt_total","currency","line_items"];
   const itemFields = ["name","quantity","unit","line_total"];
+  const usageFields = ["pages_total","pages_processed","pages_succeeded","pages_failed"];
   const receipt = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.result : null;
+  const usage = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.usage : null;
   const items = receipt && typeof receipt === "object" && !Array.isArray(receipt) ? receipt.line_items : null;
   const firstItem = Array.isArray(items) ? items[0] : null;
   const numericItems = Array.isArray(items) && items.every(item => item && typeof item === "object" && typeof item.line_total === "number" && Number.isFinite(item.line_total));
@@ -109,6 +111,16 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
       return false;
     }
   })();
+  const usageHasOnlyExpectedFields = Boolean(usage && typeof usage === "object" && !Array.isArray(usage)
+    && Object.keys(usage).every(field => usageFields.includes(field)));
+  const usageValuesAreNonnegativeIntegers = Boolean(usage && typeof usage === "object" && !Array.isArray(usage)
+    && usageFields.every(field => Number.isInteger(usage[field]) && usage[field] >= 0));
+  const usageValuesFitReservation = Boolean(usageValuesAreNonnegativeIntegers && Number.isInteger(maxPages) && maxPages >= 1
+    && usageFields.every(field => usage[field] <= maxPages));
+  const usageProcessedIsNonzero = Boolean(usageValuesAreNonnegativeIntegers && usage.pages_processed >= 1);
+  const usageProcessedFitsTotal = Boolean(usageValuesAreNonnegativeIntegers && usage.pages_processed <= usage.pages_total);
+  const usageOutcomesFitProcessed = Boolean(usageValuesAreNonnegativeIntegers
+    && usage.pages_succeeded + usage.pages_failed <= usage.pages_processed);
   return {
     payload_kind: valueKind(payload),
     payload_expected_job_matches: Boolean(payload && payload.job_id === expectedJobId),
@@ -127,6 +139,16 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
     currency_is_inr: Boolean(receipt && receipt.currency === "INR"),
     amounts_reconcile: Boolean(numericItems && typeof receiptTotal === "number" && Number.isFinite(receiptTotal) && Math.abs(receiptTotal - items.reduce((sum, item) => sum + item.line_total, 0)) <= .01),
     provider_usage_is_valid: usageIsValid,
+    provider_usage_kind: valueKind(usage),
+    provider_usage_fields: fieldPresence(usage, usageFields),
+    provider_usage_unknown_field_count: unknownFieldCount(usage, usageFields),
+    provider_usage_unknown_fields: unknownFieldNames(usage, usageFields),
+    provider_usage_has_only_expected_fields: usageHasOnlyExpectedFields,
+    provider_usage_values_are_nonnegative_integers: usageValuesAreNonnegativeIntegers,
+    provider_usage_values_fit_reservation: usageValuesFitReservation,
+    provider_usage_processed_is_nonzero: usageProcessedIsNonzero,
+    provider_usage_processed_fits_total: usageProcessedFitsTotal,
+    provider_usage_outcomes_fit_processed: usageOutcomesFitProcessed,
     merchant_name_is_valid: isBoundedText(receipt?.merchant_name, 160),
     purchase_date_is_valid: isExactDate(receipt?.purchase_date),
     receipt_total_is_valid: isPositiveBoundedNumber(receiptTotal, MAX_MONEY),
