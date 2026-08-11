@@ -1,7 +1,8 @@
-const VISUAL_SANITIZER_VERSION = "visual-table-v1";
+const VISUAL_SANITIZER_VERSION = "visual-table-v3";
 const MAX_DERIVATIVE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 5;
-const RENDER_SCALE = 1.5;
+export const VISUAL_RENDER_SCALE = 2.5;
+export const VISUAL_JPEG_QUALITY = 0.94;
 
 function number(value) {
   return Number.isFinite(value) ? value : 0;
@@ -38,7 +39,8 @@ function detectTableCrop(tokens, pageSize) {
   const total = tokens.find(token => tokenMatches(token, /^total$/i) && token.y >= (description?.y || -Infinity) - height * 0.03);
   if (!description || !quantity || !total) return undefined;
 
-  const headerY = (description.y + quantity.y + total.y) / 3;
+  const headerTokens = [description, quantity, total];
+  const headerY = headerTokens.reduce((sum, token) => sum + token.y, 0) / headerTokens.length;
   const footer = nearestToken(
     tokens,
     token => tokenMatches(token, /^total$/i) && token.x < description.x,
@@ -47,10 +49,12 @@ function detectTableCrop(tokens, pageSize) {
   );
   if (!footer) return undefined;
 
-  const left = Math.max(0, description.x - width * 0.018);
+  const left = Math.max(0, description.x - width * 0.03);
   const right = Math.min(width, width - Math.max(8, width * 0.008));
-  const top = Math.min(height, headerY + height * 0.028);
-  const bottom = Math.max(0, footer.y - height * 0.022);
+  // Privacy boundary: include the header glyph boxes and footer baseline, but
+  // never add outward page margins that can expose adjacent receipt sections.
+  const top = Math.min(height, Math.max(...headerTokens.map(token => token.y + number(token.height))));
+  const bottom = Math.max(0, footer.y);
   const cropWidth = right - left;
   const cropHeight = top - bottom;
   if (cropWidth < width * 0.35 || cropHeight < height * 0.12) return undefined;
@@ -159,7 +163,7 @@ function canvasForCrop(source, title) {
 }
 
 async function canvasJpeg(canvas) {
-  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", VISUAL_JPEG_QUALITY));
   if (!blob) throw new Error("visual_derivative_failed");
   return { bytes: new Uint8Array(await blob.arrayBuffer()), width: canvas.width, height: canvas.height, previewUrl: URL.createObjectURL(blob) };
 }
@@ -174,7 +178,7 @@ export async function createFlattenedVisualDerivative(pdfjsLib, sourcePdfBytes, 
     const images = [];
     for (const [index, crop] of plan.crops.entries()) {
       const page = await pdf.getPage(index + 1);
-      const viewport = page.getViewport({ scale: RENDER_SCALE });
+      const viewport = page.getViewport({ scale: VISUAL_RENDER_SCALE });
       const fullPage = document.createElement("canvas");
       fullPage.width = Math.ceil(viewport.width);
       fullPage.height = Math.ceil(viewport.height);

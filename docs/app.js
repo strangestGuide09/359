@@ -17,22 +17,30 @@ import { settlementAmountError, settlementConfirmation, settlementState } from "
 import { createResilientAuthStorage, restoreSessionWithRetry, sessionErrorKind } from "./session-restore.js";
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
 import { AI_SANITIZER_VERSION, aiParseMessage, buildSanitizedPdf, suggestedSanitizedLines, validateSanitizedText } from "./ai-receipt-sanitizer.js";
-import { aiNetworkPollDecision, aiPollDecision, aiRetryDelayMs } from "./ai-receipt-flow.js";
+import { AI_EXPECTED_TIME_COPY, AI_MAX_RETRY_AFTER_SECONDS, AI_POLL_ATTEMPTS, aiNetworkPollDecision, aiPollDecision, aiProgressMessage, aiRetryDelayMs } from "./ai-receipt-flow.js";
 import { createFlattenedVisualDerivative, hasRememberedVisualLayout, planVisualDerivative, rememberVisualLayout, revokeVisualDerivativePreview } from "./ai-visual-derivative.js";
+import { hasUnidentifiedAiItems, reconcileAiItemNames } from "./ai-item-names.js";
+import { resolveAiReceiptTotal } from "./ai-receipt-total.js";
 
 const authStorage = createResilientAuthStorage(window.localStorage);
-const AI_IDLE_MESSAGE = "Prepare a separate redacted derivative for optional AI processing. The original PDF is never uploaded.";
-const aiProcessingStatus = document.querySelector(".ai-improve small");
-aiProcessingStatus.id = "ai-processing-status";
-aiProcessingStatus.classList.add("ai-processing-status");
-aiProcessingStatus.setAttribute("role", "status");
-aiProcessingStatus.setAttribute("aria-live", "polite");
+const AI_IDLE_MESSAGE = "AI processing is ready to begin.";
+document.querySelector("footer").textContent = "Original PDFs stay local · only an explicitly reviewed private derivative may be sent for Private AI processing · no payment method, address, card, or UPI details persist";
+document.querySelector("#pdf-items > .dialog-help").textContent = "Edit or remove anything the selected processing method got wrong. Only these reviewed fields will sync.";
+document.querySelector("#visual-ai-preview .dialog-help").textContent = "This new layout was cropped locally. Only the item-table images shown below will be rebuilt into a new PDF for Private AI processing; the original receipt remains on this device.";
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: authStorage }
 });
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.mjs";
 
 const $ = id => document.getElementById(id);
+const viewAiInputButton = document.createElement("button");
+viewAiInputButton.id = "view-ai-input";
+viewAiInputButton.type = "button";
+viewAiInputButton.className = "secondary inspect-ai-input hide";
+viewAiInputButton.textContent = "View what AI receives";
+viewAiInputButton.setAttribute("aria-describedby", "import-choice-privacy");
+document.querySelector(".processing-choices").insertAdjacentElement("afterend", viewAiInputButton);
+document.querySelector("#import-choice > form > .dialog-help").id = "import-choice-privacy";
 const today = () => new Date().toISOString().slice(0, 10);
 const money = n => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(Number(n) || 0);
 const fmt = d => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${d}T12:00:00`));
@@ -65,7 +73,10 @@ let pendingPdfImport;
 let stagedPdfImport;
 let editingPurchase;
 let reviewedItems = [];
+let expandedItemIndex = null;
 let preparedVisualDerivative;
+let stagedAiProcessed;
+let aiInputPreviewMode = "";
 let lastPdfFeedback;
 let formDirty = false;
 let explicitSignOut = false;
@@ -550,16 +561,30 @@ async function loadLedger() {
 function emptyReviewedItem(values = {}) {
   const personal = !!values.is_personal;
   const merchandise = isRestockMerchandise(values.name);
-  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "" };
+  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "", reviewed: values.reviewed ?? false };
 }
 function renderItemRows() {
-  $("item-rows").innerHTML = reviewedItems.map((item, index) => { const restockAllowed = !item.is_personal && isRestockMerchandise(item.name); return `<fieldset class="item-row" data-item="${index}"><legend>Item ${index + 1}</legend><div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label><details class="item-details"><summary>More details</summary><div><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></details></div></fieldset>`; }).join("");
+  $("item-rows").innerHTML = reviewedItems.map((item, index) => {
+    const restockAllowed = !item.is_personal && isRestockMerchandise(item.name);
+    const expanded = expandedItemIndex === index;
+    const allocation = item.is_personal ? "Personal · Restock off" : `Shared · Restock ${item.is_tracked_for_restock && restockAllowed ? "on" : "off"}`;
+    return `<article class="item-row${item.reviewed ? " reviewed" : ""}" data-item="${index}" aria-labelledby="item-name-${index}"><div class="item-checklist-row"><label class="item-reviewed"><input data-reviewed type="checkbox"${item.reviewed ? " checked" : ""}><span>Reviewed</span></label><span class="item-number" aria-hidden="true">${index + 1}</span><div class="item-compact-name"><b id="item-name-${index}">${esc(item.name) || "Unnamed item"}</b><small>${esc(allocation)}</small></div><span class="item-compact-value"><small>Qty</small><b>${esc(item.quantity ?? "—")}</b></span><span class="item-compact-value item-compact-total"><small>Total</small><b>${item.line_total == null || item.line_total === "" ? "—" : money(item.line_total)}</b></span><button type="button" class="secondary edit-item" aria-expanded="${expanded}" aria-controls="item-editor-${index}">${expanded ? "Close" : "Edit"}</button></div><div id="item-editor-${index}" class="item-editor"${expanded ? "" : " hidden"}><div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label></div><div class="item-secondary-fields"><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></div></article>`;
+  }).join("");
   bindItemRows();
   updateItemTotal();
 }
 function bindItemRows() {
   document.querySelectorAll("[data-item]").forEach(rowElement => {
     const index = Number(rowElement.dataset.item);
+    rowElement.querySelector("[data-reviewed]").onchange = event => {
+      reviewedItems[index].reviewed = event.currentTarget.checked;
+      rowElement.classList.toggle("reviewed", reviewedItems[index].reviewed);
+    };
+    rowElement.querySelector(".edit-item").onclick = () => {
+      expandedItemIndex = expandedItemIndex === index ? null : index;
+      renderItemRows();
+      if (expandedItemIndex === index) requestAnimationFrame(() => document.querySelector(`[data-item="${index}"] [data-field="name"]`)?.focus());
+    };
     rowElement.querySelectorAll("[data-field]").forEach(input => input.oninput = () => {
       const field = input.dataset.field;
       const wasMerchandise = isRestockMerchandise(reviewedItems[index].name);
@@ -570,7 +595,7 @@ function bindItemRows() {
       if (field === "name") { const restock = rowElement.querySelector('[data-field="is_tracked_for_restock"]'); restock.checked = reviewedItems[index].is_tracked_for_restock; restock.disabled = reviewedItems[index].is_personal || !isRestockMerchandise(input.value); }
       updateItemTotal();
     });
-    rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); renderItemRows(); };
+    rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); expandedItemIndex = null; renderItemRows(); };
   });
 }
 function updateItemTotal() {
@@ -604,11 +629,13 @@ function openEntry(next, defaults = {}, pdfImport) {
   mode = next;
   pendingPdfImport = pdfImport;
   reviewedItems = (pdfImport?.items || []).map(emptyReviewedItem);
+  expandedItemIndex = null;
   dialog.classList.toggle("pdf-review-dialog", !!pdfImport);
   $("dialog-title").textContent = next === "settlement" ? "Record settlement" : pdfImport ? "Review PDF import" : defaults.personal ? "Add personal expense" : "Add expense";
-  $("dialog-kicker").textContent = pdfImport ? "LOCAL PDF DRAFT" : "NEW ENTRY";
+  $("dialog-kicker").textContent = pdfImport?.processedBy === "ai" ? "PRIVATE AI DRAFT" : pdfImport ? "LOCAL PDF DRAFT" : "NEW ENTRY";
   const parserMessage = pdfImport?.parserWarning || pdfImport?.parserNotice || "";
-  $("dialog-help").textContent = pdfImport ? `The PDF and extracted text remain local and are discarded when this draft closes. Non-personal items are tracked for restock by default; uncheck any you do not want suggested. Review every field before saving.${parserMessage ? ` ${parserMessage}` : ""}` : "";
+  const privacyMessage = pdfImport?.processedBy === "ai" ? "The original PDF and extracted text stayed local; only the approved private derivative was processed by AI." : "The PDF and extracted text remain local and are discarded when this draft closes.";
+  $("dialog-help").textContent = pdfImport ? `${privacyMessage} Non-personal items are tracked for restock by default; uncheck any you do not want suggested. Review every field before saving.${parserMessage ? ` ${parserMessage}` : ""}` : "";
   $("dialog-help").classList.toggle("parser-warning", !!pdfImport?.parserWarning);
   $("expense-fields").classList.toggle("hide", next === "settlement");
   $("pdf-items").classList.toggle("hide", !pdfImport);
@@ -628,7 +655,6 @@ function openEntry(next, defaults = {}, pdfImport) {
   restoreDuplicate.classList.add("hide");
   restoreDuplicate.disabled = false;
   restoreDuplicate.onclick = null;
-  setAiProcessing(AI_IDLE_MESSAGE);
   $("save").disabled = false;
   $("save").textContent = "Save";
   if (pdfImport) renderItemRows();
@@ -659,13 +685,20 @@ function processedPdfImport(imported) {
 function setImportChoiceMethod(method) {
   const ai = method === "ai";
   $("process-invoice").textContent = ai ? "Process with AI" : "Process locally";
+  $("view-ai-input").classList.toggle("hide", !ai);
 }
 function closeImportChoice({ discard = true } = {}) {
   importChoiceDialog.close();
   $("import-choice-error").textContent = "";
-  if (discard) stagedPdfImport = undefined;
+  if (discard) {
+    stagedPdfImport = undefined;
+    stagedAiProcessed = undefined;
+    discardPreparedVisualDerivative();
+  }
 }
 function openImportChoice(imported) {
+  discardPreparedVisualDerivative();
+  stagedAiProcessed = undefined;
   stagedPdfImport = imported;
   $("import-choice-form").reset();
   $("import-choice-error").textContent = "";
@@ -675,7 +708,7 @@ function openImportChoice(imported) {
 }
 function showImportProcessing(method) {
   $("import-processing-title").textContent = method === "ai" ? "AI is processing the private item table" : "Processing invoice on this device";
-  $("import-processing-copy").innerHTML = `${'<span class="spinner" aria-hidden="true"></span>'}${method === "ai" ? "The original PDF remains local. The AI result will be ready for your review." : "Creating an editable local result…"}`;
+  $("import-processing-copy").innerHTML = `${'<span class="spinner" aria-hidden="true"></span>'}${method === "ai" ? `The original PDF remains local. ${AI_EXPECTED_TIME_COPY}` : "Creating an editable local result…"}`;
   if (!importProcessingDialog.open) importProcessingDialog.showModal();
 }
 function closeImportProcessing() { importProcessingDialog.close(); }
@@ -702,6 +735,7 @@ function startLocalPdfImport() {
   showImportProcessing("local");
   try {
     const processed = processedPdfImport(imported);
+    processed.processedBy = "local";
     pendingPdfImport = processed;
     closeImportProcessing();
     openEntry("expense", processed.defaults, processed);
@@ -718,8 +752,10 @@ function startAiPdfImport() {
   stagedPdfImport = undefined;
   closeImportChoice({ discard: false });
   try {
-    const processed = processedPdfImport(imported);
+    const processed = stagedAiProcessed || processedPdfImport(imported);
+    stagedAiProcessed = undefined;
     processed.importProcessingMethod = "ai";
+    processed.aiStartedAt = Date.now();
     pendingPdfImport = processed;
     void prepareAi();
   } catch (error) {
@@ -727,15 +763,51 @@ function startAiPdfImport() {
     showImportFeedback(`Could not prepare this PDF for AI processing locally: ${error.message}. Nothing was uploaded.`, "error");
   }
 }
+async function viewAiInput() {
+  const imported = stagedPdfImport;
+  if (!imported) return;
+  const button = $("view-ai-input");
+  const errorBox = $("import-choice-error");
+  button.disabled = true;
+  button.textContent = "Preparing local preview…";
+  errorBox.textContent = "";
+  try {
+    const processed = stagedAiProcessed || processedPdfImport(imported);
+    stagedAiProcessed = processed;
+    if (processed.visualPlan && processed.sourcePdfBytes) {
+      const prepared = preparedVisualDerivative?.layoutKey === processed.visualPlan.layoutKey
+        ? preparedVisualDerivative
+        : await createFlattenedVisualDerivative(pdfjsLib, processed.sourcePdfBytes, processed.visualPlan);
+      preparedVisualDerivative = prepared;
+      aiInputPreviewMode = "visual";
+      closeImportChoice({ discard: false });
+      openVisualAiPreview(prepared);
+    } else {
+      aiInputPreviewMode = "text";
+      closeImportChoice({ discard: false });
+      openTextAiPreview(processed);
+    }
+  } catch (error) {
+    errorBox.textContent = `Could not prepare a safe AI-input preview: ${error.message}. Nothing was sent or stored.`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "View what AI receives";
+  }
+}
+viewAiInputButton.onclick = () => { void viewAiInput(); };
 function discardPreparedVisualDerivative() {
   if (!preparedVisualDerivative) return;
   revokeVisualDerivativePreview(preparedVisualDerivative);
   preparedVisualDerivative = undefined;
 }
-function openTextAiPreview() {
-  if (!pendingPdfImport) return;
-  $("sanitized-lines").value = (pendingPdfImport.sanitizationLines || []).join("\n");
-  $("local-extracted-reference").value = pendingPdfImport.localExtractedText || "";
+function openTextAiPreview(draft = pendingPdfImport) {
+  if (!draft) return;
+  $("sanitized-lines").value = (draft.sanitizationLines || []).join("\n");
+  $("local-extracted-reference").value = draft.localExtractedText || "";
+  $("sanitized-lines").readOnly = aiInputPreviewMode === "text";
+  $("confirm-sanitized").closest("label").classList.toggle("hide", aiInputPreviewMode === "text");
+  $("local-extracted-reference").closest("details").classList.toggle("hide", aiInputPreviewMode === "text");
+  $("submit-ai").textContent = aiInputPreviewMode === "text" ? "Back to processing choices" : "Send redacted derivative";
   $("confirm-sanitized").checked = false;
   $("ai-preview-error").textContent = "";
   aiPreviewDialog.showModal();
@@ -754,6 +826,8 @@ function openVisualAiPreview(prepared) {
   $("confirm-visual-derivative").checked = false;
   $("visual-ai-preview-error").textContent = "";
   renderVisualDerivativePreview(prepared);
+  $("confirm-visual-derivative").closest("label").classList.toggle("hide", aiInputPreviewMode === "visual");
+  $("submit-visual-ai").textContent = aiInputPreviewMode === "visual" ? "Back to processing choices" : "Approve and send";
   visualAiPreviewDialog.showModal();
   requestAnimationFrame(() => $("confirm-visual-derivative").focus());
 }
@@ -786,7 +860,6 @@ async function submitAiDerivative({ derivative, sanitizerVersion, pageCount, fil
 async function prepareAi() {
   const draftReference = pendingPdfImport;
   if (!draftReference) return;
-  discardPreparedVisualDerivative();
   const visualPlan = draftReference.visualPlan;
   if (!visualPlan || !draftReference.sourcePdfBytes) {
     openTextAiPreview();
@@ -794,7 +867,9 @@ async function prepareAi() {
   }
   setAiProcessing("Preparing a local visual receipt-table derivative…", true);
   try {
-    const prepared = await createFlattenedVisualDerivative(pdfjsLib, draftReference.sourcePdfBytes, visualPlan);
+    const prepared = preparedVisualDerivative?.layoutKey === visualPlan.layoutKey
+      ? preparedVisualDerivative
+      : await createFlattenedVisualDerivative(pdfjsLib, draftReference.sourcePdfBytes, visualPlan);
     if (pendingPdfImport !== draftReference) {
       revokeVisualDerivativePreview(prepared);
       return;
@@ -815,13 +890,32 @@ async function prepareAi() {
     }
   }
 }
-$("prepare-ai").onclick = () => { void prepareAi(); };
 function closeAiPreview() { aiPreviewDialog.close(); }
-$("close-ai-preview").onclick = closeAiPreview;
-$("cancel-ai-preview").onclick = closeAiPreview;
-aiPreviewDialog.addEventListener("cancel", event => { event.preventDefault(); closeAiPreview(); });
+function cancelAiImport() {
+  if (aiInputPreviewMode) returnToImportChoice();
+  else {
+  aiPreviewDialog.close();
+  visualAiPreviewDialog.close();
+  discardPreparedVisualDerivative();
+  pendingPdfImport = undefined;
+  note("Private AI processing cancelled. Nothing was saved; import the invoice again when you are ready.");
+  }
+}
+
+function returnToImportChoice() {
+  aiPreviewDialog.close();
+  visualAiPreviewDialog.close();
+  $("visual-derivative-pages").replaceChildren();
+  aiInputPreviewMode = "";
+  importChoiceDialog.showModal();
+  requestAnimationFrame(() => $("view-ai-input").focus());
+}
+$("close-ai-preview").onclick = cancelAiImport;
+$("cancel-ai-preview").onclick = cancelAiImport;
+aiPreviewDialog.addEventListener("cancel", event => { event.preventDefault(); cancelAiImport(); });
 $("ai-preview-form").onsubmit = async event => {
   event.preventDefault();
+  if (aiInputPreviewMode === "text") return returnToImportChoice();
   const errorBox = $("ai-preview-error");
   const button = $("submit-ai");
   if (!pendingPdfImport || !session?.access_token || !current?.id) return;
@@ -840,11 +934,12 @@ $("ai-preview-form").onsubmit = async event => {
     button.textContent = "Send redacted derivative";
   }
 };
-$("close-visual-ai-preview").onclick = () => closeVisualAiPreview();
-$("cancel-visual-ai-preview").onclick = () => closeVisualAiPreview();
-visualAiPreviewDialog.addEventListener("cancel", event => { event.preventDefault(); closeVisualAiPreview(); });
+$("close-visual-ai-preview").onclick = cancelAiImport;
+$("cancel-visual-ai-preview").onclick = cancelAiImport;
+visualAiPreviewDialog.addEventListener("cancel", event => { event.preventDefault(); cancelAiImport(); });
 $("visual-ai-preview-form").onsubmit = async event => {
   event.preventDefault();
+  if (aiInputPreviewMode === "visual") return returnToImportChoice();
   const errorBox = $("visual-ai-preview-error");
   const button = $("submit-visual-ai");
   const prepared = preparedVisualDerivative;
@@ -877,14 +972,12 @@ $("import-choice-form").onsubmit = event => {
 $("stop-import-processing").onclick = stopImportProcessing;
 importProcessingDialog.addEventListener("cancel", event => { event.preventDefault(); stopImportProcessing(); });
 function setAiProcessing(message, busy = false) {
-  aiProcessingStatus.textContent = message;
-  aiProcessingStatus.classList.toggle("active", message !== AI_IDLE_MESSAGE);
-  $("prepare-ai").disabled = busy;
-  $("prepare-ai").textContent = busy ? "AI processing…" : "Prepare private AI preview";
+  if (!importProcessingDialog.open && busy) showImportProcessing("ai");
+  $("import-processing-copy").textContent = message;
 }
 async function pollAiReceiptResult(jobId, draftReference) {
   let transientFailures = 0;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < AI_POLL_ATTEMPTS; attempt += 1) {
     if (pendingPdfImport !== draftReference || draftReference.aiJobId !== jobId) return;
     try {
       const response = await fetch(`${SUPABASE_URL}/functions/v1/sarvam-receipt-result`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_PUBLISHABLE_KEY, "content-type": "application/json" }, body: JSON.stringify({ job_id: jobId, household_id: current.id }) });
@@ -892,14 +985,14 @@ async function pollAiReceiptResult(jobId, draftReference) {
       const decision = aiPollDecision(response.status, result.code, transientFailures);
       if (decision.kind === "wait") {
         transientFailures = 0;
-        setAiProcessing("Sarvam is reading the redacted receipt. Your local draft remains available…", true);
-        const seconds = Math.min(10, Math.max(2, Number(response.headers.get("retry-after")) || 3));
+        setAiProcessing(aiProgressMessage("Private AI is reading the approved derivative.", draftReference.aiStartedAt), true);
+        const seconds = Math.min(AI_MAX_RETRY_AFTER_SECONDS, Math.max(2, Number(response.headers.get("retry-after")) || 3));
         await new Promise(resolve => setTimeout(resolve, seconds * 1000));
         continue;
       }
       if (decision.kind === "retry") {
         transientFailures = decision.nextFailures;
-        setAiProcessing(`Connection interrupted. Retrying AI result ${transientFailures} of 3; your local draft is safe…`, true);
+        setAiProcessing(aiProgressMessage(`Connection interrupted; retrying ${transientFailures} of 3.`, draftReference.aiStartedAt), true);
         await new Promise(resolve => setTimeout(resolve, aiRetryDelayMs(transientFailures)));
         continue;
       }
@@ -909,39 +1002,31 @@ async function pollAiReceiptResult(jobId, draftReference) {
         throw new Error(message);
       }
       const aiDraft = validateAiDraft(result.draft);
+      aiDraft.items = reconcileAiItemNames(aiDraft.items, draftReference.items);
       if (pendingPdfImport !== draftReference) return;
-      if (draftReference.importProcessingMethod === "ai") {
-        draftReference.defaults = {
-          ...draftReference.defaults,
-          label: aiDraft.defaults.label || draftReference.defaults.label,
-          amount: aiDraft.defaults.amount,
-          date: aiDraft.defaults.date || draftReference.defaults.date
-        };
-        draftReference.items = aiDraft.items;
-        draftReference.parserWarning = "";
-        draftReference.parserNotice = "AI processed a private receipt-table derivative. Merchant and purchase date stayed local; review every resulting item before saving.";
-        draftReference.importProcessingMethod = "";
-        closeImportProcessing();
-        openEntry("expense", draftReference.defaults, draftReference);
-        note("AI invoice processing is ready for review. Nothing was saved.");
-        return;
-      }
-      setAiProcessing("AI suggestions are ready. Choose whether to apply them to this local draft.");
-      if (confirm("The private AI draft is ready. Replace the current local item suggestions with it? You must still review every field before saving.")) {
-        if (aiDraft.defaults.label) $("label").value = aiDraft.defaults.label;
-        if (aiDraft.defaults.amount) $("amount").value = aiDraft.defaults.amount;
-        if (aiDraft.defaults.date) $("date").value = aiDraft.defaults.date;
-        reviewedItems = aiDraft.items.map(emptyReviewedItem);
-        renderItemRows();
-        formDirty = true;
-        setAiProcessing("AI suggestions applied locally. Review every field before saving; nothing was saved automatically.");
-      } else setAiProcessing("AI suggestions were not applied. Your existing local draft is unchanged.");
+      const resolvedTotal = resolveAiReceiptTotal(draftReference.defaults.amount, aiDraft.defaults.amount, aiDraft.items);
+      draftReference.defaults = {
+        ...draftReference.defaults,
+        label: aiDraft.defaults.label || draftReference.defaults.label,
+        amount: resolvedTotal.amount,
+        date: aiDraft.defaults.date || draftReference.defaults.date
+      };
+      draftReference.items = aiDraft.items;
+      draftReference.processedBy = "ai";
+      const unidentifiedItems = hasUnidentifiedAiItems(aiDraft.items);
+      const aiNameWarning = unidentifiedItems ? "AI could not read every item name. Replace each ‘Unidentified receipt line’ before saving." : "";
+      draftReference.parserWarning = [resolvedTotal.warning, aiNameWarning].filter(Boolean).join(" ");
+      draftReference.parserNotice = draftReference.parserWarning ? "" : "AI processed a private receipt-table derivative. Merchant and purchase date stayed local; review every resulting item before saving.";
+      draftReference.importProcessingMethod = "";
+      closeImportProcessing();
+      openEntry("expense", draftReference.defaults, draftReference);
+      note("AI invoice processing is ready for review. Nothing was saved.");
       return;
     } catch (error) {
       const retry = aiNetworkPollDecision(transientFailures);
       if (error instanceof TypeError && retry.kind === "retry") {
         transientFailures = retry.nextFailures;
-        setAiProcessing(`Connection interrupted. Retrying AI result ${transientFailures} of 3; your local draft is safe…`, true);
+        setAiProcessing(aiProgressMessage(`Connection interrupted; retrying ${transientFailures} of 3.`, draftReference.aiStartedAt), true);
         await new Promise(resolve => setTimeout(resolve, aiRetryDelayMs(transientFailures)));
         continue;
       }
@@ -1008,8 +1093,10 @@ $("entry-form").onsubmit = async event => {
       const result = await request.select("id").maybeSingle();
       error = result.error || (!result.data ? { message: "This receipt can only be edited by its payer or the household owner." } : undefined);
     } else if (pendingPdfImport) {
+      if (reviewedItems.some(item => !item.reviewed)) { errorBox.textContent = "Mark every item as reviewed before saving this receipt."; button.disabled = false; button.textContent = "Save"; return; }
       const items = reviewedItems.map((item, display_order) => ({ name: item.name.trim(), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: !item.is_personal && isRestockMerchandise(item.name) && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
       if (!items.length || items.some(item => !item.name)) { errorBox.textContent = "Every reviewed item needs a name."; button.disabled = false; button.textContent = "Save"; return; }
+      if (hasUnidentifiedAiItems(items)) { errorBox.textContent = "Replace every ‘Unidentified receipt line’ with the item name before saving."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.line_total == null)) { errorBox.textContent = "Every reviewed item needs a line total."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.quantity != null && (!Number.isFinite(item.quantity) || item.quantity <= 0))) { errorBox.textContent = "Item quantities must be above zero."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => [item.unit_price, item.line_total].some(value => value != null && (!Number.isFinite(value) || value < 0)))) { errorBox.textContent = "Item prices and line totals cannot be negative."; button.disabled = false; button.textContent = "Save"; return; }

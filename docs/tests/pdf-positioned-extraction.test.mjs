@@ -35,8 +35,32 @@ test("invoice processing is chosen before an editable review opens", async () =>
   assert.match(app, /openImportChoice\(imported\)/);
   assert.match(app, /function startLocalPdfImport\(\)/);
   assert.match(app, /function startAiPdfImport\(\)/);
+  assert.doesNotMatch(page, /Need help with a difficult receipt|class="ai-improve"|id="prepare-ai"/);
+  assert.match(app, /selected processing method got wrong/);
+  assert.match(app, /Private AI processing; the original receipt remains on this device/);
+  assert.doesNotMatch(app, /Need help with a difficult receipt|Prepare private AI preview|local parser got wrong/);
   assert.match(app, /showImportProcessing\("ai"\)/);
   assert.match(app, /openEntry\("expense", draftReference\.defaults, draftReference\)/);
+  assert.match(app, /pdfImport\?\.processedBy === "ai" \? "PRIVATE AI DRAFT"/);
+  assert.match(app, /only the approved private derivative was processed by AI/);
+  assert.ok(app.indexOf("openImportChoice(imported)") < app.lastIndexOf('openEntry("expense", draftReference.defaults, draftReference)'), "processing choice precedes AI review");
+  assert.ok(app.indexOf("openImportChoice(imported)") < app.lastIndexOf('openEntry("expense", processed.defaults, processed)'), "processing choice precedes local review");
+});
+
+test("AI input inspection is local-only and reuses the exact prepared derivative", async () => {
+  const app = await read("docs/app.js");
+  assert.match(app, /viewAiInputButton\.textContent = "View what AI receives"/);
+  assert.match(app, /viewAiInputButton\.type = "button"/);
+  assert.match(app, /function viewAiInput\(\)/);
+  const inspection = app.slice(app.indexOf("async function viewAiInput()"), app.indexOf("viewAiInputButton.onclick"));
+  assert.match(inspection, /createFlattenedVisualDerivative/);
+  assert.match(inspection, /openVisualAiPreview\(prepared\)/);
+  assert.match(inspection, /openTextAiPreview\(processed\)/);
+  assert.match(inspection, /Nothing was sent or stored/);
+  assert.doesNotMatch(inspection, /submitAiDerivative|fetch\(/);
+  assert.match(app, /preparedVisualDerivative\?\.layoutKey === visualPlan\.layoutKey[\s\S]*preparedVisualDerivative[\s\S]*submitAiDerivative/);
+  assert.match(inspection, /createFlattenedVisualDerivative\(pdfjsLib, processed\.sourcePdfBytes, processed\.visualPlan\)/);
+  assert.match(app, /function returnToImportChoice\(\)[\s\S]*importChoiceDialog\.showModal\(\)/);
 });
 
 test("an unknown receipt total is not rendered as zero or a negative difference", async () => {

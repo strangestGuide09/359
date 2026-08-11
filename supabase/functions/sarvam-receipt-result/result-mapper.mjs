@@ -52,9 +52,14 @@ const isPositiveBoundedNumber = (value, max) => {
   const number = boundedNumber(value, max);
   return number != null && number > 0;
 };
-const reviewedItemName = (value, displayOrder) => isBoundedText(value, 160)
-  ? boundedText(value, 160)
-  : `Unidentified receipt line ${displayOrder + 1}`;
+const reviewedItemName = (value, displayOrder) => {
+  // The extraction schema explicitly permits an empty name when the visible
+  // row cannot be read. Preserve that row for manual review, but do not let a
+  // malformed provider type, control character, or oversized value bypass the
+  // strict result contract by turning it into the same placeholder.
+  if (value == null || (typeof value === "string" && !value.trim())) return `Unidentified receipt line ${displayOrder + 1}`;
+  return boundedText(value, 160);
+};
 
 // A rejected provider result must not make its extracted receipt content
 // observable in logs. Diagnostics expose only bounded property names, never
@@ -119,6 +124,8 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
   const firstItem = Array.isArray(items) ? items[0] : null;
   const numericItems = Array.isArray(items) && items.every(item => item && typeof item === "object" && typeof item.line_total === "number" && Number.isFinite(item.line_total));
   const receiptTotal = receipt && typeof receipt === "object" ? receipt.receipt_total : null;
+  const receiptTotalMissing = receiptTotal == null || receiptTotal === "";
+  const positiveItemTotals = numericItems && items.every(item => item.line_total > 0 && item.line_total <= MAX_MONEY);
   const itemRecords = Array.isArray(items) ? items : [];
   const itemsAreRecords = Array.isArray(items) && itemRecords.every(item => item && typeof item === "object" && !Array.isArray(item));
   const usageIsValid = (() => {
@@ -156,7 +163,8 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
     first_line_item_unknown_field_count: unknownFieldCount(firstItem, itemFields),
     receipt_total_kind: valueKind(receiptTotal),
     currency_is_inr: Boolean(receipt && receipt.currency === "INR"),
-    amounts_reconcile: Boolean(numericItems && typeof receiptTotal === "number" && Number.isFinite(receiptTotal) && Math.abs(receiptTotal - items.reduce((sum, item) => sum + item.line_total, 0)) <= .01),
+    amounts_reconcile: Boolean(positiveItemTotals && (receiptTotalMissing
+      || (typeof receiptTotal === "number" && Number.isFinite(receiptTotal) && Math.abs(receiptTotal - items.reduce((sum, item) => sum + item.line_total, 0)) <= .01))),
     provider_usage_is_valid: usageIsValid,
     provider_usage_kind: valueKind(usage),
     provider_usage_fields: fieldPresence(usage, usageFields),
@@ -171,7 +179,7 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
     provider_usage_outcomes_fit_processed: usageOutcomesFitProcessed,
     merchant_name_is_valid: isBoundedText(receipt?.merchant_name, 160, { optional: true }),
     purchase_date_is_valid: isOptionalExactDate(receipt?.purchase_date),
-    receipt_total_is_valid: isPositiveBoundedNumber(receiptTotal, MAX_MONEY),
+    receipt_total_is_valid: receiptTotalMissing || isPositiveBoundedNumber(receiptTotal, MAX_MONEY),
     line_items_are_valid_records: itemsAreRecords,
     line_item_names_are_valid: itemsAreRecords && itemRecords.every(item => isBoundedText(item.name, 160)),
     line_item_quantities_are_valid: itemsAreRecords && itemRecords.every(item => isPositiveBoundedNumber(item.quantity, MAX_QUANTITY)),
@@ -227,9 +235,15 @@ export function mapProviderReceipt(payload, expectedJobId, maxPages) {
     if (line_total == null || quantity == null || quantity <= 0) throw new Error("invalid_provider_result");
     return { name, quantity, unit, unit_price: null, line_total, is_personal: false, is_tracked_for_restock: true, estimated_use_by: null, display_order };
   });
-  const amount = boundedNumber(receipt.receipt_total, MAX_MONEY);
   const itemTotal = items.reduce((sum, item) => sum + item.line_total, 0);
-  if (amount == null || amount <= 0 || Math.abs(amount - itemTotal) > .01) throw new Error("invalid_provider_result");
+  const receiptTotalMissing = receipt.receipt_total == null || receipt.receipt_total === "";
+  // A table-only privacy derivative intentionally excludes the final receipt
+  // total. In that one case the validated positive line totals are the only
+  // amount returned to the local review draft. A supplied provider total is
+  // never replaced or masked: it must be bounded, positive and reconcile.
+  if (receiptTotalMissing && items.some(item => item.line_total <= 0)) throw new Error("invalid_provider_result");
+  const amount = receiptTotalMissing ? itemTotal : boundedNumber(receipt.receipt_total, MAX_MONEY);
+  if (amount == null || amount <= 0 || amount > MAX_MONEY || (!receiptTotalMissing && Math.abs(amount - itemTotal) > .01)) throw new Error("invalid_provider_result");
   const label = boundedText(receipt.merchant_name, 160, { optional: true });
   return { defaults: { label, category: "Groceries", amount: amount.toFixed(2), date: optionalExactDate(receipt.purchase_date) }, items };
 }

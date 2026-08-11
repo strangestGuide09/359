@@ -2,12 +2,75 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
+enum InvoiceProcessingMethod: String, CaseIterable, Identifiable, Sendable {
+    case local = "Local"
+    case privateAI = "Private AI"
+
+    var id: String { rawValue }
+    var isAvailable: Bool { self == .local }
+}
+
+enum InvoiceImportPhase: Equatable, Sendable {
+    case choosingMethod
+    case selectingFile(InvoiceProcessingMethod)
+    case processing(InvoiceProcessingMethod)
+    case reviewing(InvoiceProcessingMethod)
+}
+
+struct InvoiceImportFlow: Equatable, Sendable {
+    var selectedMethod: InvoiceProcessingMethod = .local
+    private(set) var phase: InvoiceImportPhase = .choosingMethod
+
+    var isReviewing: Bool {
+        if case .reviewing = phase { return true }
+        return false
+    }
+
+    var isProcessing: Bool {
+        if case .processing = phase { return true }
+        return false
+    }
+
+    mutating func beginFileSelection() -> Bool {
+        guard phase == .choosingMethod, selectedMethod.isAvailable else { return false }
+        phase = .selectingFile(selectedMethod)
+        return true
+    }
+
+    mutating func cancelFileSelection() {
+        guard case .selectingFile = phase else { return }
+        phase = .choosingMethod
+    }
+
+    mutating func beginProcessing() -> Bool {
+        guard case .selectingFile(let method) = phase, method.isAvailable else { return false }
+        phase = .processing(method)
+        return true
+    }
+
+    mutating func completeProcessing() {
+        guard case .processing(let method) = phase else { return }
+        phase = .reviewing(method)
+    }
+
+    mutating func failProcessing() {
+        phase = .choosingMethod
+    }
+
+    mutating func reset() {
+        selectedMethod = .local
+        phase = .choosingMethod
+    }
+}
+
 struct ImportInvoiceView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query private var purchases: [Purchase]
 
     @State private var showingFilePicker = false
+    @State private var flow = InvoiceImportFlow()
+    @State private var confirmingStartOver = false
     @State private var errorMessage: String?
     @State private var merchant = ""
     @State private var category: ExpenseCategory = .groceries
@@ -46,17 +109,20 @@ struct ImportInvoiceView: View {
     var body: some View {
         NavigationStack {
             Form {
-                pdfSection
-                if hasImportedPDF {
+                if flow.isReviewing {
+                    pdfSection
                     metadataSection
                     itemsSection
                     reconciliationSection
                     privacySection
+                } else {
+                    processingChoiceSection
+                    if case .processing = flow.phase { processingSection }
                 }
             }
             .brandScreen()
             .listSectionSpacing(14)
-            .navigationTitle("Review PDF import")
+            .navigationTitle(flow.isReviewing ? "Review PDF import" : "Import invoice")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -68,9 +134,26 @@ struct ImportInvoiceView: View {
             }
             .fileImporter(isPresented: $showingFilePicker, allowedContentTypes: [.pdf]) { result in
                 switch result {
-                case .success(let url): readPDF(url)
-                case .failure(let error): errorMessage = error.localizedDescription
+                case .success(let url):
+                    guard flow.beginProcessing() else { return }
+                    clearDraft()
+                    Task { @MainActor in
+                        await Task.yield()
+                        readPDF(url)
+                    }
+                case .failure(let error):
+                    flow.cancelFileSelection()
+                    errorMessage = error.localizedDescription
                 }
+            }
+            .confirmationDialog("Discard this unsaved draft?", isPresented: $confirmingStartOver, titleVisibility: .visible) {
+                Button("Start another import", role: .destructive) {
+                    clearDraft()
+                    flow.reset()
+                }
+                Button("Keep reviewing", role: .cancel) {}
+            } message: {
+                Text("Nothing from this draft has been saved.")
             }
             .alert("Could not import PDF", isPresented: Binding(
                 get: { errorMessage != nil },
@@ -85,14 +168,56 @@ struct ImportInvoiceView: View {
         }
     }
 
-    private var pdfSection: some View {
-        Section("Invoice PDF") {
-            Button(hasImportedPDF ? "Choose a different PDF" : "Choose PDF", systemImage: "doc.badge.plus") {
+    private var processingChoiceSection: some View {
+        Section("Choose processing") {
+            Picker("Processing method", selection: $flow.selectedMethod) {
+                ForEach(InvoiceProcessingMethod.allCases) { method in
+                    Text(method.rawValue).tag(method)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(flow.isProcessing)
+
+            if flow.selectedMethod == .local {
+                Label("Processed entirely on this iPhone", systemImage: "iphone")
+                    .foregroundStyle(GroceryBrand.pine)
+                Text("Choose a selectable-text invoice. The original PDF and extracted text remain local, and nothing is saved until you review and tap Save.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("Private AI is coming soon", systemImage: "sparkles")
+                    .foregroundStyle(GroceryBrand.orange)
+                Text("Private AI is not connected in this build, so no document or derivative will be sent. Choose Local to continue.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button(flow.selectedMethod == .local ? "Choose PDF and process locally" : "Private AI unavailable", systemImage: "doc.badge.plus") {
+                guard flow.beginFileSelection() else { return }
                 showingFilePicker = true
             }
-            Text(hasImportedPDF
-                 ? "The PDF has been read locally. Review every field below before saving."
-                 : "Choose a selectable-text Instamart, Blinkit, Hyperpure, or Zomato PDF.")
+            .disabled(flow.isProcessing || !flow.selectedMethod.isAvailable)
+        }
+    }
+
+    private var processingSection: some View {
+        Section("Processing") {
+            HStack(spacing: 12) {
+                ProgressView()
+                Text("Creating an editable local result…")
+            }
+            Text("The PDF remains local. Nothing is being saved.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var pdfSection: some View {
+        Section("Invoice PDF") {
+            Button("Start over with another PDF", systemImage: "arrow.counterclockwise") {
+                confirmingStartOver = true
+            }
+            Text("Processed locally. Review only the result below; the original PDF and extracted text remain transient on this iPhone.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             if let parsingNote {
@@ -244,9 +369,25 @@ struct ImportInvoiceView: View {
                 )]
             }
             hasImportedPDF = true
+            flow.completeProcessing()
         } catch {
+            clearDraft()
+            flow.failProcessing()
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func clearDraft() {
+        merchant = ""
+        category = .groceries
+        invoiceNumber = ""
+        purchaseDate = .now
+        paidBy = .ekta
+        parsedItems = []
+        suggestedTotal = nil
+        parsingNote = nil
+        hasImportedPDF = false
+        isSaving = false
     }
 
     private func save() {

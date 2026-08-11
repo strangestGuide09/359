@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { aiNetworkPollDecision, aiPollDecision, aiRetryDelayMs, MAX_TRANSIENT_POLL_FAILURES } from "../ai-receipt-flow.js";
+import { AI_EXPECTED_TIME_COPY, AI_MAX_RETRY_AFTER_SECONDS, AI_POLL_ATTEMPTS, aiNetworkPollDecision, aiPollDecision, aiProgressMessage, aiRetryDelayMs, formatAiElapsed, MAX_TRANSIENT_POLL_FAILURES } from "../ai-receipt-flow.js";
 
 test("pending and completed Sarvam results have explicit poll outcomes", () => {
   assert.deepEqual(aiPollDecision(202, "pending", 2), { kind: "wait", nextFailures: 0 });
@@ -24,12 +24,25 @@ test("authentication, invalid result, and provider failure remain final", () => 
   assert.equal(aiPollDecision(422, "provider_failed").kind, "fail");
 });
 
+test("Private AI progress reports measured elapsed time and the bounded polling window", () => {
+  assert.equal(formatAiElapsed(1_000, 46_000), "45s elapsed");
+  assert.equal(formatAiElapsed(1_000, 126_000), "2m 05s elapsed");
+  assert.match(aiProgressMessage("Private AI is reading.", 1_000, 46_000), /45s elapsed.*checks run every 2–10 seconds/);
+  assert.equal(AI_POLL_ATTEMPTS * AI_MAX_RETRY_AFTER_SECONDS, 400);
+  assert.match(AI_EXPECTED_TIME_COPY, /up to about 7 minutes/);
+});
+
 test("website integration keeps a persistent accessible state and preserves the local draft on fallback", async () => {
   const app = await readFile(new URL("../app.js", import.meta.url), "utf8");
-  assert.match(app, /aiProcessingStatus\.setAttribute\("role", "status"\)/);
-  assert.match(app, /setAiProcessing\("Sarvam is reading the redacted receipt\. Your local draft remains available…", true\)/);
-  assert.match(app, /Retrying AI result \$\{transientFailures\} of 3; your local draft is safe/);
-  assert.match(app, /Continue reviewing or save the local draft/);
-  assert.match(app, /\$\("prepare-ai"\)\.disabled = busy/);
+  assert.match(app, /\$\("import-processing-copy"\)\.textContent = message/);
+  assert.match(app, /aiProgressMessage\("Private AI is reading the approved derivative\."/);
+  assert.match(app, /aiProgressMessage\(`Connection interrupted; retrying \$\{transientFailures\} of 3\.`/);
+  assert.match(app, /function failAiPdfImport/);
+  assert.match(app, /function cancelAiImport\(\)[\s\S]*pendingPdfImport = undefined;[\s\S]*Nothing was saved/);
+  assert.match(app, /resolveAiReceiptTotal\(draftReference\.defaults\.amount, aiDraft\.defaults\.amount, aiDraft\.items\)/);
+  assert.match(app, /amount: resolvedTotal\.amount/);
+  assert.match(app, /parserWarning = \[resolvedTotal\.warning, aiNameWarning\]/);
+  assert.match(app, /Nothing was saved/);
+  assert.doesNotMatch(app, /\$\("prepare-ai"\)/);
   assert.doesNotMatch(app, /note\("Redacted derivative accepted/);
 });

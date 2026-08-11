@@ -39,12 +39,48 @@ test("a visual item-table result can omit merchant and date that stayed local", 
   assert.equal(diagnostic.purchase_date_is_valid, true);
 });
 
+test("a two-page table-only result derives draft amount from positive line totals when receipt total is absent", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  const twoPageUsage = { pages_total: 2, pages_processed: 2, pages_succeeded: 2, pages_failed: 0, pages_discarded: 0 };
+  for (const receipt_total of [null, ""]) {
+    const tableOnly = { ...fixture, usage: twoPageUsage, result: { ...fixture.result, merchant_name: "", purchase_date: null, receipt_total } };
+    const draft = mapProviderReceipt(tableOnly, "provider-1", 2);
+    assert.equal(draft.defaults.amount, "95.00");
+    assert.equal(draft.items.reduce((sum, item) => sum + item.line_total, 0), 95);
+    const diagnostic = resultShapeDiagnostic(tableOnly, "provider-1", 2);
+    assert.equal(diagnostic.receipt_total_is_valid, true);
+    assert.equal(diagnostic.amounts_reconcile, true);
+  }
+});
+
+test("a supplied receipt total must remain numeric, positive, and reconcile with item rows", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  for (const receipt_total of ["95", 0, 96]) {
+    const conflicting = { ...fixture, result: { ...fixture.result, receipt_total } };
+    assert.throws(() => mapProviderReceipt(conflicting, "provider-1", 1), /invalid_provider_result/);
+  }
+  const zeroLineWithoutTotal = { ...fixture, result: { ...fixture.result, receipt_total: null, line_items: [{ ...fixture.result.line_items[0], line_total: 0 }, ...fixture.result.line_items.slice(1)] } };
+  assert.throws(() => mapProviderReceipt(zeroLineWithoutTotal, "provider-1", 1), /invalid_provider_result/);
+  const oversizedDerivedTotal = { ...fixture, result: { ...fixture.result, receipt_total: null, line_items: [{ ...fixture.result.line_items[0], line_total: 6_000_000 }, { ...fixture.result.line_items[1], line_total: 6_000_000 }] } };
+  assert.throws(() => mapProviderReceipt(oversizedDerivedTotal, "provider-1", 1), /invalid_provider_result/);
+});
+
 test("an unreadable AI item name becomes an explicit review row without using provider text", async () => {
   const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
   const unreadableLine = { ...fixture, result: { ...fixture.result, line_items: [{ ...fixture.result.line_items[0], name: null }, ...fixture.result.line_items.slice(1)] } };
   const draft = mapProviderReceipt(unreadableLine, "provider-1", 1);
   assert.equal(draft.items[0].name, "Unidentified receipt line 1");
   assert.equal(draft.items.reduce((sum, item) => sum + item.line_total, 0), 95);
+  const blankLine = { ...fixture, result: { ...fixture.result, line_items: [{ ...fixture.result.line_items[0], name: "   " }, ...fixture.result.line_items.slice(1)] } };
+  assert.equal(mapProviderReceipt(blankLine, "provider-1", 1).items[0].name, "Unidentified receipt line 1");
+});
+
+test("malformed AI item names fail closed instead of becoming review placeholders", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  for (const name of [{ text: "Milk" }, "unsafe\nname", "x".repeat(161)]) {
+    const malformed = { ...fixture, result: { ...fixture.result, line_items: [{ ...fixture.result.line_items[0], name }, ...fixture.result.line_items.slice(1)] } };
+    assert.throws(() => mapProviderReceipt(malformed, "provider-1", 1), /invalid_provider_result/);
+  }
 });
 
 test("rejected-result diagnostics expose shape but never extracted values", async () => {

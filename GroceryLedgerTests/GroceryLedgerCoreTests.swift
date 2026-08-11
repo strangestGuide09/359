@@ -369,4 +369,47 @@ final class GroceryLedgerCoreTests: XCTestCase {
         XCTAssertNil(EmailVerificationCode("12345a"))
         XCTAssertNil(EmailVerificationCode("123 456"))
     }
+
+    func testInvoiceImportRequiresAvailableProcessingChoiceBeforeFileAccess() {
+        var flow = InvoiceImportFlow()
+        XCTAssertEqual(flow.phase, .choosingMethod)
+
+        flow.selectedMethod = .privateAI
+        XCTAssertFalse(flow.beginFileSelection())
+        XCTAssertEqual(flow.phase, .choosingMethod)
+
+        flow.selectedMethod = .local
+        XCTAssertTrue(flow.beginFileSelection())
+        XCTAssertEqual(flow.phase, .selectingFile(.local))
+    }
+
+    func testInvoiceImportMovesFromTransientProcessingToReview() {
+        var flow = InvoiceImportFlow()
+        XCTAssertTrue(flow.beginFileSelection())
+        XCTAssertTrue(flow.beginProcessing())
+        XCTAssertEqual(flow.phase, .processing(.local))
+        XCTAssertFalse(flow.isReviewing)
+        XCTAssertTrue(flow.isProcessing)
+        XCTAssertFalse(flow.beginFileSelection(), "processing must reject a second file selection")
+
+        flow.completeProcessing()
+        XCTAssertEqual(flow.phase, .reviewing(.local))
+        XCTAssertTrue(flow.isReviewing)
+        XCTAssertFalse(flow.isProcessing)
+
+        flow.reset()
+        XCTAssertEqual(flow.phase, .choosingMethod)
+        XCTAssertEqual(flow.selectedMethod, .local)
+        XCTAssertFalse(flow.isReviewing)
+    }
+
+    func testInvoiceImportFailureReturnsToChoiceWithoutReviewState() {
+        var flow = InvoiceImportFlow()
+        XCTAssertTrue(flow.beginFileSelection())
+        XCTAssertTrue(flow.beginProcessing())
+        flow.failProcessing()
+
+        XCTAssertEqual(flow.phase, .choosingMethod)
+        XCTAssertFalse(flow.isReviewing)
+    }
 }

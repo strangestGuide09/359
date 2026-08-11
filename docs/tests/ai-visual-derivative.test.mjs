@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planVisualDerivative } from "../ai-visual-derivative.js";
+import { planVisualDerivative, VISUAL_JPEG_QUALITY, VISUAL_RENDER_SCALE } from "../ai-visual-derivative.js";
 
 const pageSize = { width: 600, height: 800 };
 const safeTable = [
-  { text: "Description", x: 56, y: 700 },
-  { text: "Qty", x: 315, y: 700 },
-  { text: "Total", x: 520, y: 700 },
-  { text: "Fresh milk", x: 56, y: 650 },
-  { text: "Total", x: 48, y: 110 }
+  { text: "Description", x: 56, y: 700, height: 10 },
+  { text: "Qty", x: 315, y: 700, height: 10 },
+  { text: "Total", x: 520, y: 700, height: 10 },
+  { text: "Fresh milk", x: 56, y: 650, height: 9 },
+  { text: "Total", x: 48, y: 110, height: 10 }
 ];
 
 test("recognized Blinkit and Instamart item tables are eligible for automatic local visual derivatives", () => {
@@ -18,6 +18,35 @@ test("recognized Blinkit and Instamart item tables are eligible for automatic lo
     assert.match(plan?.layoutKey || "", new RegExp(`:${merchant.toLowerCase()}:`));
     assert.equal(plan?.crops.length, 1);
   }
+});
+
+test("dense invoice tables retain readable raster detail and description padding", () => {
+  const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant: "Blinkit" });
+  assert.equal(VISUAL_RENDER_SCALE, 2.5);
+  assert.equal(VISUAL_JPEG_QUALITY, 0.94);
+  assert.ok(plan.crops[0].x <= 38, "description column keeps at least 3% page-width left padding");
+});
+
+test("crop excludes address above and amount-in-words below while retaining item descriptions", () => {
+  const tokens = [
+    { text: "Delivery Address: Ritesh, 359 Example Street", x: 48, y: 735, height: 10 },
+    { text: "Item Description", x: 74, y: 700, height: 10 },
+    { text: "Qty", x: 330, y: 700, height: 10 },
+    { text: "Total", x: 535, y: 700, height: 10 },
+    { text: "Akshayakalpa Organic Malai Paneer (Pack)", x: 68, y: 650, height: 9 },
+    { text: "Everyday Apple (Pack)", x: 68, y: 610, height: 9 },
+    { text: "Total", x: 48, y: 110, height: 10 },
+    { text: "Amount in Words: Two Thousand Three Hundred Rupees Only", x: 48, y: 82, height: 10 }
+  ];
+  const crop = planVisualDerivative({ pages: [tokens], pageSizes: [pageSize], merchant: "Blinkit" }).crops[0];
+  const withinVerticalCrop = token => token.y >= crop.y && token.y + token.height <= crop.y + crop.height;
+  assert.equal(withinVerticalCrop(tokens[0]), false, "address above header is excluded");
+  assert.equal(withinVerticalCrop(tokens.at(-1)), false, "spelled total below footer is excluded");
+  assert.equal(withinVerticalCrop(tokens[4]), true);
+  assert.equal(withinVerticalCrop(tokens[5]), true);
+  assert.ok(crop.x <= tokens[4].x, "full description column remains inside the crop");
+  assert.equal(crop.y, 110, "crop begins at the footer baseline without lower-page padding");
+  assert.equal(crop.y + crop.height, 710, "crop ends at the header glyph boundary without upper-page padding");
 });
 
 test("an unfamiliar safe layout requires a locally remembered approval", () => {

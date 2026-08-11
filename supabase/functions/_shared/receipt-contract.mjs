@@ -3,7 +3,7 @@ export const RECEIPT_EXTRACTION_SCHEMA = {
   properties: {
     merchant_name: { type: "string", description: "Merchant or store name only. Return an empty string if it is not visible. Never return customer names, addresses, contact details, payment details, order identifiers or invoice identifiers." },
     purchase_date: { type: "string", description: "Purchase date in YYYY-MM-DD format only. Return an empty string if it is not visible. Never return an order or invoice identifier." },
-    receipt_total: { type: "number", description: "Final paid or payable receipt total only." },
+    receipt_total: { type: "number", description: "Final paid or payable receipt total only. Return null if that final total is not visible in the sanitized derivative; never infer it from unrelated receipt text." },
     // Sarvam Extract accepts its own compact schema dialect: type, description,
     // properties and items.  It rejects JSON Schema keywords such as `required`
     // and `enum`, so currency and field completeness are enforced after receipt
