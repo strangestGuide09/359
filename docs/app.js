@@ -18,6 +18,7 @@ import { createResilientAuthStorage, restoreSessionWithRetry, sessionErrorKind }
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
 import { AI_SANITIZER_VERSION, aiParseMessage, buildSanitizedPdf, suggestedSanitizedLines, validateSanitizedText } from "./ai-receipt-sanitizer.js";
 import { aiNetworkPollDecision, aiPollDecision, aiRetryDelayMs } from "./ai-receipt-flow.js";
+import { createFlattenedVisualDerivative, hasRememberedVisualLayout, planVisualDerivative, rememberVisualLayout, revokeVisualDerivativePreview } from "./ai-visual-derivative.js";
 
 const authStorage = createResilientAuthStorage(window.localStorage);
 const AI_IDLE_MESSAGE = "Prepare a separate redacted derivative for optional AI processing. The original PDF is never uploaded.";
@@ -41,6 +42,7 @@ const retryKey = "grocery-ledger-email-retry-at";
 const rememberedEmailKey = "grocery-ledger-last-email";
 const dialog = $("entry");
 const aiPreviewDialog = $("ai-preview");
+const visualAiPreviewDialog = $("visual-ai-preview");
 const clientBuild = window.GROCERY_LEDGER_BUILD || "local-dev";
 const reloadVersionKey = "grocery-ledger-reloading-version";
 
@@ -60,6 +62,7 @@ let mode = "expense";
 let pendingPdfImport;
 let editingPurchase;
 let reviewedItems = [];
+let preparedVisualDerivative;
 let lastPdfFeedback;
 let formDirty = false;
 let explicitSignOut = false;
@@ -632,6 +635,7 @@ function openEntry(next, defaults = {}, pdfImport) {
 function closeEntry() {
   if (pendingPdfImport && !confirm("Discard this local PDF draft? The PDF and extracted text will not be stored.")) return;
   if (editingPurchase && formDirty && !confirm("Discard your unsaved receipt changes?")) return;
+  discardPreparedVisualDerivative();
   pendingPdfImport = undefined;
   editingPurchase = undefined;
   reviewedItems = [];
@@ -640,7 +644,12 @@ function closeEntry() {
   formDirty = false;
   dialog.close();
 }
-$("prepare-ai").onclick = () => {
+function discardPreparedVisualDerivative() {
+  if (!preparedVisualDerivative) return;
+  revokeVisualDerivativePreview(preparedVisualDerivative);
+  preparedVisualDerivative = undefined;
+}
+function openTextAiPreview() {
   if (!pendingPdfImport) return;
   $("sanitized-lines").value = (pendingPdfImport.sanitizationLines || []).join("\n");
   $("local-extracted-reference").value = pendingPdfImport.localExtractedText || "";
@@ -648,7 +657,81 @@ $("prepare-ai").onclick = () => {
   $("ai-preview-error").textContent = "";
   aiPreviewDialog.showModal();
   requestAnimationFrame(() => $("sanitized-lines").focus());
-};
+}
+function renderVisualDerivativePreview(prepared) {
+  const pages = $("visual-derivative-pages");
+  pages.replaceChildren(...prepared.previewUrls.map((url, index) => {
+    const image = document.createElement("img");
+    image.src = url;
+    image.alt = `Sanitized receipt item table, page ${index + 1}`;
+    return image;
+  }));
+}
+function openVisualAiPreview(prepared) {
+  $("confirm-visual-derivative").checked = false;
+  $("visual-ai-preview-error").textContent = "";
+  renderVisualDerivativePreview(prepared);
+  visualAiPreviewDialog.showModal();
+  requestAnimationFrame(() => $("confirm-visual-derivative").focus());
+}
+function closeVisualAiPreview({ discard = true } = {}) {
+  visualAiPreviewDialog.close();
+  $("visual-derivative-pages").replaceChildren();
+  if (discard) discardPreparedVisualDerivative();
+}
+async function submitAiDerivative({ derivative, sanitizerVersion, pageCount, filename }) {
+  if (!pendingPdfImport || !session?.access_token || !current?.id) throw new Error(aiParseMessage("authentication_required"));
+  const draftReference = pendingPdfImport;
+  const formData = new FormData();
+  formData.set("derivative", derivative, filename);
+  formData.set("household_id", current.id);
+  draftReference.aiIdempotencyKey ||= crypto.randomUUID();
+  formData.set("idempotency_key", draftReference.aiIdempotencyKey);
+  formData.set("sanitizer_version", sanitizerVersion);
+  formData.set("page_count", String(pageCount));
+  formData.set("sanitized", "true");
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/sarvam-receipt-parse`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_PUBLISHABLE_KEY }, body: formData });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(aiParseMessage(result.code));
+  if (!/^[0-9a-f-]{36}$/i.test(result.job_id || "")) throw new Error(aiParseMessage("invalid_provider_result"));
+  if (pendingPdfImport !== draftReference) return;
+  draftReference.aiJobId = result.job_id;
+  setAiProcessing("Sarvam accepted the redacted derivative and is preparing suggestions…", true);
+  void pollAiReceiptResult(result.job_id, draftReference);
+}
+async function prepareAi() {
+  const draftReference = pendingPdfImport;
+  if (!draftReference) return;
+  discardPreparedVisualDerivative();
+  const visualPlan = draftReference.visualPlan;
+  if (!visualPlan || !draftReference.sourcePdfBytes) {
+    openTextAiPreview();
+    return;
+  }
+  setAiProcessing("Preparing a local visual receipt-table derivative…", true);
+  try {
+    const prepared = await createFlattenedVisualDerivative(pdfjsLib, draftReference.sourcePdfBytes, visualPlan);
+    if (pendingPdfImport !== draftReference) {
+      revokeVisualDerivativePreview(prepared);
+      return;
+    }
+    preparedVisualDerivative = prepared;
+    if (visualPlan.known || hasRememberedVisualLayout(prepared.layoutKey)) {
+      await submitAiDerivative({ derivative: prepared.derivative, sanitizerVersion: prepared.sanitizerVersion, pageCount: prepared.pageCount, filename: "sanitized-receipt-tables.pdf" });
+      discardPreparedVisualDerivative();
+      return;
+    }
+    setAiProcessing(AI_IDLE_MESSAGE);
+    openVisualAiPreview(prepared);
+  } catch (error) {
+    if (pendingPdfImport === draftReference) {
+      discardPreparedVisualDerivative();
+      setAiProcessing(AI_IDLE_MESSAGE);
+      openTextAiPreview();
+    }
+  }
+}
+$("prepare-ai").onclick = () => { void prepareAi(); };
 function closeAiPreview() { aiPreviewDialog.close(); }
 $("close-ai-preview").onclick = closeAiPreview;
 $("cancel-ai-preview").onclick = closeAiPreview;
@@ -662,29 +745,38 @@ $("ai-preview-form").onsubmit = async event => {
   try {
     const lines = validateSanitizedText($("sanitized-lines").value);
     const derivative = buildSanitizedPdf(lines.join("\n"));
-    const formData = new FormData();
-    formData.set("derivative", derivative, "sanitized-receipt.pdf");
-    formData.set("household_id", current.id);
-    pendingPdfImport.aiIdempotencyKey ||= crypto.randomUUID();
-    formData.set("idempotency_key", pendingPdfImport.aiIdempotencyKey);
-    formData.set("sanitizer_version", AI_SANITIZER_VERSION);
-    formData.set("page_count", "1");
-    formData.set("sanitized", "true");
     button.disabled = true;
     button.textContent = "Submitting…";
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/sarvam-receipt-parse`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_PUBLISHABLE_KEY }, body: formData });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(aiParseMessage(result.code));
-    if (!/^[0-9a-f-]{36}$/i.test(result.job_id || "")) throw new Error(aiParseMessage("invalid_provider_result"));
-    pendingPdfImport.aiJobId = result.job_id;
+    await submitAiDerivative({ derivative, sanitizerVersion: AI_SANITIZER_VERSION, pageCount: 1, filename: "sanitized-receipt.pdf" });
     closeAiPreview();
-    setAiProcessing("Sarvam accepted the redacted derivative and is preparing suggestions…", true);
-    void pollAiReceiptResult(result.job_id, pendingPdfImport);
   } catch (error) {
     errorBox.textContent = error.message || aiParseMessage();
   } finally {
     button.disabled = false;
     button.textContent = "Send redacted derivative";
+  }
+};
+$("close-visual-ai-preview").onclick = () => closeVisualAiPreview();
+$("cancel-visual-ai-preview").onclick = () => closeVisualAiPreview();
+visualAiPreviewDialog.addEventListener("cancel", event => { event.preventDefault(); closeVisualAiPreview(); });
+$("visual-ai-preview-form").onsubmit = async event => {
+  event.preventDefault();
+  const errorBox = $("visual-ai-preview-error");
+  const button = $("submit-visual-ai");
+  const prepared = preparedVisualDerivative;
+  if (!prepared || !pendingPdfImport) return;
+  if (!$("confirm-visual-derivative").checked) { errorBox.textContent = "Review the visual derivative and confirm it contains only the receipt item table."; return; }
+  try {
+    button.disabled = true;
+    button.textContent = "Submitting…";
+    rememberVisualLayout(prepared.layoutKey);
+    await submitAiDerivative({ derivative: prepared.derivative, sanitizerVersion: prepared.sanitizerVersion, pageCount: prepared.pageCount, filename: "sanitized-receipt-tables.pdf" });
+    closeVisualAiPreview();
+  } catch (error) {
+    errorBox.textContent = error.message || aiParseMessage();
+  } finally {
+    button.disabled = false;
+    button.textContent = "Approve and send";
   }
 };
 function setAiProcessing(message, busy = false) {
@@ -823,6 +915,7 @@ $("entry-form").onsubmit = async event => {
       restoreButton.onclick = canRestore ? async () => {
         restoreButton.disabled = true;
         if (await restoreRemovedReceipt(restoreId, "duplicate")) {
+          discardPreparedVisualDerivative();
           pendingPdfImport = undefined;
           reviewedItems = [];
           $("local-extracted-reference").value = "";
@@ -840,6 +933,7 @@ $("entry-form").onsubmit = async event => {
     button.textContent = "Try saving again";
     return;
   }
+  discardPreparedVisualDerivative();
   pendingPdfImport = undefined;
   editingPurchase = undefined;
   reviewedItems = [];
@@ -903,13 +997,17 @@ async function sha256(value) {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 async function readPdfLocally(file) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const exactHash = await sha256(bytes);
-  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const sourcePdfBytes = new Uint8Array(await file.arrayBuffer());
+  const exactHash = await sha256(sourcePdfBytes);
+  const pdf = await pdfjsLib.getDocument({ data: sourcePdfBytes.slice() }).promise;
   const pages = [];
+  const pageSizes = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     note(`Reading page ${pageNumber} of ${pdf.numPages} locally…`);
-    const content = await (await pdf.getPage(pageNumber)).getTextContent();
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
+    pageSizes.push({ width: viewport.width, height: viewport.height });
+    const content = await page.getTextContent();
     pages.push(content.items.map(item => ({
       page: pageNumber,
       x: Number(item.transform?.[4]) || 0,
@@ -923,7 +1021,16 @@ async function readPdfLocally(file) {
   const extractedText = pages.flatMap(page => page.map(token => token.text)).join("\n");
   const normalized = extractedText.toLowerCase().replace(/[^a-z0-9.,₹\n ]/g, "").replace(/[ \t]+/g, " ").trim();
   const parsed = parseReceipt(pages, today());
-  return { exactHash, contentHash: await sha256(normalized), localExtractedText: extractedText, sanitizationLines: suggestedSanitizedLines(parsed), ...parsed };
+  return {
+    exactHash,
+    contentHash: await sha256(normalized),
+    localExtractedText: extractedText,
+    sanitizationLines: suggestedSanitizedLines(parsed),
+    sourcePdfBytes,
+    pageSizes,
+    visualPlan: planVisualDerivative({ pages, pageSizes, merchant: parsed.defaults.label }),
+    ...parsed
+  };
 }
 function setPdfBusy(busy) {
   const button = $("import-pdf");

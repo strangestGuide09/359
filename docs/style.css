@@ -131,6 +131,7 @@ select:disabled { cursor:not-allowed; opacity:.58; }
 .check input { width:18px; height:18px; accent-color:var(--pine); }
 dialog { width:min(760px,calc(100% - 30px)); max-height:calc(100vh - 30px); overflow:auto; padding:24px; border:0; border-radius:18px; background:var(--paper); box-shadow:0 25px 75px #0006; }
 .pdf-review-dialog { width:min(1040px,calc(100% - 30px)); }
+.visual-preview-dialog { width:min(1040px,calc(100% - 30px)); }
 dialog::backdrop { background:#15261d88; }
 dialog form>div:first-child button { width:44px; height:44px; padding:0; border:0; background:transparent; color:var(--muted); font-size:28px; }
 .dialog-help { color:var(--muted); font-size:14px; line-height:1.45; }
@@ -144,6 +145,8 @@ menu { display:flex; justify-content:flex-end; gap:9px; margin:16px 0 0; padding
 .ai-improve div { display:grid; gap:4px; }
 .ai-improve small { color:var(--muted); line-height:1.4; }
 .ai-processing-status.active { margin:2px 0 0; padding:8px 10px; border-left:3px solid var(--orange); background:#fff8e9; color:var(--ink); line-height:1.45; }
+.visual-derivative-pages { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; max-height:50vh; margin:16px 0; padding:12px; overflow:auto; border:1px solid var(--line); border-radius:12px; background:#f1ede4; }
+.visual-derivative-pages img { display:block; width:100%; height:auto; border:1px solid #d5bd92; border-radius:7px; background:white; box-shadow:0 2px 8px #172f2214; }
 .item-row { margin:9px 0; padding:9px 12px 11px; border:1px solid var(--line); border-radius:12px; background:#fffaf0; }
 .item-row legend { padding:0 6px; color:var(--pine); font-size:13px; font-weight:bold; }
 .item-row label { margin:0; }
@@ -268,6 +271,7 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .item-row { padding:11px; }
   .ai-improve { align-items:stretch; flex-direction:column; }
   .ai-improve button { width:100%; }
+  .visual-derivative-pages { grid-template-columns:1fr; max-height:45vh; }
   .item-primary { grid-template-columns:1fr 1fr; }
   .item-primary .item-name { grid-column:1/-1; }
   .item-flags { display:grid; grid-template-columns:1fr 1fr; }
