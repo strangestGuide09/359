@@ -165,7 +165,8 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(page, /Only these reviewed fields will sync/);
   assert.match(app, /class="plain remove-item"/);
   assert.match(app, /class="item-checklist-row"/);
-  assert.match(app, /data-reviewed type="checkbox"/);
+  assert.match(page, /id="confirm-receipt-review" type="checkbox"/);
+  assert.doesNotMatch(app, /data-reviewed type="checkbox"/);
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{/);
   assert.match(app, /Your draft is still here; check your connection and retry/);
@@ -175,7 +176,7 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(app, /class="secondary edit-item" aria-expanded=/);
   assert.match(style, /\.item-primary \{ display:grid;/);
   assert.match(style, /\.item-secondary-fields \{ display:grid;/);
-  assert.match(style, /\.item-total \{ position:sticky;/);
+  assert.match(style, /\.item-review-summary \{ position:sticky;/);
   assert.match(style, /\.pdf-review-dialog menu \{ position:sticky;/);
   assert.match(style, /\.item-row \{[^}]*background:#fffaf0;/);
 });

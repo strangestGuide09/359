@@ -43,6 +43,17 @@ test("Instamart combined product and quantity rows retain the product name", () 
   assert.deepEqual(parsed.items.map(item => item.line_total), [65]);
 });
 
+test("local parsing strips HSN labels while preserving sizes and rejects HSN-only rows", () => {
+  const parsed = parseReceipt([[
+    { y: 700, text: "Blinkit" },
+    { y: 650, text: "Tata Sampann Kala Chana 500 g (HSN-07133100) 80.00" },
+    { y: 620, text: "(HSN-07133100) 10.00" },
+    { y: 100, text: "Amount payable 80.00" }
+  ]], "2026-08-11");
+  assert.deepEqual(parsed.items.map(item => item.name), ["Tata Sampann Kala Chana 500 g"]);
+  assert.equal(parsed.defaults.amount, "80.00");
+});
+
 test("Instamart table columns are removed from nearby item names", () => {
   const parsed = parseReceipt([[
     { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },

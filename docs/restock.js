@@ -1,4 +1,6 @@
-const cleanDisplayName = value => String(value || "")
+import { cleanImportedItemName } from "./imported-item-name.js";
+
+const cleanDisplayName = value => cleanImportedItemName(value)
   .replace(/^\s*\d{1,2}\.\s+/, "")
   .replace(/^\d{4,8}\s+(?=[A-Za-z])/, "")
   .replace(/(?:\s+-?\d+(?:,\d{3})*(?:\.\d+)?){2,}\s*$/, "")

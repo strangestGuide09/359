@@ -15,6 +15,10 @@ test("merchant and pack formatting variations share one deterministic restock ke
   assert.equal(canonicalRestockKey("7UP 750 ml"), "7up 750ml");
 });
 
+test("HSN invoice labels never split otherwise identical restock keys", () => {
+  assert.equal(canonicalRestockKey("Tata Sampann Kala Chana 500 g (HSN-07133100)"), canonicalRestockKey("Kala Chana 500 g"));
+});
+
 test("same-day repeats do not qualify as a two-date suggestion", () => {
   const entries = [...restockHistory([purchase("2026-07-01", [tracked("Milk 500ml"), tracked("Milk 500 ml")])]).values()][0];
   assert.equal(qualifiesForRestockSuggestion(entries), false);

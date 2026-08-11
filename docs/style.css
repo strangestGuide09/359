@@ -158,11 +158,8 @@ menu { display:flex; justify-content:flex-end; gap:9px; margin:16px 0 0; padding
 .processing-choice small { color:var(--muted); font-size:13px; font-weight:normal; line-height:1.45; }
 .inspect-ai-input { width:100%; margin-top:12px; background:transparent; }
 .item-row { margin:7px 0; border:1px solid var(--line); border-radius:12px; background:#fffaf0; overflow:hidden; }
-.item-row.reviewed { border-left:4px solid var(--pine); }
 .item-row label { margin:0; }
-.item-checklist-row { display:grid; grid-template-columns:92px 28px minmax(220px,1fr) 70px 110px 72px; gap:10px; align-items:center; min-height:58px; padding:8px 10px; }
-.item-reviewed { display:flex; align-items:center; gap:7px; min-height:43px; color:var(--pine); font-size:12px; font-weight:bold; cursor:pointer; }
-.item-reviewed input { width:19px; height:19px; min-height:19px; margin:0; accent-color:var(--pine); }
+.item-checklist-row { display:grid; grid-template-columns:28px minmax(220px,1fr) 70px 110px 72px; gap:10px; align-items:center; min-height:58px; padding:8px 10px; }
 .item-number { display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:#f1e4ca; color:var(--pine); font-size:12px; font-weight:bold; }
 .item-compact-name { min-width:0; }
 .item-compact-name b,.item-compact-name small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -174,7 +171,9 @@ menu { display:flex; justify-content:flex-end; gap:9px; margin:16px 0 0; padding
 .item-flags { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; margin-top:10px; }
 .item-flags .check { min-height:36px; margin:0; }
 .item-secondary-fields { display:grid; grid-template-columns:100px 130px 170px auto; gap:10px; align-items:end; margin-top:10px; padding-top:10px; border-top:1px solid #eee6d9; }
-.item-total { position:sticky; bottom:67px; z-index:2; margin-top:10px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#f1ede4; color:var(--pine); font-size:14px; font-weight:bold; box-shadow:0 -6px 18px #172f2214; }
+.item-review-summary { position:sticky; bottom:67px; z-index:2; margin-top:10px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#f1ede4; box-shadow:0 -6px 18px #172f2214; }
+.item-total { color:var(--pine); font-size:14px; font-weight:bold; }
+.receipt-review-confirmation { min-height:43px; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); color:var(--ink); font-weight:bold; line-height:1.35; }
 .pdf-review-dialog menu { position:sticky; bottom:-24px; z-index:3; margin-inline:-24px; padding:12px 24px 24px; border-top:1px solid var(--line); background:var(--paper); }
 .account-gate,.state-panel { width:min(720px,100%); margin:clamp(56px,12vh,128px) auto 0; padding:clamp(28px,5vw,48px); }
 .account-gate h1,.state-panel h1 { margin:0 0 18px; font-size:clamp(38px,6vw,58px); letter-spacing:-.07em; line-height:.96; }
@@ -285,10 +284,10 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .danger-zone { grid-template-columns:1fr; }
   .danger-zone button,.danger-zone small { grid-column:1; grid-row:auto; }
   dialog { padding:20px 16px; }
-  .item-checklist-row { grid-template-columns:82px 26px minmax(0,1fr) 72px; gap:8px; }
-  .item-checklist-row .item-compact-name { grid-column:3/5; }
+  .item-checklist-row { grid-template-columns:26px minmax(0,1fr) 72px; gap:8px; }
+  .item-checklist-row .item-compact-name { grid-column:2/4; }
   .item-checklist-row .item-compact-value:not(.item-compact-total) { grid-column:1/3; text-align:left; }
-  .item-checklist-row .item-compact-total { grid-column:3/5; }
+  .item-checklist-row .item-compact-total { grid-column:3; }
   .item-checklist-row .edit-item { grid-column:1/-1; width:100%; }
   .visual-derivative-pages { grid-template-columns:1fr; max-height:45vh; }
   .processing-choices { grid-template-columns:1fr; }
@@ -297,6 +296,6 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .item-flags { display:grid; grid-template-columns:1fr 1fr; }
   .item-secondary-fields { grid-template-columns:1fr 1fr; }
   .item-secondary-fields button { width:100%; }
-  .item-total { bottom:75px; }
+  .item-review-summary { bottom:75px; }
   .pdf-review-dialog menu { bottom:-20px; margin-inline:-16px; padding:12px 16px 20px; }
 }

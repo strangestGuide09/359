@@ -1,22 +1,24 @@
+import { cleanImportedItemName } from "./imported-item-name.js";
+
 const amountPattern = /(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/gi;
 
 const cleanText = value => String(value ?? "").replace(/\s+/g, " ").trim();
 export function cleanInstamartItemName(value) {
-  return cleanText(value)
+  return cleanImportedItemName(cleanText(value)
     .replace(/^\d{1,2}\.\s+(?=[A-Za-z])/i, "")
     .replace(/^\d{4,8}\s+(?=[A-Za-z])/i, "")
     .replace(/(?:\s+-?\d+(?:,\d{3})*(?:\.\d+)?){2,}\s*$/, "")
     .replace(/\s*\(\s*([^()]*)\s*\)\s*/g, (_, inside) => ` (${inside.trim()}) `)
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim());
 }
 const numberFrom = value => {
   const parsed = Number(String(value).replaceAll(",", ""));
   return Number.isFinite(parsed) ? parsed : null;
 };
 const reviewedItem = values => ({
-  name: values.name || "",
+  name: cleanImportedItemName(values.name),
   quantity: values.quantity ?? 1,
   unit: values.unit || "",
   unit_price: values.unit_price ?? null,
@@ -304,7 +306,9 @@ export function parseReceipt(pages, fallbackDate) {
   const lines = normalizedPages.flatMap(page => page.map(line => line.text));
   const merchant = merchantFrom(lines);
   const structured = positionedInvoiceTable(positionedPages);
-  const parsedItems = structured?.items?.length ? structured.items : merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines);
+  const parsedItems = (structured?.items?.length ? structured.items : merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines))
+    .map(item => ({ ...item, name: cleanImportedItemName(item.name) }))
+    .filter(item => item.name);
   const itemTotal = parsedItems.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
   const semanticTotal = receiptTotal(lines, itemTotal);
   const calculatedTotal = semanticTotal.confidence !== "high" && structured?.complete ? Number(itemTotal.toFixed(2)) : null;

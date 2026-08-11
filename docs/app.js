@@ -21,6 +21,7 @@ import { AI_EXPECTED_TIME_COPY, AI_MAX_RETRY_AFTER_SECONDS, AI_POLL_ATTEMPTS, ai
 import { createFlattenedVisualDerivative, hasRememberedVisualLayout, planVisualDerivative, rememberVisualLayout, revokeVisualDerivativePreview } from "./ai-visual-derivative.js";
 import { hasUnidentifiedAiItems, reconcileAiItemNames } from "./ai-item-names.js";
 import { resolveAiReceiptTotal } from "./ai-receipt-total.js";
+import { cleanImportedItemName } from "./imported-item-name.js";
 
 const authStorage = createResilientAuthStorage(window.localStorage);
 const AI_IDLE_MESSAGE = "AI processing is ready to begin.";
@@ -74,6 +75,7 @@ let pendingPdfImport;
 let stagedPdfImport;
 let editingPurchase;
 let reviewedItems = [];
+let receiptReviewConfirmed = false;
 let expandedItemIndex = null;
 let preparedVisualDerivative;
 let stagedAiProcessed;
@@ -562,14 +564,14 @@ async function loadLedger() {
 function emptyReviewedItem(values = {}) {
   const personal = !!values.is_personal;
   const merchandise = isRestockMerchandise(values.name);
-  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "", reviewed: values.reviewed ?? false };
+  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "" };
 }
 function renderItemRows() {
   $("item-rows").innerHTML = reviewedItems.map((item, index) => {
     const restockAllowed = !item.is_personal && isRestockMerchandise(item.name);
     const expanded = expandedItemIndex === index;
     const allocation = item.is_personal ? "Personal · Restock off" : `Shared · Restock ${item.is_tracked_for_restock && restockAllowed ? "on" : "off"}`;
-    return `<article class="item-row${item.reviewed ? " reviewed" : ""}" data-item="${index}" aria-labelledby="item-name-${index}"><div class="item-checklist-row"><label class="item-reviewed"><input data-reviewed type="checkbox"${item.reviewed ? " checked" : ""}><span>Reviewed</span></label><span class="item-number" aria-hidden="true">${index + 1}</span><div class="item-compact-name"><b id="item-name-${index}">${esc(item.name) || "Unnamed item"}</b><small>${esc(allocation)}</small></div><span class="item-compact-value"><small>Qty</small><b>${esc(item.quantity ?? "—")}</b></span><span class="item-compact-value item-compact-total"><small>Total</small><b>${item.line_total == null || item.line_total === "" ? "—" : money(item.line_total)}</b></span><button type="button" class="secondary edit-item" aria-expanded="${expanded}" aria-controls="item-editor-${index}">${expanded ? "Close" : "Edit"}</button></div><div id="item-editor-${index}" class="item-editor"${expanded ? "" : " hidden"}><div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label></div><div class="item-secondary-fields"><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></div></article>`;
+    return `<article class="item-row" data-item="${index}" aria-labelledby="item-name-${index}"><div class="item-checklist-row"><span class="item-number" aria-hidden="true">${index + 1}</span><div class="item-compact-name"><b id="item-name-${index}">${esc(item.name) || "Unnamed item"}</b><small>${esc(allocation)}</small></div><span class="item-compact-value"><small>Qty</small><b>${esc(item.quantity ?? "—")}</b></span><span class="item-compact-value item-compact-total"><small>Total</small><b>${item.line_total == null || item.line_total === "" ? "—" : money(item.line_total)}</b></span><button type="button" class="secondary edit-item" aria-expanded="${expanded}" aria-controls="item-editor-${index}">${expanded ? "Close" : "Edit"}</button></div><div id="item-editor-${index}" class="item-editor"${expanded ? "" : " hidden"}><div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label></div><div class="item-secondary-fields"><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></div></article>`;
   }).join("");
   bindItemRows();
   updateItemTotal();
@@ -577,16 +579,13 @@ function renderItemRows() {
 function bindItemRows() {
   document.querySelectorAll("[data-item]").forEach(rowElement => {
     const index = Number(rowElement.dataset.item);
-    rowElement.querySelector("[data-reviewed]").onchange = event => {
-      reviewedItems[index].reviewed = event.currentTarget.checked;
-      rowElement.classList.toggle("reviewed", reviewedItems[index].reviewed);
-    };
     rowElement.querySelector(".edit-item").onclick = () => {
       expandedItemIndex = expandedItemIndex === index ? null : index;
       renderItemRows();
       if (expandedItemIndex === index) requestAnimationFrame(() => document.querySelector(`[data-item="${index}"] [data-field="name"]`)?.focus());
     };
     rowElement.querySelectorAll("[data-field]").forEach(input => input.oninput = () => {
+      resetReceiptReviewConfirmation();
       const field = input.dataset.field;
       const wasMerchandise = isRestockMerchandise(reviewedItems[index].name);
       reviewedItems[index][field] = input.type === "checkbox" ? input.checked : input.value;
@@ -596,10 +595,20 @@ function bindItemRows() {
       if (field === "name") { const restock = rowElement.querySelector('[data-field="is_tracked_for_restock"]'); restock.checked = reviewedItems[index].is_tracked_for_restock; restock.disabled = reviewedItems[index].is_personal || !isRestockMerchandise(input.value); }
       updateItemTotal();
     });
-    rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); expandedItemIndex = null; renderItemRows(); };
+    rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); expandedItemIndex = null; resetReceiptReviewConfirmation(); renderItemRows(); };
   });
 }
+function updateReceiptReviewConfirmation() {
+  const count = reviewedItems.length;
+  $("confirm-receipt-review").checked = receiptReviewConfirmed;
+  $("confirm-receipt-review-copy").textContent = `I reviewed all ${count} ${count === 1 ? "item" : "items"} and totals.`;
+}
+function resetReceiptReviewConfirmation() {
+  receiptReviewConfirmed = false;
+  $("confirm-receipt-review").checked = false;
+}
 function updateItemTotal() {
+  updateReceiptReviewConfirmation();
   const sum = reviewedItems.reduce((total, item) => total + (Number(item.line_total) || 0), 0);
   const rawReceiptTotal = $("amount").value.trim();
   if (!rawReceiptTotal) {
@@ -630,6 +639,7 @@ function openEntry(next, defaults = {}, pdfImport) {
   mode = next;
   pendingPdfImport = pdfImport;
   reviewedItems = (pdfImport?.items || []).map(emptyReviewedItem);
+  receiptReviewConfirmed = false;
   expandedItemIndex = null;
   dialog.classList.toggle("pdf-review-dialog", !!pdfImport);
   $("dialog-title").textContent = next === "settlement" ? "Record settlement" : pdfImport ? "Review PDF import" : defaults.personal ? "Add personal expense" : "Add expense";
@@ -668,6 +678,7 @@ function finishCloseEntry() {
   pendingPdfImport = undefined;
   editingPurchase = undefined;
   reviewedItems = [];
+  receiptReviewConfirmed = false;
   $("local-extracted-reference").value = "";
   $("sanitized-lines").value = "";
   formDirty = false;
@@ -1074,8 +1085,9 @@ dialog.addEventListener("cancel", event => { event.preventDefault(); closeEntry(
 $("keep-pdf-draft").onclick = keepEditingPdfDraft;
 $("confirm-discard-pdf-draft").onclick = confirmDiscardPdfDraft;
 discardPdfDraftDialog.addEventListener("cancel", event => { event.preventDefault(); keepEditingPdfDraft(); });
-$("add-item").onclick = () => { reviewedItems.push(emptyReviewedItem()); renderItemRows(); };
-$("amount").oninput = updateItemTotal;
+$("add-item").onclick = () => { reviewedItems.push(emptyReviewedItem()); resetReceiptReviewConfirmation(); renderItemRows(); };
+$("confirm-receipt-review").onchange = event => { receiptReviewConfirmed = event.currentTarget.checked; };
+$("amount").oninput = () => { resetReceiptReviewConfirmation(); updateItemTotal(); };
 $("entry-form").onsubmit = async event => {
   event.preventDefault();
   if (!active()) return;
@@ -1110,8 +1122,8 @@ $("entry-form").onsubmit = async event => {
       const result = await request.select("id").maybeSingle();
       error = result.error || (!result.data ? { message: "This receipt can only be edited by its payer or the household owner." } : undefined);
     } else if (pendingPdfImport) {
-      if (reviewedItems.some(item => !item.reviewed)) { errorBox.textContent = "Mark every item as reviewed before saving this receipt."; button.disabled = false; button.textContent = "Save"; return; }
-      const items = reviewedItems.map((item, display_order) => ({ name: item.name.trim(), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: !item.is_personal && isRestockMerchandise(item.name) && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
+      if (!receiptReviewConfirmed) { errorBox.textContent = "Confirm that you reviewed all items and totals before saving this receipt."; $("confirm-receipt-review").focus(); button.disabled = false; button.textContent = "Save"; return; }
+      const items = reviewedItems.map((item, display_order) => ({ name: cleanImportedItemName(item.name), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: !item.is_personal && isRestockMerchandise(item.name) && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
       if (!items.length || items.some(item => !item.name)) { errorBox.textContent = "Every reviewed item needs a name."; button.disabled = false; button.textContent = "Save"; return; }
       if (hasUnidentifiedAiItems(items)) { errorBox.textContent = "Replace every ‘Unidentified receipt line’ with the item name before saving."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.line_total == null)) { errorBox.textContent = "Every reviewed item needs a line total."; button.disabled = false; button.textContent = "Save"; return; }
@@ -1147,6 +1159,7 @@ $("entry-form").onsubmit = async event => {
           discardPreparedVisualDerivative();
           pendingPdfImport = undefined;
           reviewedItems = [];
+          receiptReviewConfirmed = false;
           $("local-extracted-reference").value = "";
           $("sanitized-lines").value = "";
           formDirty = false;
@@ -1166,6 +1179,7 @@ $("entry-form").onsubmit = async event => {
   pendingPdfImport = undefined;
   editingPurchase = undefined;
   reviewedItems = [];
+  receiptReviewConfirmed = false;
   $("local-extracted-reference").value = "";
   $("sanitized-lines").value = "";
   formDirty = false;
