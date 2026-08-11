@@ -30,11 +30,11 @@ test("expanded editor preserves every field and save requires receipt-level conf
 
 test("editing, adding, removing, and changing the receipt total reset confirmation", async () => {
   const app = await read("app.js");
-  assert.match(app, /function resetReceiptReviewConfirmation\(\) \{[\s\S]*receiptReviewConfirmed = false;[\s\S]*\$\("confirm-receipt-review"\)\.checked = false;/);
-  assert.match(app, /querySelectorAll\("\[data-field\]"\)[\s\S]*input\.oninput = \(\) => \{[\s\S]*resetReceiptReviewConfirmation\(\)/);
-  assert.match(app, /\.remove-item"\)\.onclick = \(\) => \{[\s\S]*resetReceiptReviewConfirmation\(\); renderItemRows\(\)/);
-  assert.match(app, /\$\("add-item"\)\.onclick = \(\) => \{[\s\S]*resetReceiptReviewConfirmation\(\); renderItemRows\(\)/);
-  assert.match(app, /\$\("amount"\)\.oninput = \(\) => \{ resetReceiptReviewConfirmation\(\); updateItemTotal\(\); \}/);
+  assert.match(app, /function resetReceiptReviewConfirmation\(recalculateItemSum = false\) \{[\s\S]*receiptReviewConfirmed = false;[\s\S]*\$\("confirm-receipt-review"\)\.checked = false;/);
+  assert.match(app, /querySelectorAll\("\[data-field\]"\)[\s\S]*input\.oninput = \(\) => \{[\s\S]*resetReceiptReviewConfirmation\(true\)/);
+  assert.match(app, /\.remove-item"\)\.onclick = \(\) => \{[\s\S]*resetReceiptReviewConfirmation\(true\); renderItemRows\(\)/);
+  assert.match(app, /\$\("add-item"\)\.onclick = \(\) => \{[\s\S]*resetReceiptReviewConfirmation\(true\); renderItemRows\(\)/);
+  assert.match(app, /\$\("amount"\)\.oninput = \(\) => \{[\s\S]*resetReceiptReviewConfirmation\(\); updateItemTotal\(\); \}/);
   assert.match(app, /I reviewed all \$\{count\} \$\{count === 1 \? "item" : "items"\} and totals/);
 });
 

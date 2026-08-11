@@ -39,7 +39,8 @@ test("website integration keeps a persistent accessible state and preserves the 
   assert.match(app, /aiProgressMessage\(`Connection interrupted; retrying \$\{transientFailures\} of 3\.`/);
   assert.match(app, /function failAiPdfImport/);
   assert.match(app, /function cancelAiImport\(\)[\s\S]*pendingPdfImport = undefined;[\s\S]*Nothing was saved/);
-  assert.match(app, /resolveAiReceiptTotal\(draftReference\.defaults\.amount, aiDraft\.defaults\.amount, aiDraft\.items\)/);
+  assert.match(app, /const confirmedLocalTotal = \["high", "calculated"\]\.includes\(draftReference\.totalConfidence\) \? draftReference\.defaults\.amount : ""/);
+  assert.match(app, /resolveAiReceiptTotal\(confirmedLocalTotal, aiDraft\.defaults\.amount, aiDraft\.items\)/);
   assert.match(app, /amount: resolvedTotal\.amount/);
   assert.match(app, /parserWarning = \[resolvedTotal\.warning, aiNameWarning\]/);
   assert.match(app, /Nothing was saved/);

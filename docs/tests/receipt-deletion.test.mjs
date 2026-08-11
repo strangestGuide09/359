@@ -6,13 +6,14 @@ const root = new URL("../../", import.meta.url);
 const read = path => readFile(new URL(path, root), "utf8");
 
 test("receipt deletion is audited, reversible, and payer-or-owner-gated", async () => {
-  const [app, style, migration] = await Promise.all([
+  const [app, page, style, migration] = await Promise.all([
     read("docs/app.js"),
+    read("docs/index.html"),
     read("docs/style.css"),
     read("supabase/migrations/20260809000000_receipt_soft_delete_audit.sql")
   ]);
 
-  assert.match(app, /async function deleteReceipt/);
+  assert.match(app, /function deleteReceipt/);
   assert.match(app, /delete_purchase_receipt/);
   assert.match(app, /restore_purchase_receipt/);
   assert.match(app, /It no longer affects balances or Possible Buys and remains restorable/);
@@ -40,7 +41,15 @@ test("receipt deletion is audited, reversible, and payer-or-owner-gated", async 
   assert.match(app, /Reviewed items and their reconciled total stay unchanged/);
   assert.match(app, /\$\("amount"\)\.readOnly = itemized/);
   assert.match(app, /Discard your unsaved receipt changes/);
-  assert.match(app, /Remove this receipt from the ledger\? It will stop affecting balances and Possible Buys, but it remains restorable/);
+  assert.doesNotMatch(app, /confirm\("Remove this receipt/);
+  assert.match(page, /id="remove-receipt" class="remove-receipt-dialog"[^>]*aria-labelledby="remove-receipt-title"[^>]*aria-describedby="remove-receipt-copy"/);
+  assert.match(page, /id="keep-receipt"[^>]*>Keep receipt<\/button>/);
+  assert.match(page, /id="confirm-remove-receipt"[^>]*class="danger"[^>]*>Remove receipt<\/button>/);
+  assert.match(page, /stop affecting balances and Possible Buys[^<]*restorable from Household settings/);
+  assert.match(app, /function deleteReceipt\(id\) \{[\s\S]*showModal\(\);[\s\S]*\$\("keep-receipt"\)\.focus\(\)/);
+  assert.match(app, /function confirmRemoveReceipt\(\) \{[\s\S]*delete_purchase_receipt/);
+  assert.match(app, /addEventListener\("cancel", event => \{ event\.preventDefault\(\); keepReceipt\(\); \}\)/);
+  assert.match(app, /addEventListener\("click", event => \{ if \(event\.target === \$\("remove-receipt"\)\) keepReceipt\(\); \}\)/);
   assert.match(app, /rememberRemovedReceipt\(sessionStorage, current\.id, session\.user\.id, id\)/);
   assert.match(app, /id="undo-receipt-removal"/);
   assert.match(app, /restoreRemovedReceipt\(event\.currentTarget\.dataset\.receiptId, "undo"\)/);

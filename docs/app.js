@@ -22,6 +22,7 @@ import { createFlattenedVisualDerivative, hasRememberedVisualLayout, planVisualD
 import { hasUnidentifiedAiItems, reconcileAiItemNames } from "./ai-item-names.js";
 import { resolveAiReceiptTotal } from "./ai-receipt-total.js";
 import { cleanImportedItemName } from "./imported-item-name.js";
+import { withItemSumReviewAmount } from "./receipt-review-total.js";
 
 const authStorage = createResilientAuthStorage(window.localStorage);
 const AI_IDLE_MESSAGE = "AI processing is ready to begin.";
@@ -74,6 +75,7 @@ let mode = "expense";
 let pendingPdfImport;
 let stagedPdfImport;
 let editingPurchase;
+let pendingReceiptRemovalId;
 let reviewedItems = [];
 let receiptReviewConfirmed = false;
 let expandedItemIndex = null;
@@ -585,7 +587,6 @@ function bindItemRows() {
       if (expandedItemIndex === index) requestAnimationFrame(() => document.querySelector(`[data-item="${index}"] [data-field="name"]`)?.focus());
     };
     rowElement.querySelectorAll("[data-field]").forEach(input => input.oninput = () => {
-      resetReceiptReviewConfirmation();
       const field = input.dataset.field;
       const wasMerchandise = isRestockMerchandise(reviewedItems[index].name);
       reviewedItems[index][field] = input.type === "checkbox" ? input.checked : input.value;
@@ -593,9 +594,10 @@ function bindItemRows() {
       if (field === "name") reviewedItems[index].is_tracked_for_restock = isRestockMerchandise(input.value) && (reviewedItems[index].is_tracked_for_restock || !wasMerchandise);
       if (field === "is_personal") renderItemRows();
       if (field === "name") { const restock = rowElement.querySelector('[data-field="is_tracked_for_restock"]'); restock.checked = reviewedItems[index].is_tracked_for_restock; restock.disabled = reviewedItems[index].is_personal || !isRestockMerchandise(input.value); }
+      resetReceiptReviewConfirmation(true);
       updateItemTotal();
     });
-    rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); expandedItemIndex = null; resetReceiptReviewConfirmation(); renderItemRows(); };
+    rowElement.querySelector(".remove-item").onclick = () => { reviewedItems.splice(index, 1); expandedItemIndex = null; resetReceiptReviewConfirmation(true); renderItemRows(); };
   });
 }
 function updateReceiptReviewConfirmation() {
@@ -603,9 +605,15 @@ function updateReceiptReviewConfirmation() {
   $("confirm-receipt-review").checked = receiptReviewConfirmed;
   $("confirm-receipt-review-copy").textContent = `I reviewed all ${count} ${count === 1 ? "item" : "items"} and totals.`;
 }
-function resetReceiptReviewConfirmation() {
+function resetReceiptReviewConfirmation(recalculateItemSum = false) {
   receiptReviewConfirmed = false;
   $("confirm-receipt-review").checked = false;
+  if (recalculateItemSum && pendingPdfImport?.amountSource === "item-sum") {
+    const totals = reviewedItems.map(item => item.line_total == null || item.line_total === "" ? NaN : Number(item.line_total));
+    if (totals.length && totals.every(total => Number.isFinite(total) && total >= 0) && totals.some(total => total > 0)) {
+      $("amount").value = totals.reduce((sum, total) => sum + total, 0).toFixed(2);
+    } else pendingPdfImport.amountSource = "needs-review";
+  }
 }
 function updateItemTotal() {
   updateReceiptReviewConfirmation();
@@ -621,7 +629,8 @@ function updateItemTotal() {
     return;
   }
   const difference = receiptTotal - sum;
-  $("item-total").textContent = `Reviewed items: ${money(sum)} · Receipt total: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Difference: ${money(difference)}` : " · Totals match"}`;
+  const amountLabel = pendingPdfImport?.amountSource === "item-sum" ? "Calculated from item totals — verify against receipt" : pendingPdfImport?.amountSource === "edited" ? "Entered amount" : pendingPdfImport?.amountSource === "needs-review" ? "Amount to verify" : "Receipt total";
+  $("item-total").textContent = `Reviewed items: ${money(sum)} · ${amountLabel}: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Difference: ${money(difference)}` : " · Totals match"}`;
 }
 function duplicateRestoreControl() {
   let button = $("restore-duplicate-receipt");
@@ -700,12 +709,12 @@ function confirmDiscardPdfDraft() {
 function closeEntry() { requestDiscardPdfDraft(); }
 function processedPdfImport(imported) {
   const parsed = parseReceipt(imported.pages, today());
-  return {
+  return withItemSumReviewAmount({
     ...imported,
     sanitizationLines: suggestedSanitizedLines(parsed),
     visualPlan: planVisualDerivative({ pages: imported.pages, pageSizes: imported.pageSizes, merchant: parsed.defaults.label }),
     ...parsed
-  };
+  });
 }
 function setImportChoiceMethod(method) {
   const ai = method === "ai";
@@ -1029,7 +1038,8 @@ async function pollAiReceiptResult(jobId, draftReference) {
       const aiDraft = validateAiDraft(result.draft);
       aiDraft.items = reconcileAiItemNames(aiDraft.items, draftReference.items);
       if (pendingPdfImport !== draftReference) return;
-      const resolvedTotal = resolveAiReceiptTotal(draftReference.defaults.amount, aiDraft.defaults.amount, aiDraft.items);
+      const confirmedLocalTotal = ["high", "calculated"].includes(draftReference.totalConfidence) ? draftReference.defaults.amount : "";
+      const resolvedTotal = resolveAiReceiptTotal(confirmedLocalTotal, aiDraft.defaults.amount, aiDraft.items);
       draftReference.defaults = {
         ...draftReference.defaults,
         label: aiDraft.defaults.label || draftReference.defaults.label,
@@ -1085,9 +1095,13 @@ dialog.addEventListener("cancel", event => { event.preventDefault(); closeEntry(
 $("keep-pdf-draft").onclick = keepEditingPdfDraft;
 $("confirm-discard-pdf-draft").onclick = confirmDiscardPdfDraft;
 discardPdfDraftDialog.addEventListener("cancel", event => { event.preventDefault(); keepEditingPdfDraft(); });
-$("add-item").onclick = () => { reviewedItems.push(emptyReviewedItem()); resetReceiptReviewConfirmation(); renderItemRows(); };
+$("keep-receipt").onclick = keepReceipt;
+$("confirm-remove-receipt").onclick = confirmRemoveReceipt;
+$("remove-receipt").addEventListener("cancel", event => { event.preventDefault(); keepReceipt(); });
+$("remove-receipt").addEventListener("click", event => { if (event.target === $("remove-receipt")) keepReceipt(); });
+$("add-item").onclick = () => { reviewedItems.push(emptyReviewedItem()); resetReceiptReviewConfirmation(true); renderItemRows(); };
 $("confirm-receipt-review").onchange = event => { receiptReviewConfirmed = event.currentTarget.checked; };
-$("amount").oninput = () => { resetReceiptReviewConfirmation(); updateItemTotal(); };
+$("amount").oninput = () => { if (pendingPdfImport) pendingPdfImport.amountSource = "edited"; resetReceiptReviewConfirmation(); updateItemTotal(); };
 $("entry-form").onsubmit = async event => {
   event.preventDefault();
   if (!active()) return;
@@ -1211,12 +1225,32 @@ async function restoreRemovedReceipt(id, source) {
   await loadLedger();
   return true;
 }
-async function deleteReceipt(id) {
+function keepReceipt() {
+  pendingReceiptRemovalId = undefined;
+  $("remove-receipt-error").textContent = "";
+  $("remove-receipt").close();
+}
+function deleteReceipt(id) {
   const purchase = ledger.purchases.find(item => item.id === id);
-  if (!purchase || !confirm("Remove this receipt from the ledger? It will stop affecting balances and Possible Buys, but it remains restorable from Household settings.")) return;
+  if (!purchase) return;
+  pendingReceiptRemovalId = id;
+  $("remove-receipt-error").textContent = "";
+  $("remove-receipt").showModal();
+  requestAnimationFrame(() => $("keep-receipt").focus());
+}
+async function confirmRemoveReceipt() {
+  const id = pendingReceiptRemovalId;
+  if (!id) return;
+  const button = $("confirm-remove-receipt");
+  button.disabled = true;
+  button.textContent = "Removing…";
   const { error } = await supabase.rpc("delete_purchase_receipt", { p_purchase_id: id });
-  if (error) return note(error.message);
+  button.disabled = false;
+  button.textContent = "Remove receipt";
+  if (error) { $("remove-receipt-error").textContent = error.message; return; }
   rememberRemovedReceipt(sessionStorage, current.id, session.user.id, id);
+  pendingReceiptRemovalId = undefined;
+  $("remove-receipt").close();
   note("Receipt removed from the ledger. It remains restorable.");
   await loadLedger();
 }
