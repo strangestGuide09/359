@@ -49,6 +49,7 @@ const esc = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;",
 const retryKey = "grocery-ledger-email-retry-at";
 const rememberedEmailKey = "grocery-ledger-last-email";
 const dialog = $("entry");
+const discardPdfDraftDialog = $("discard-pdf-draft");
 const aiPreviewDialog = $("ai-preview");
 const visualAiPreviewDialog = $("visual-ai-preview");
 const importChoiceDialog = $("import-choice");
@@ -661,8 +662,7 @@ function openEntry(next, defaults = {}, pdfImport) {
   dialog.showModal();
   requestAnimationFrame(() => (next === "settlement" ? $("amount") : $("label")).focus());
 }
-function closeEntry() {
-  if (pendingPdfImport && !confirm("Discard this local PDF draft? The PDF and extracted text will not be stored.")) return;
+function finishCloseEntry() {
   if (editingPurchase && formDirty && !confirm("Discard your unsaved receipt changes?")) return;
   discardPreparedVisualDerivative();
   pendingPdfImport = undefined;
@@ -673,6 +673,20 @@ function closeEntry() {
   formDirty = false;
   dialog.close();
 }
+function keepEditingPdfDraft() {
+  discardPdfDraftDialog.close();
+  requestAnimationFrame(() => $("cancel").focus());
+}
+function requestDiscardPdfDraft() {
+  if (!pendingPdfImport) { finishCloseEntry(); return; }
+  discardPdfDraftDialog.showModal();
+  requestAnimationFrame(() => $("keep-pdf-draft").focus());
+}
+function confirmDiscardPdfDraft() {
+  discardPdfDraftDialog.close();
+  finishCloseEntry();
+}
+function closeEntry() { requestDiscardPdfDraft(); }
 function processedPdfImport(imported) {
   const parsed = parseReceipt(imported.pages, today());
   return {
@@ -1057,6 +1071,9 @@ function validateAiDraft(draft) {
 $("close").onclick = closeEntry;
 $("cancel").onclick = closeEntry;
 dialog.addEventListener("cancel", event => { event.preventDefault(); closeEntry(); });
+$("keep-pdf-draft").onclick = keepEditingPdfDraft;
+$("confirm-discard-pdf-draft").onclick = confirmDiscardPdfDraft;
+discardPdfDraftDialog.addEventListener("cancel", event => { event.preventDefault(); keepEditingPdfDraft(); });
 $("add-item").onclick = () => { reviewedItems.push(emptyReviewedItem()); renderItemRows(); };
 $("amount").oninput = updateItemTotal;
 $("entry-form").onsubmit = async event => {

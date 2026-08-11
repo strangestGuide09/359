@@ -133,6 +133,10 @@ dialog { width:min(760px,calc(100% - 30px)); max-height:calc(100vh - 30px); over
 .pdf-review-dialog { width:min(1040px,calc(100% - 30px)); }
 .visual-preview-dialog { width:min(1040px,calc(100% - 30px)); }
 .import-choice-dialog { width:min(720px,calc(100% - 30px)); }
+.discard-draft-dialog { width:min(520px,calc(100% - 30px)); }
+.discard-draft-heading p { margin:0 0 7px; color:var(--orange); font-size:11px; font-weight:bold; letter-spacing:.14em; }
+.discard-draft-heading h2 { margin:0; font-size:25px; letter-spacing:-.04em; }
+.discard-draft-dialog .dialog-help { margin:14px 0 0; max-width:46ch; }
 dialog::backdrop { background:#15261d88; }
 dialog form>div:first-child button { width:44px; height:44px; padding:0; border:0; background:transparent; color:var(--muted); font-size:28px; }
 .dialog-help { color:var(--muted); font-size:14px; line-height:1.45; }
