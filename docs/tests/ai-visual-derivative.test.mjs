@@ -3,89 +3,66 @@ import test from "node:test";
 import { planVisualDerivative, VISUAL_JPEG_QUALITY, VISUAL_RENDER_SCALE } from "../ai-visual-derivative.js";
 
 const pageSize = { width: 600, height: 800 };
+const token = (text, x, y, width = 40, height = 10) => ({ text, x, y, width, height });
 const safeTable = [
-  { text: "Description", x: 56, y: 700, height: 10 },
-  { text: "Qty", x: 315, y: 700, height: 10 },
-  { text: "Total", x: 520, y: 700, height: 10 },
-  { text: "Fresh milk", x: 56, y: 650, height: 9 },
-  { text: "Total", x: 48, y: 110, height: 10 }
+  token("Customer address outside table", 48, 750, 220),
+  token("1", 20, 650, 8), token("Fresh milk 500 ml", 70, 650, 150), token("1", 330, 650, 8), token("65.00", 535, 650, 42),
+  token("2", 20, 610, 8), token("Malai Paneer 200 g", 70, 610, 170), token("1", 330, 610, 8), token("145.00", 535, 610, 48),
+  token("Total", 20, 110, 35), token("2", 330, 110, 8), token("210.00", 535, 110, 48)
 ];
+const cellIncludes = (crop, target) => crop.cells.some(cell => target.x >= cell.x && target.x + target.width <= cell.x + cell.width && target.y >= cell.y && target.y + target.height <= cell.y + cell.height);
 
-test("recognized Blinkit and Instamart item tables are eligible for automatic local visual derivatives", () => {
+test("recognized Blinkit and Instamart row geometry is eligible for automatic visual derivatives", () => {
   for (const merchant of ["Blinkit", "Instamart"]) {
-    const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant });
+    const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant, itemCount: 2 });
     assert.equal(plan?.known, true);
+    assert.equal(plan?.confidence, "high");
     assert.match(plan?.layoutKey || "", new RegExp(`:${merchant.toLowerCase()}:`));
     assert.equal(plan?.crops.length, 1);
   }
 });
 
-test("dense invoice tables retain readable raster detail and description padding", () => {
-  const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant: "Blinkit" });
+test("cell masks retain original raster detail without requiring header words", () => {
+  const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 2 });
   assert.equal(VISUAL_RENDER_SCALE, 2.5);
   assert.equal(VISUAL_JPEG_QUALITY, 0.94);
-  assert.ok(plan.crops[0].x <= 38, "description column keeps at least 3% page-width left padding");
+  assert.ok(plan.crops[0].cells.length >= 8);
+  assert.equal(cellIncludes(plan.crops[0], safeTable[2]), true);
+  assert.equal(cellIncludes(plan.crops[0], safeTable[0]), false, "customer content outside item rows is masked");
+  assert.equal(cellIncludes(plan.crops[0], safeTable.at(-1)), false, "aggregate footer is masked");
 });
 
-test("crop excludes address above and amount-in-words below while retaining item descriptions", () => {
-  const tokens = [
-    { text: "Delivery Address: Ritesh, 359 Example Street", x: 48, y: 735, height: 10 },
-    { text: "Item Description", x: 74, y: 700, height: 10 },
-    { text: "Qty", x: 330, y: 700, height: 10 },
-    { text: "Total", x: 535, y: 700, height: 10 },
-    { text: "Akshayakalpa Organic Malai Paneer (Pack)", x: 68, y: 650, height: 9 },
-    { text: "Everyday Apple (Pack)", x: 68, y: 610, height: 9 },
-    { text: "Total", x: 48, y: 110, height: 10 },
-    { text: "Amount in Words: Two Thousand Three Hundred Rupees Only", x: 48, y: 82, height: 10 }
+test("multi-page continuation rows and multiline descriptions share geometry without repeated headers", () => {
+  const page = (start, lastName, subtotal) => [
+    token(String(start), 20, 188, 8), token("Everyday Apple", 70, 188, 120), token("(Pack)", 70, 176, 42), token("2", 330, 188, 8), token("100.00", 535, 188, 48),
+    token(String(start + 1), 20, 146, 8), token(lastName, 70, 146, 260), token("1", 330, 146, 8), token("145.00", 535, 146, 48),
+    token("Total", 20, 110, 35), token("4", 330, 110, 8), token(subtotal, 535, 110, 48)
   ];
-  const crop = planVisualDerivative({ pages: [tokens], pageSizes: [pageSize], merchant: "Blinkit" }).crops[0];
-  const withinVerticalCrop = token => token.y >= crop.y && token.y + token.height <= crop.y + crop.height;
-  assert.equal(withinVerticalCrop(tokens[0]), false, "address above header is excluded");
-  assert.equal(withinVerticalCrop(tokens.at(-1)), false, "spelled total below footer is excluded");
-  assert.equal(withinVerticalCrop(tokens[4]), true);
-  assert.equal(withinVerticalCrop(tokens[5]), true);
-  assert.ok(crop.x <= tokens[4].x, "full description column remains inside the crop");
-  assert.ok(crop.y > 120, "crop begins above the complete footer glyph row");
-  assert.equal(crop.y + crop.height, 710, "crop ends at the header glyph boundary without upper-page padding");
-});
-
-test("ForwardInvoice page subtotal rows are excluded without clipping the last products", () => {
-  const forwardPage = ({ quantity, amount, lastName }) => [
-    { text: "Item Description", x: 74, y: 700, height: 10 },
-    { text: "Qty", x: 330, y: 700, height: 10 },
-    { text: "Total", x: 535, y: 700, height: 10 },
-    { text: "Everyday Apple (Pack)", x: 74, y: 188, height: 9 },
-    { text: lastName, x: 74, y: 146, height: 9 },
-    { text: "Total", x: 48, y: 110, height: 10 },
-    { text: String(quantity), x: 330, y: 109, height: 10 },
-    { text: amount, x: 535, y: 111, height: 10 },
-    { text: "Amount in Words", x: 48, y: 82, height: 10 }
-  ];
-  const pages = [
-    forwardPage({ quantity: 4, amount: "₹292", lastName: "Akshayakalpa Organic Malai Paneer (Pack)" }),
-    forwardPage({ quantity: 7, amount: "₹603", lastName: "Akshayakalpa Organic Set Cup Curd (Cup)" })
-  ];
-  const plan = planVisualDerivative({ pages, pageSizes: [pageSize, pageSize], merchant: "Blinkit" });
+  const pages = [page(1, "Akshayakalpa Malai Paneer", "292.00"), page(3, "Akshayakalpa Set Cup Curd", "603.00")];
+  const plan = planVisualDerivative({ pages, pageSizes: [pageSize, pageSize], merchant: "Blinkit", itemCount: 4 });
   assert.equal(plan.crops.length, 2);
-
-  pages.forEach((tokens, pageIndex) => {
-    const crop = plan.crops[pageIndex];
-    const included = token => token.y >= crop.y && token.y + token.height <= crop.y + crop.height;
-    assert.equal(included(tokens[4]), true, `page ${pageIndex + 1} last real product remains visible`);
-    assert.equal(included(tokens[5]), false, `page ${pageIndex + 1} Total footer label is excluded`);
-    assert.equal(included(tokens[6]), false, `page ${pageIndex + 1} aggregate quantity is excluded`);
-    assert.equal(included(tokens[7]), false, `page ${pageIndex + 1} aggregate amount is excluded`);
+  assert.equal(plan.confidence, "high");
+  pages.forEach((tokens, index) => {
+    assert.equal(cellIncludes(plan.crops[index], tokens[2]), true, `page ${index + 1} multiline description retained`);
+    assert.equal(cellIncludes(plan.crops[index], tokens[6]), true, `page ${index + 1} last product retained`);
+    assert.equal(cellIncludes(plan.crops[index], tokens.at(-1)), false, `page ${index + 1} subtotal excluded`);
   });
 });
 
-test("an unfamiliar safe layout requires a locally remembered approval", () => {
-  const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant: "Neighbourhood Grocer" });
+test("unfamiliar but coherent geometry requires local approval", () => {
+  const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant: "Neighbourhood Grocer", itemCount: 2 });
   assert.equal(plan?.known, false);
+  assert.equal(plan?.confidence, "high");
   assert.match(plan?.layoutKey || "", /:new:/);
 });
 
-test("a visual derivative is never planned unless each page independently has a bounded item table", () => {
-  const missingFooter = safeTable.filter(token => !(token.text === "Total" && token.y === 110));
-  assert.equal(planVisualDerivative({ pages: [safeTable, missingFooter], pageSizes: [pageSize, pageSize], merchant: "Blinkit" }), undefined);
-  assert.equal(planVisualDerivative({ pages: [safeTable], pageSizes: [{ width: 0, height: 800 }], merchant: "Blinkit" }), undefined);
+test("broken, private, or discontinuous layouts fail closed", () => {
+  const privateRow = safeTable.map(value => ({ ...value }));
+  privateRow[2].text = "Delivery address: 359 Example Street";
+  const discontinuous = safeTable.map(value => ({ ...value }));
+  discontinuous[5].text = "4";
+  assert.equal(planVisualDerivative({ pages: [privateRow], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 2 }), undefined);
+  assert.equal(planVisualDerivative({ pages: [discontinuous], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 2 }), undefined);
+  assert.equal(planVisualDerivative({ pages: [[token("Milk", 70, 600, 80)]], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 1 }), undefined);
+  assert.equal(planVisualDerivative({ pages: [safeTable], pageSizes: [{ width: 0, height: 800 }], merchant: "Blinkit", itemCount: 2 }), undefined);
 });

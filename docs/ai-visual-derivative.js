@@ -1,4 +1,4 @@
-const VISUAL_SANITIZER_VERSION = "visual-table-v4";
+const VISUAL_SANITIZER_VERSION = "visual-cells-v5";
 const MAX_DERIVATIVE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 5;
 export const VISUAL_RENDER_SCALE = 2.5;
@@ -12,6 +12,15 @@ function normalized(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function geometryHash(value) {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 function vendorFor(merchant) {
   const value = normalized(merchant);
   if (value.includes("blinkit")) return "blinkit";
@@ -19,83 +28,90 @@ function vendorFor(merchant) {
   return "";
 }
 
-function tokenMatches(token, expression) {
-  return expression.test(String(token.text || "").trim());
+const privateToken = /(?:\b(?:customer|buyer|recipient|deliver(?:y|ed)?|ship(?:ping|ped)?|bill(?:ing|ed)?|address|phone|mobile|email|contact|landmark|payment|card|upi|transaction|account|bank|order\s*(?:id|number|no)|invoice\s*(?:id|number|no))\b|@|\b(?:\+?91[\s-]?)?[6-9]\d{9}\b)/i;
+const integerToken = token => /^\d{1,3}$/.test(String(token.text || "").trim());
+
+function dominantSerialX(pages, pageSizes) {
+  const candidates = pages.flatMap((tokens, pageIndex) => tokens
+    .filter(token => integerToken(token) && number(token.x) <= number(pageSizes[pageIndex]?.width) * 0.28)
+    .map(token => ({ x: number(token.x) / number(pageSizes[pageIndex]?.width), value: Number(token.text) })));
+  if (candidates.length < 2) return undefined;
+  const bins = new Map();
+  candidates.forEach(candidate => {
+    const key = Math.round(candidate.x * 50) / 50;
+    const values = bins.get(key) || [];
+    values.push(candidate);
+    bins.set(key, values);
+  });
+  const best = [...bins.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+  if (!best || best[1].length < 2) return undefined;
+  return best[0];
 }
 
-function nearestToken(tokens, predicate, targetY, direction) {
-  const candidates = tokens.filter(token => predicate(token) && (direction === "below" ? token.y < targetY : token.y > targetY));
-  if (!candidates.length) return undefined;
-  return candidates.sort((a, b) => Math.abs(a.y - targetY) - Math.abs(b.y - targetY))[0];
-}
-
-function detectTableCrop(tokens, pageSize) {
+function detectTableCells(tokens, pageSize, serialXRatio) {
   const width = number(pageSize?.width);
   const height = number(pageSize?.height);
   if (!width || !height || !Array.isArray(tokens) || !tokens.length) return undefined;
-
-  const description = tokens.find(token => tokenMatches(token, /^(item\s*)?description$/i));
-  const quantity = tokens.find(token => tokenMatches(token, /^(qty|quantity)\.?$/i));
-  const total = tokens.find(token => tokenMatches(token, /^total$/i) && token.y >= (description?.y || -Infinity) - height * 0.03);
-  if (!description || !quantity || !total) return undefined;
-
-  const headerTokens = [description, quantity, total];
-  const headerY = headerTokens.reduce((sum, token) => sum + token.y, 0) / headerTokens.length;
-  const footer = nearestToken(
-    tokens,
-    token => tokenMatches(token, /^total$/i) && token.x < description.x,
-    headerY,
-    "below"
-  );
-  if (!footer) return undefined;
-
-  // ForwardInvoice pages finish the table with an aggregate row whose
-  // description cell is blank while the quantity and amount columns contain
-  // page subtotals. Use its shared baseline to cut away the complete row; its
-  // values must not reach either the preview or the submitted derivative.
-  const footerRowTolerance = Math.max(3, number(footer.height) * 0.75);
-  const footerRow = tokens.filter(token => Math.abs(number(token.y) - number(footer.y)) <= footerRowTolerance);
-  const footerRowTop = Math.max(...footerRow.map(token => number(token.y) + number(token.height)));
-  const footerClearance = Math.max(1, number(footer.height) * 0.15);
-
-  const left = Math.max(0, description.x - width * 0.03);
-  const right = Math.min(width, width - Math.max(8, width * 0.008));
-  // Privacy boundary: include the header glyph boxes and footer baseline, but
-  // never add outward page margins that can expose adjacent receipt sections.
-  const top = Math.min(height, Math.max(...headerTokens.map(token => token.y + number(token.height))));
-  const bottom = Math.max(0, Math.min(top, footerRowTop + footerClearance));
-  const cropWidth = right - left;
-  const cropHeight = top - bottom;
-  if (cropWidth < width * 0.35 || cropHeight < height * 0.12) return undefined;
-
-  return {
-    x: left,
-    y: bottom,
-    width: cropWidth,
-    height: cropHeight,
-    pageWidth: width,
-    pageHeight: height
-  };
+  const serials = tokens
+    .filter(token => integerToken(token) && Math.abs(number(token.x) / width - serialXRatio) <= 0.025)
+    .map(token => ({ ...token, serial: Number(token.text) }))
+    .sort((a, b) => b.y - a.y);
+  if (!serials.length) return undefined;
+  const gaps = serials.slice(0, -1).map((token, index) => token.y - serials[index + 1].y).filter(gap => gap > 8 && gap < height * 0.18);
+  const typicalGap = gaps.length ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : height * 0.065;
+  const cells = [];
+  let privacyRisk = false;
+  serials.forEach((serial, index) => {
+    const previous = serials[index - 1];
+    const next = serials[index + 1];
+    const upper = previous ? (previous.y + serial.y) / 2 : Math.min(height, serial.y + typicalGap * 0.6);
+    const lower = next ? (serial.y + next.y) / 2 : Math.max(0, serial.y - typicalGap * 0.55);
+    const row = tokens.filter(token => token.y <= upper && token.y >= lower && token.x >= Math.max(0, serial.x - width * 0.015) && token.x + number(token.width) <= width * 0.985);
+    if (row.some(token => privateToken.test(String(token.text || "")))) privacyRisk = true;
+    row.filter(token => !privateToken.test(String(token.text || ""))).forEach(token => {
+      const padX = Math.max(1.5, number(token.height) * 0.18);
+      const padY = Math.max(1, number(token.height) * 0.14);
+      cells.push({ x: Math.max(0, number(token.x) - padX), y: Math.max(0, number(token.y) - padY), width: Math.min(width - number(token.x) + padX, Math.max(2, number(token.width)) + padX * 2), height: Math.min(height - number(token.y) + padY, Math.max(2, number(token.height)) + padY * 2) });
+    });
+  });
+  if (privacyRisk || cells.length < serials.length * 3) return undefined;
+  const left = Math.max(0, Math.min(...cells.map(cell => cell.x)));
+  const right = Math.min(width, Math.max(...cells.map(cell => cell.x + cell.width)));
+  const bottom = Math.max(0, Math.min(...cells.map(cell => cell.y)));
+  const top = Math.min(height, Math.max(...cells.map(cell => cell.y + cell.height)));
+  if (right - left < width * 0.35 || top - bottom < height * 0.04) return undefined;
+  return { x: left, y: bottom, width: right - left, height: top - bottom, pageWidth: width, pageHeight: height, cells, serials: serials.map(token => token.serial) };
 }
 
 /**
  * Identify a receipt line-item table without transmitting any source material.
  * A plan exists only when every page has an independently identifiable table.
  */
-export function planVisualDerivative({ pages, pageSizes, merchant }) {
+export function planVisualDerivative({ pages, pageSizes, merchant, itemCount }) {
   if (!Array.isArray(pages) || !Array.isArray(pageSizes) || !pages.length || pages.length > MAX_PAGES) return undefined;
-  const crops = pages.map((tokens, index) => detectTableCrop(tokens, pageSizes[index]));
+  const serialXRatio = dominantSerialX(pages, pageSizes);
+  if (serialXRatio == null) return undefined;
+  const crops = pages.map((tokens, index) => detectTableCells(tokens, pageSizes[index], serialXRatio));
   if (crops.some(crop => !crop)) return undefined;
 
+  const serials = crops.flatMap(crop => crop.serials);
+  const unique = new Set(serials);
+  const ordered = [...serials].sort((a, b) => a - b);
+  const contiguous = unique.size === serials.length && ordered.every((value, index) => index === 0 || value === ordered[index - 1] + 1);
+  if (!contiguous) return undefined;
+
   const vendor = vendorFor(merchant);
+  const itemAgreement = Number.isInteger(itemCount) && itemCount > 0 ? Math.abs(serials.length - itemCount) <= 1 : false;
+  const confidence = itemAgreement && serials.length >= 2 ? "high" : "medium";
   const geometry = crops
-    .map(crop => [crop.x, crop.y, crop.width, crop.height].map(value => Math.round(value)).join(","))
+    .map(crop => `${[crop.x, crop.y, crop.width, crop.height].map(value => Math.round(value)).join(",")}:${crop.cells.map(cell => [cell.x, cell.y, cell.width, cell.height].map(value => Math.round(value)).join(",")).join(";")}`)
     .join("|");
   return {
     crops,
     vendor,
-    known: Boolean(vendor),
-    layoutKey: `${VISUAL_SANITIZER_VERSION}:${vendor || "new"}:${geometry}`
+    known: Boolean(vendor) && confidence === "high",
+    confidence,
+    layoutKey: `${VISUAL_SANITIZER_VERSION}:${vendor || "new"}:${geometryHash(geometry)}`
   };
 }
 
@@ -203,7 +219,18 @@ export async function createFlattenedVisualDerivative(pdfjsLib, sourcePdfBytes, 
       const table = document.createElement("canvas");
       table.width = sourceWidth;
       table.height = sourceHeight;
-      table.getContext("2d", { alpha: false }).drawImage(fullPage, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+      const tableContext = table.getContext("2d", { alpha: false });
+      tableContext.fillStyle = "#ffffff";
+      tableContext.fillRect(0, 0, sourceWidth, sourceHeight);
+      for (const cell of crop.cells || []) {
+        const cellX = Math.max(sourceX, Math.floor(cell.x * scaleX));
+        const cellY = Math.max(sourceY, Math.floor((crop.pageHeight - (cell.y + cell.height)) * scaleY));
+        const cellRight = Math.min(sourceX + sourceWidth, Math.ceil((cell.x + cell.width) * scaleX));
+        const cellBottom = Math.min(sourceY + sourceHeight, Math.ceil((crop.pageHeight - cell.y) * scaleY));
+        const cellWidth = cellRight - cellX;
+        const cellHeight = cellBottom - cellY;
+        if (cellWidth > 0 && cellHeight > 0) tableContext.drawImage(fullPage, cellX, cellY, cellWidth, cellHeight, cellX - sourceX, cellY - sourceY, cellWidth, cellHeight);
+      }
       const image = await canvasJpeg(canvasForCrop(table, `Receipt item table — page ${index + 1}`));
       previews.push(image.previewUrl);
       images.push(image);

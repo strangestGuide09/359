@@ -13,7 +13,7 @@ test("local PDF extraction preserves positioned tokens without persisting receip
   assert.match(app, /height:\s*Number\(item\.height\)/);
   assert.match(app, /sourcePdfBytes/);
   assert.match(app, /pageSizes\.push\(\{ width: viewport\.width, height: viewport\.height \}\)/);
-  assert.match(app, /visualPlan:\s*planVisualDerivative\(\{ pages: imported\.pages, pageSizes: imported\.pageSizes, merchant: parsed\.defaults\.label \}\)/);
+  assert.match(app, /visualPlan:\s*planVisualDerivative\(\{ pages: imported\.pages, pageSizes: imported\.pageSizes, merchant: parsed\.defaults\.label, itemCount: parsed\.items\.length \}\)/);
   assert.doesNotMatch(app, /const rows = new Map\(\)/);
   assert.doesNotMatch(app, /p_(?:pdf|raw|extracted|receipt_text)/i);
 });
@@ -23,7 +23,8 @@ test("safe visual tables use vendor recognition or one local approval before AI 
   assert.match(app, /visualPlan\.known \|\| hasRememberedVisualLayout\(prepared\.layoutKey\)/);
   assert.match(app, /openVisualAiPreview\(prepared\)/);
   assert.match(app, /rememberVisualLayout\(prepared\.layoutKey\)/);
-  assert.match(app, /openTextAiPreview\(\)/);
+  assert.match(app, /useLocalReviewAfterUnsafeVisual\(draftReference\)/);
+  assert.doesNotMatch(app, /openTextAiPreview|sanitized-receipt\.pdf|buildSanitizedPdf/);
 });
 
 test("invoice processing is chosen before an editable review opens", async () => {
@@ -37,7 +38,7 @@ test("invoice processing is chosen before an editable review opens", async () =>
   assert.match(app, /function startAiPdfImport\(\)/);
   assert.doesNotMatch(page, /Need help with a difficult receipt|class="ai-improve"|id="prepare-ai"/);
   assert.match(app, /selected processing method got wrong/);
-  assert.match(app, /Private AI processing; the original receipt remains on this device/);
+  assert.match(app, /Only the original item-table pixels shown below will be sent/);
   assert.doesNotMatch(app, /Need help with a difficult receipt|Prepare private AI preview|local parser got wrong/);
   assert.match(app, /showImportProcessing\("ai"\)/);
   assert.match(app, /openEntry\("expense", draftReference\.defaults, draftReference\)/);
@@ -55,12 +56,22 @@ test("AI input inspection is local-only and reuses the exact prepared derivative
   const inspection = app.slice(app.indexOf("async function viewAiInput()"), app.indexOf("viewAiInputButton.onclick"));
   assert.match(inspection, /createFlattenedVisualDerivative/);
   assert.match(inspection, /openVisualAiPreview\(prepared\)/);
-  assert.match(inspection, /openTextAiPreview\(processed\)/);
-  assert.match(inspection, /Nothing was sent or stored/);
+  assert.match(inspection, /private visual item-table isolate could not be created safely/);
+  assert.match(inspection, /Nothing was sent/);
   assert.doesNotMatch(inspection, /submitAiDerivative|fetch\(/);
   assert.match(app, /preparedVisualDerivative\?\.layoutKey === visualPlan\.layoutKey[\s\S]*preparedVisualDerivative[\s\S]*submitAiDerivative/);
   assert.match(inspection, /createFlattenedVisualDerivative\(pdfjsLib, processed\.sourcePdfBytes, processed\.visualPlan\)/);
   assert.match(app, /function returnToImportChoice\(\)[\s\S]*importChoiceDialog\.showModal\(\)/);
+  assert.ok(app.indexOf("await submitAiDerivative") < app.indexOf("rememberVisualLayout(prepared.layoutKey)"), "approval is remembered only after submission succeeds");
+});
+
+test("visual derivatives mask the page and copy only approved original-pixel cells", async () => {
+  const visual = await read("docs/ai-visual-derivative.js");
+  assert.match(visual, /tableContext\.fillStyle = "#ffffff";[\s\S]*tableContext\.fillRect\(0, 0, sourceWidth, sourceHeight\)/);
+  assert.match(visual, /for \(const cell of crop\.cells \|\| \[\]\)/);
+  assert.match(visual, /tableContext\.drawImage\(fullPage, cellX, cellY, cellWidth, cellHeight/);
+  assert.doesNotMatch(visual, /drawImage\(fullPage, sourceX, sourceY, sourceWidth, sourceHeight/);
+  assert.doesNotMatch(visual, /cells\.push\(\{[^}]*text:/);
 });
 
 test("an unknown receipt total is not rendered as zero or a negative difference", async () => {

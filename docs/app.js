@@ -16,7 +16,7 @@ import { focusRestockReceipt } from "./restock-review.js";
 import { settlementAmountError, settlementConfirmation, settlementState } from "./settlement-flow.js";
 import { createResilientAuthStorage, restoreSessionWithRetry, sessionErrorKind } from "./session-restore.js";
 import { hasUnsafeDraft, versionAction } from "./version-check.js";
-import { AI_SANITIZER_VERSION, aiParseMessage, buildSanitizedPdf, suggestedSanitizedLines, validateSanitizedText } from "./ai-receipt-sanitizer.js";
+import { aiParseMessage } from "./ai-receipt-sanitizer.js";
 import { AI_EXPECTED_TIME_COPY, AI_MAX_RETRY_AFTER_SECONDS, AI_POLL_ATTEMPTS, aiNetworkPollDecision, aiPollDecision, aiProgressMessage, aiRetryDelayMs } from "./ai-receipt-flow.js";
 import { createFlattenedVisualDerivative, hasRememberedVisualLayout, planVisualDerivative, rememberVisualLayout, revokeVisualDerivativePreview } from "./ai-visual-derivative.js";
 import { hasUnidentifiedAiItems, reconcileAiItemNames } from "./ai-item-names.js";
@@ -28,7 +28,7 @@ const authStorage = createResilientAuthStorage(window.localStorage);
 const AI_IDLE_MESSAGE = "AI processing is ready to begin.";
 document.querySelector("footer").textContent = "Original PDFs stay local · only an explicitly reviewed private derivative may be sent for Private AI processing · no payment method, address, card, or UPI details persist";
 document.querySelector("#pdf-items > .dialog-help").textContent = "Edit or remove anything the selected processing method got wrong. Only these reviewed fields will sync.";
-document.querySelector("#visual-ai-preview .dialog-help").textContent = "This new layout was cropped locally. Only the item-table images shown below will be rebuilt into a new PDF for Private AI processing; the original receipt remains on this device.";
+document.querySelector("#visual-ai-preview .dialog-help").textContent = "Only the original item-table pixels shown below will be sent. Everything outside approved item cells was masked locally; the original receipt remains on this device.";
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: authStorage }
 });
@@ -52,7 +52,6 @@ const retryKey = "grocery-ledger-email-retry-at";
 const rememberedEmailKey = "grocery-ledger-last-email";
 const dialog = $("entry");
 const discardPdfDraftDialog = $("discard-pdf-draft");
-const aiPreviewDialog = $("ai-preview");
 const visualAiPreviewDialog = $("visual-ai-preview");
 const importChoiceDialog = $("import-choice");
 const importProcessingDialog = $("import-processing");
@@ -695,8 +694,6 @@ function finishCloseEntry() {
   editingPurchase = undefined;
   reviewedItems = [];
   receiptReviewConfirmed = false;
-  $("local-extracted-reference").value = "";
-  $("sanitized-lines").value = "";
   formDirty = false;
   dialog.close();
 }
@@ -718,8 +715,7 @@ function processedPdfImport(imported) {
   const parsed = parseReceipt(imported.pages, today());
   return withItemSumReviewAmount({
     ...imported,
-    sanitizationLines: suggestedSanitizedLines(parsed),
-    visualPlan: planVisualDerivative({ pages: imported.pages, pageSizes: imported.pageSizes, merchant: parsed.defaults.label }),
+    visualPlan: planVisualDerivative({ pages: imported.pages, pageSizes: imported.pageSizes, merchant: parsed.defaults.label, itemCount: parsed.items.length }),
     ...parsed
   });
 }
@@ -823,11 +819,7 @@ async function viewAiInput() {
       aiInputPreviewMode = "visual";
       closeImportChoice({ discard: false });
       openVisualAiPreview(prepared);
-    } else {
-      aiInputPreviewMode = "text";
-      closeImportChoice({ discard: false });
-      openTextAiPreview(processed);
-    }
+    } else errorBox.textContent = "A private visual item-table isolate could not be created safely. Nothing was sent. Process locally to review this invoice.";
   } catch (error) {
     errorBox.textContent = `Could not prepare a safe AI-input preview: ${error.message}. Nothing was sent or stored.`;
   } finally {
@@ -840,19 +832,6 @@ function discardPreparedVisualDerivative() {
   if (!preparedVisualDerivative) return;
   revokeVisualDerivativePreview(preparedVisualDerivative);
   preparedVisualDerivative = undefined;
-}
-function openTextAiPreview(draft = pendingPdfImport) {
-  if (!draft) return;
-  $("sanitized-lines").value = (draft.sanitizationLines || []).join("\n");
-  $("local-extracted-reference").value = draft.localExtractedText || "";
-  $("sanitized-lines").readOnly = aiInputPreviewMode === "text";
-  $("confirm-sanitized").closest("label").classList.toggle("hide", aiInputPreviewMode === "text");
-  $("local-extracted-reference").closest("details").classList.toggle("hide", aiInputPreviewMode === "text");
-  $("submit-ai").textContent = aiInputPreviewMode === "text" ? "Back to processing choices" : "Send redacted derivative";
-  $("confirm-sanitized").checked = false;
-  $("ai-preview-error").textContent = "";
-  aiPreviewDialog.showModal();
-  requestAnimationFrame(() => $("sanitized-lines").focus());
 }
 function renderVisualDerivativePreview(prepared) {
   const pages = $("visual-derivative-pages");
@@ -903,7 +882,7 @@ async function prepareAi() {
   if (!draftReference) return;
   const visualPlan = draftReference.visualPlan;
   if (!visualPlan || !draftReference.sourcePdfBytes) {
-    openTextAiPreview();
+    useLocalReviewAfterUnsafeVisual(draftReference);
     return;
   }
   setAiProcessing("Preparing a local visual receipt-table derivative…", true);
@@ -926,16 +905,21 @@ async function prepareAi() {
   } catch (error) {
     if (pendingPdfImport === draftReference) {
       discardPreparedVisualDerivative();
-      setAiProcessing(AI_IDLE_MESSAGE);
-      openTextAiPreview();
+      useLocalReviewAfterUnsafeVisual(draftReference);
     }
   }
 }
-function closeAiPreview() { aiPreviewDialog.close(); }
+function useLocalReviewAfterUnsafeVisual(draftReference) {
+  closeImportProcessing();
+  draftReference.importProcessingMethod = "";
+  draftReference.processedBy = "local";
+  draftReference.parserWarning = [draftReference.parserWarning, "Private AI was not used because a safe visual item-table isolate could not be created. Review the local result instead."].filter(Boolean).join(" ");
+  openEntry("expense", draftReference.defaults, draftReference);
+  note("Nothing was sent to AI. A safe visual item-table isolate could not be created; continue with the local review.");
+}
 function cancelAiImport() {
   if (aiInputPreviewMode) returnToImportChoice();
   else {
-  aiPreviewDialog.close();
   visualAiPreviewDialog.close();
   discardPreparedVisualDerivative();
   pendingPdfImport = undefined;
@@ -944,37 +928,12 @@ function cancelAiImport() {
 }
 
 function returnToImportChoice() {
-  aiPreviewDialog.close();
   visualAiPreviewDialog.close();
   $("visual-derivative-pages").replaceChildren();
   aiInputPreviewMode = "";
   importChoiceDialog.showModal();
   requestAnimationFrame(() => $("view-ai-input").focus());
 }
-$("close-ai-preview").onclick = cancelAiImport;
-$("cancel-ai-preview").onclick = cancelAiImport;
-aiPreviewDialog.addEventListener("cancel", event => { event.preventDefault(); cancelAiImport(); });
-$("ai-preview-form").onsubmit = async event => {
-  event.preventDefault();
-  if (aiInputPreviewMode === "text") return returnToImportChoice();
-  const errorBox = $("ai-preview-error");
-  const button = $("submit-ai");
-  if (!pendingPdfImport || !session?.access_token || !current?.id) return;
-  if (!$("confirm-sanitized").checked) { errorBox.textContent = "Review the preview and confirm that it contains no private information."; return; }
-  try {
-    const lines = validateSanitizedText($("sanitized-lines").value);
-    const derivative = buildSanitizedPdf(lines.join("\n"));
-    button.disabled = true;
-    button.textContent = "Submitting…";
-    await submitAiDerivative({ derivative, sanitizerVersion: AI_SANITIZER_VERSION, pageCount: 1, filename: "sanitized-receipt.pdf" });
-    closeAiPreview();
-  } catch (error) {
-    errorBox.textContent = error.message || aiParseMessage();
-  } finally {
-    button.disabled = false;
-    button.textContent = "Send redacted derivative";
-  }
-};
 $("close-visual-ai-preview").onclick = cancelAiImport;
 $("cancel-visual-ai-preview").onclick = cancelAiImport;
 visualAiPreviewDialog.addEventListener("cancel", event => { event.preventDefault(); cancelAiImport(); });
@@ -989,8 +948,8 @@ $("visual-ai-preview-form").onsubmit = async event => {
   try {
     button.disabled = true;
     button.textContent = "Submitting…";
-    rememberVisualLayout(prepared.layoutKey);
     await submitAiDerivative({ derivative: prepared.derivative, sanitizerVersion: prepared.sanitizerVersion, pageCount: prepared.pageCount, filename: "sanitized-receipt-tables.pdf" });
+    rememberVisualLayout(prepared.layoutKey);
     closeVisualAiPreview();
   } catch (error) {
     errorBox.textContent = error.message || aiParseMessage();
@@ -1185,8 +1144,6 @@ $("entry-form").onsubmit = async event => {
           pendingPdfImport = undefined;
           reviewedItems = [];
           receiptReviewConfirmed = false;
-          $("local-extracted-reference").value = "";
-          $("sanitized-lines").value = "";
           formDirty = false;
           dialog.close();
         } else restoreButton.disabled = false;
@@ -1205,8 +1162,6 @@ $("entry-form").onsubmit = async event => {
   editingPurchase = undefined;
   reviewedItems = [];
   receiptReviewConfirmed = false;
-  $("local-extracted-reference").value = "";
-  $("sanitized-lines").value = "";
   formDirty = false;
   dialog.close();
   note(mode === "edit" ? "Receipt updated and shared." : `${mode === "settlement" ? "Settlement" : "Expense"} saved and shared.`);
@@ -1343,7 +1298,6 @@ async function readPdfLocally(file) {
   return {
     exactHash,
     contentHash: await sha256(normalized),
-    localExtractedText: extractedText,
     sourcePdfBytes,
     pageSizes,
     pages

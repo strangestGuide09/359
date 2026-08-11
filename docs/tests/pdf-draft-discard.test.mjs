@@ -21,5 +21,5 @@ test("safe dismissal keeps editing while confirmed discard uses existing cleanup
   assert.match(app, /function keepEditingPdfDraft\(\) \{[\s\S]*discardPdfDraftDialog\.close\(\);[\s\S]*\$\("cancel"\)\.focus\(\)/);
   assert.match(app, /discardPdfDraftDialog\.addEventListener\("cancel", event => \{ event\.preventDefault\(\); keepEditingPdfDraft\(\); \}\)/);
   assert.match(app, /function confirmDiscardPdfDraft\(\) \{[\s\S]*discardPdfDraftDialog\.close\(\);[\s\S]*finishCloseEntry\(\);/);
-  assert.match(app, /function finishCloseEntry\(\) \{[\s\S]*discardPreparedVisualDerivative\(\);[\s\S]*pendingPdfImport = undefined;[\s\S]*reviewedItems = \[\];[\s\S]*\$\("local-extracted-reference"\)\.value = "";[\s\S]*\$\("sanitized-lines"\)\.value = "";[\s\S]*dialog\.close\(\);/);
+  assert.match(app, /function finishCloseEntry\(\) \{[\s\S]*discardPreparedVisualDerivative\(\);[\s\S]*pendingPdfImport = undefined;[\s\S]*reviewedItems = \[\];[\s\S]*dialog\.close\(\);/);
 });
