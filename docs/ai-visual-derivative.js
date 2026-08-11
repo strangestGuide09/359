@@ -1,4 +1,4 @@
-const VISUAL_SANITIZER_VERSION = "visual-table-v3";
+const VISUAL_SANITIZER_VERSION = "visual-table-v4";
 const MAX_DERIVATIVE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 5;
 export const VISUAL_RENDER_SCALE = 2.5;
@@ -49,12 +49,21 @@ function detectTableCrop(tokens, pageSize) {
   );
   if (!footer) return undefined;
 
+  // ForwardInvoice pages finish the table with an aggregate row whose
+  // description cell is blank while the quantity and amount columns contain
+  // page subtotals. Use its shared baseline to cut away the complete row; its
+  // values must not reach either the preview or the submitted derivative.
+  const footerRowTolerance = Math.max(3, number(footer.height) * 0.75);
+  const footerRow = tokens.filter(token => Math.abs(number(token.y) - number(footer.y)) <= footerRowTolerance);
+  const footerRowTop = Math.max(...footerRow.map(token => number(token.y) + number(token.height)));
+  const footerClearance = Math.max(1, number(footer.height) * 0.15);
+
   const left = Math.max(0, description.x - width * 0.03);
   const right = Math.min(width, width - Math.max(8, width * 0.008));
   // Privacy boundary: include the header glyph boxes and footer baseline, but
   // never add outward page margins that can expose adjacent receipt sections.
   const top = Math.min(height, Math.max(...headerTokens.map(token => token.y + number(token.height))));
-  const bottom = Math.max(0, footer.y);
+  const bottom = Math.max(0, Math.min(top, footerRowTop + footerClearance));
   const cropWidth = right - left;
   const cropHeight = top - bottom;
   if (cropWidth < width * 0.35 || cropHeight < height * 0.12) return undefined;

@@ -11,12 +11,12 @@ export const RECEIPT_EXTRACTION_SCHEMA = {
     currency: { type: "string", description: "ISO 4217 receipt currency. Return INR only." },
     line_items: {
       type: "array",
-      description: "Purchased product and explicit fee lines only. Return an empty name when a row is readable but its product or fee name is not; never invent a name. Never return payment, address, contact, order, invoice, customer, tax-summary or identifier fields.",
+      description: "Purchased product and explicit fee lines only. Every emitted line item must have a nonempty printed product or explicit-fee name; omit unreadable or unnamed rows rather than inventing a name. Never emit subtotal, tax-summary, quantity-summary, total, footer, payment, address, contact, order, invoice, customer or identifier rows.",
       items: {
         type: "object",
         description: "One purchased item or explicit fee line, with only the approved receipt fields.",
         properties: {
-          name: { type: "string", description: "Purchased item or explicit fee name." },
+          name: { type: "string", description: "Nonempty printed purchased-product or explicit-fee name. Never use a generic placeholder." },
           quantity: { type: "number", description: "Purchased quantity when stated; use 1 when the receipt clearly shows one item." },
           unit: { type: "string", description: "Package or quantity unit when stated, otherwise an empty string." },
           line_total: { type: "number", description: "Final line total in INR after line-level discount." }

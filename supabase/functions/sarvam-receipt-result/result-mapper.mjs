@@ -52,14 +52,10 @@ const isPositiveBoundedNumber = (value, max) => {
   const number = boundedNumber(value, max);
   return number != null && number > 0;
 };
-const reviewedItemName = (value, displayOrder) => {
-  // The extraction schema explicitly permits an empty name when the visible
-  // row cannot be read. Preserve that row for manual review, but do not let a
-  // malformed provider type, control character, or oversized value bypass the
-  // strict result contract by turning it into the same placeholder.
-  if (value == null || (typeof value === "string" && !value.trim())) return `Unidentified receipt line ${displayOrder + 1}`;
-  return boundedText(value, 160);
-};
+// An unnamed provider row cannot become a purchasable review item. Missing,
+// blank, malformed, controlled, and oversized names all fail the same strict
+// result boundary; the client keeps its existing local draft instead.
+const reviewedItemName = value => boundedText(value, 160);
 
 // A rejected provider result must not make its extracted receipt content
 // observable in logs. Diagnostics expose only bounded property names, never
@@ -228,7 +224,7 @@ export function mapProviderReceipt(payload, expectedJobId, maxPages) {
     if (!item || typeof item !== "object") throw new Error("invalid_provider_result");
     const allowedItemKeys = new Set(["name","quantity","unit","line_total"]);
     if (Object.keys(item).some(key => !allowedItemKeys.has(key))) throw new Error("invalid_provider_result");
-    const name = reviewedItemName(item.name, display_order);
+    const name = reviewedItemName(item.name);
     const quantity = boundedNumber(item.quantity, MAX_QUANTITY);
     const unit = boundedText(item.unit, 30, { optional: true }) || null;
     const line_total = boundedNumber(item.line_total, MAX_MONEY);

@@ -45,8 +45,37 @@ test("crop excludes address above and amount-in-words below while retaining item
   assert.equal(withinVerticalCrop(tokens[4]), true);
   assert.equal(withinVerticalCrop(tokens[5]), true);
   assert.ok(crop.x <= tokens[4].x, "full description column remains inside the crop");
-  assert.equal(crop.y, 110, "crop begins at the footer baseline without lower-page padding");
+  assert.ok(crop.y > 120, "crop begins above the complete footer glyph row");
   assert.equal(crop.y + crop.height, 710, "crop ends at the header glyph boundary without upper-page padding");
+});
+
+test("ForwardInvoice page subtotal rows are excluded without clipping the last products", () => {
+  const forwardPage = ({ quantity, amount, lastName }) => [
+    { text: "Item Description", x: 74, y: 700, height: 10 },
+    { text: "Qty", x: 330, y: 700, height: 10 },
+    { text: "Total", x: 535, y: 700, height: 10 },
+    { text: "Everyday Apple (Pack)", x: 74, y: 188, height: 9 },
+    { text: lastName, x: 74, y: 146, height: 9 },
+    { text: "Total", x: 48, y: 110, height: 10 },
+    { text: String(quantity), x: 330, y: 109, height: 10 },
+    { text: amount, x: 535, y: 111, height: 10 },
+    { text: "Amount in Words", x: 48, y: 82, height: 10 }
+  ];
+  const pages = [
+    forwardPage({ quantity: 4, amount: "₹292", lastName: "Akshayakalpa Organic Malai Paneer (Pack)" }),
+    forwardPage({ quantity: 7, amount: "₹603", lastName: "Akshayakalpa Organic Set Cup Curd (Cup)" })
+  ];
+  const plan = planVisualDerivative({ pages, pageSizes: [pageSize, pageSize], merchant: "Blinkit" });
+  assert.equal(plan.crops.length, 2);
+
+  pages.forEach((tokens, pageIndex) => {
+    const crop = plan.crops[pageIndex];
+    const included = token => token.y >= crop.y && token.y + token.height <= crop.y + crop.height;
+    assert.equal(included(tokens[4]), true, `page ${pageIndex + 1} last real product remains visible`);
+    assert.equal(included(tokens[5]), false, `page ${pageIndex + 1} Total footer label is excluded`);
+    assert.equal(included(tokens[6]), false, `page ${pageIndex + 1} aggregate quantity is excluded`);
+    assert.equal(included(tokens[7]), false, `page ${pageIndex + 1} aggregate amount is excluded`);
+  });
 });
 
 test("an unfamiliar safe layout requires a locally remembered approval", () => {

@@ -65,19 +65,9 @@ test("a supplied receipt total must remain numeric, positive, and reconcile with
   assert.throws(() => mapProviderReceipt(oversizedDerivedTotal, "provider-1", 1), /invalid_provider_result/);
 });
 
-test("an unreadable AI item name becomes an explicit review row without using provider text", async () => {
+test("missing, blank, or malformed AI item names fail closed", async () => {
   const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
-  const unreadableLine = { ...fixture, result: { ...fixture.result, line_items: [{ ...fixture.result.line_items[0], name: null }, ...fixture.result.line_items.slice(1)] } };
-  const draft = mapProviderReceipt(unreadableLine, "provider-1", 1);
-  assert.equal(draft.items[0].name, "Unidentified receipt line 1");
-  assert.equal(draft.items.reduce((sum, item) => sum + item.line_total, 0), 95);
-  const blankLine = { ...fixture, result: { ...fixture.result, line_items: [{ ...fixture.result.line_items[0], name: "   " }, ...fixture.result.line_items.slice(1)] } };
-  assert.equal(mapProviderReceipt(blankLine, "provider-1", 1).items[0].name, "Unidentified receipt line 1");
-});
-
-test("malformed AI item names fail closed instead of becoming review placeholders", async () => {
-  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
-  for (const name of [{ text: "Milk" }, "unsafe\nname", "x".repeat(161)]) {
+  for (const name of [undefined, null, "", "   ", { text: "Milk" }, "unsafe\nname", "x".repeat(161)]) {
     const malformed = { ...fixture, result: { ...fixture.result, line_items: [{ ...fixture.result.line_items[0], name }, ...fixture.result.line_items.slice(1)] } };
     assert.throws(() => mapProviderReceipt(malformed, "provider-1", 1), /invalid_provider_result/);
   }
