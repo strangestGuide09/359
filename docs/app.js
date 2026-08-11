@@ -43,6 +43,8 @@ const rememberedEmailKey = "grocery-ledger-last-email";
 const dialog = $("entry");
 const aiPreviewDialog = $("ai-preview");
 const visualAiPreviewDialog = $("visual-ai-preview");
+const importChoiceDialog = $("import-choice");
+const importProcessingDialog = $("import-processing");
 const clientBuild = window.GROCERY_LEDGER_BUILD || "local-dev";
 const reloadVersionKey = "grocery-ledger-reloading-version";
 
@@ -60,6 +62,7 @@ let ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSe
 let channel;
 let mode = "expense";
 let pendingPdfImport;
+let stagedPdfImport;
 let editingPurchase;
 let reviewedItems = [];
 let preparedVisualDerivative;
@@ -644,6 +647,86 @@ function closeEntry() {
   formDirty = false;
   dialog.close();
 }
+function processedPdfImport(imported) {
+  const parsed = parseReceipt(imported.pages, today());
+  return {
+    ...imported,
+    sanitizationLines: suggestedSanitizedLines(parsed),
+    visualPlan: planVisualDerivative({ pages: imported.pages, pageSizes: imported.pageSizes, merchant: parsed.defaults.label }),
+    ...parsed
+  };
+}
+function setImportChoiceMethod(method) {
+  const ai = method === "ai";
+  $("process-invoice").textContent = ai ? "Process with AI" : "Process locally";
+}
+function closeImportChoice({ discard = true } = {}) {
+  importChoiceDialog.close();
+  $("import-choice-error").textContent = "";
+  if (discard) stagedPdfImport = undefined;
+}
+function openImportChoice(imported) {
+  stagedPdfImport = imported;
+  $("import-choice-form").reset();
+  $("import-choice-error").textContent = "";
+  setImportChoiceMethod("local");
+  importChoiceDialog.showModal();
+  requestAnimationFrame(() => $("process-invoice").focus());
+}
+function showImportProcessing(method) {
+  $("import-processing-title").textContent = method === "ai" ? "AI is processing the private item table" : "Processing invoice on this device";
+  $("import-processing-copy").innerHTML = `${'<span class="spinner" aria-hidden="true"></span>'}${method === "ai" ? "The original PDF remains local. The AI result will be ready for your review." : "Creating an editable local result…"}`;
+  if (!importProcessingDialog.open) importProcessingDialog.showModal();
+}
+function closeImportProcessing() { importProcessingDialog.close(); }
+function stopImportProcessing() {
+  if (!confirm("Stop waiting for this invoice? Nothing will be saved.")) return;
+  discardPreparedVisualDerivative();
+  pendingPdfImport = undefined;
+  closeImportProcessing();
+  note("Invoice processing stopped. Nothing was saved.");
+}
+function failAiPdfImport(draftReference, message) {
+  if (pendingPdfImport !== draftReference || draftReference.importProcessingMethod !== "ai") return false;
+  closeImportProcessing();
+  pendingPdfImport = undefined;
+  showImportFeedback(`${message} Nothing was saved.`, "error");
+  note(message);
+  return true;
+}
+function startLocalPdfImport() {
+  const imported = stagedPdfImport;
+  if (!imported) return;
+  stagedPdfImport = undefined;
+  closeImportChoice({ discard: false });
+  showImportProcessing("local");
+  try {
+    const processed = processedPdfImport(imported);
+    pendingPdfImport = processed;
+    closeImportProcessing();
+    openEntry("expense", processed.defaults, processed);
+    note("Local invoice processing is ready for review.");
+  } catch (error) {
+    closeImportProcessing();
+    stagedPdfImport = undefined;
+    showImportFeedback(`Could not process this PDF locally: ${error.message}. Nothing was uploaded.`, "error");
+  }
+}
+function startAiPdfImport() {
+  const imported = stagedPdfImport;
+  if (!imported) return;
+  stagedPdfImport = undefined;
+  closeImportChoice({ discard: false });
+  try {
+    const processed = processedPdfImport(imported);
+    processed.importProcessingMethod = "ai";
+    pendingPdfImport = processed;
+    void prepareAi();
+  } catch (error) {
+    stagedPdfImport = undefined;
+    showImportFeedback(`Could not prepare this PDF for AI processing locally: ${error.message}. Nothing was uploaded.`, "error");
+  }
+}
 function discardPreparedVisualDerivative() {
   if (!preparedVisualDerivative) return;
   revokeVisualDerivativePreview(preparedVisualDerivative);
@@ -696,6 +779,7 @@ async function submitAiDerivative({ derivative, sanitizerVersion, pageCount, fil
   if (!/^[0-9a-f-]{36}$/i.test(result.job_id || "")) throw new Error(aiParseMessage("invalid_provider_result"));
   if (pendingPdfImport !== draftReference) return;
   draftReference.aiJobId = result.job_id;
+  if (draftReference.importProcessingMethod === "ai") showImportProcessing("ai");
   setAiProcessing("Sarvam accepted the redacted derivative and is preparing suggestions…", true);
   void pollAiReceiptResult(result.job_id, draftReference);
 }
@@ -779,6 +863,19 @@ $("visual-ai-preview-form").onsubmit = async event => {
     button.textContent = "Approve and send";
   }
 };
+$("close-import-choice").onclick = () => closeImportChoice();
+$("cancel-import-choice").onclick = () => closeImportChoice();
+importChoiceDialog.addEventListener("cancel", event => { event.preventDefault(); closeImportChoice(); });
+document.querySelectorAll('input[name="processing-method"]').forEach(input => input.addEventListener("change", () => setImportChoiceMethod(input.value)));
+$("import-choice-form").onsubmit = event => {
+  event.preventDefault();
+  const selected = document.querySelector('input[name="processing-method"]:checked');
+  if (!selected) return;
+  if (selected.value === "ai") startAiPdfImport();
+  else startLocalPdfImport();
+};
+$("stop-import-processing").onclick = stopImportProcessing;
+importProcessingDialog.addEventListener("cancel", event => { event.preventDefault(); stopImportProcessing(); });
 function setAiProcessing(message, busy = false) {
   aiProcessingStatus.textContent = message;
   aiProcessingStatus.classList.toggle("active", message !== AI_IDLE_MESSAGE);
@@ -806,12 +903,32 @@ async function pollAiReceiptResult(jobId, draftReference) {
         await new Promise(resolve => setTimeout(resolve, aiRetryDelayMs(transientFailures)));
         continue;
       }
-      if (decision.kind !== "complete") throw new Error(aiParseMessage(result.code));
+      if (decision.kind !== "complete") {
+        const message = aiParseMessage(result.code);
+        if (failAiPdfImport(draftReference, message)) return;
+        throw new Error(message);
+      }
       const aiDraft = validateAiDraft(result.draft);
       if (pendingPdfImport !== draftReference) return;
+      if (draftReference.importProcessingMethod === "ai") {
+        draftReference.defaults = {
+          ...draftReference.defaults,
+          label: aiDraft.defaults.label || draftReference.defaults.label,
+          amount: aiDraft.defaults.amount,
+          date: aiDraft.defaults.date || draftReference.defaults.date
+        };
+        draftReference.items = aiDraft.items;
+        draftReference.parserWarning = "";
+        draftReference.parserNotice = "AI processed a private receipt-table derivative. Merchant and purchase date stayed local; review every resulting item before saving.";
+        draftReference.importProcessingMethod = "";
+        closeImportProcessing();
+        openEntry("expense", draftReference.defaults, draftReference);
+        note("AI invoice processing is ready for review. Nothing was saved.");
+        return;
+      }
       setAiProcessing("AI suggestions are ready. Choose whether to apply them to this local draft.");
       if (confirm("The private AI draft is ready. Replace the current local item suggestions with it? You must still review every field before saving.")) {
-        $("label").value = aiDraft.defaults.label;
+        if (aiDraft.defaults.label) $("label").value = aiDraft.defaults.label;
         if (aiDraft.defaults.amount) $("amount").value = aiDraft.defaults.amount;
         if (aiDraft.defaults.date) $("date").value = aiDraft.defaults.date;
         reviewedItems = aiDraft.items.map(emptyReviewedItem);
@@ -828,17 +945,25 @@ async function pollAiReceiptResult(jobId, draftReference) {
         await new Promise(resolve => setTimeout(resolve, aiRetryDelayMs(transientFailures)));
         continue;
       }
-      if (pendingPdfImport === draftReference) setAiProcessing(`${error.message || aiParseMessage()} Continue reviewing or save the local draft.`);
+      if (pendingPdfImport === draftReference) {
+        const message = error.message || aiParseMessage();
+        if (failAiPdfImport(draftReference, message)) return;
+        setAiProcessing(`${message} Continue reviewing or save the local draft.`);
+      }
       return;
     }
   }
-  if (pendingPdfImport === draftReference) setAiProcessing(`${aiParseMessage("completion_timeout")} Continue reviewing or save the local draft.`);
+  if (pendingPdfImport === draftReference) {
+    const message = aiParseMessage("completion_timeout");
+    if (failAiPdfImport(draftReference, message)) return;
+    setAiProcessing(`${message} Continue reviewing or save the local draft.`);
+  }
 }
 function validateAiDraft(draft) {
   if (!draft || typeof draft !== "object" || !draft.defaults || !Array.isArray(draft.items) || !draft.items.length || draft.items.length > 100) throw new Error(aiParseMessage("invalid_provider_result"));
   const label = String(draft.defaults.label || "").trim().slice(0, 160);
   const amount = Number(draft.defaults.amount);
-  if (!label || !Number.isFinite(amount) || amount <= 0) throw new Error(aiParseMessage("invalid_provider_result"));
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error(aiParseMessage("invalid_provider_result"));
   const items = draft.items.map(item => emptyReviewedItem(item));
   if (items.some(item => !item.name.trim() || !Number.isFinite(Number(item.line_total)) || Number(item.line_total) < 0)) throw new Error(aiParseMessage("invalid_provider_result"));
   if (Math.abs(items.reduce((sum, item) => sum + Number(item.line_total), 0) - amount) > .01) throw new Error(aiParseMessage("invalid_provider_result"));
@@ -1020,16 +1145,13 @@ async function readPdfLocally(file) {
   await pdf.destroy();
   const extractedText = pages.flatMap(page => page.map(token => token.text)).join("\n");
   const normalized = extractedText.toLowerCase().replace(/[^a-z0-9.,₹\n ]/g, "").replace(/[ \t]+/g, " ").trim();
-  const parsed = parseReceipt(pages, today());
   return {
     exactHash,
     contentHash: await sha256(normalized),
     localExtractedText: extractedText,
-    sanitizationLines: suggestedSanitizedLines(parsed),
     sourcePdfBytes,
     pageSizes,
-    visualPlan: planVisualDerivative({ pages, pageSizes, merchant: parsed.defaults.label }),
-    ...parsed
+    pages
   };
 }
 function setPdfBusy(busy) {
@@ -1052,8 +1174,8 @@ $("pdf-file").onchange = async event => {
   try {
     note("Reading this PDF locally. It will not be uploaded or stored.");
     const imported = await readPdfLocally(file);
-    if (sameFingerprint(imported, pendingPdfImport)) {
-      const message = "This receipt is already open in the current review draft. Continue reviewing it or close the draft before choosing another file.";
+    if (sameFingerprint(imported, pendingPdfImport) || sameFingerprint(imported, stagedPdfImport)) {
+      const message = "This receipt is already being prepared. Continue with it or close the current import before choosing another file.";
       $("dialog-error").textContent = message;
       note("");
       return;
@@ -1068,8 +1190,8 @@ $("pdf-file").onchange = async event => {
       showDuplicateImport(result, imported);
       return;
     }
-    openEntry("expense", imported.defaults, imported);
-    note("Local draft ready. Review every item before saving.");
+    openImportChoice(imported);
+    note("Choose how to process this invoice. Nothing has been added to the ledger.");
   } catch (error) {
     showImportFeedback(`Could not read this PDF locally: ${error.message}. Nothing was uploaded. Choose the file again to retry.`, "error");
   } finally {
@@ -1079,7 +1201,7 @@ $("pdf-file").onchange = async event => {
 };
 
 function unsafeForRefresh() {
-  return hasUnsafeDraft({ dialogOpen: dialog.open, pendingPdfImport, formDirty });
+  return hasUnsafeDraft({ dialogOpen: dialog.open || importChoiceDialog.open || importProcessingDialog.open, pendingPdfImport: pendingPdfImport || stagedPdfImport, formDirty });
 }
 function showUpdateAvailable(nextBuild) {
   let banner = $("update-available");

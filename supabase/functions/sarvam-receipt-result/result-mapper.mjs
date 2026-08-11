@@ -20,6 +20,10 @@ const exactDate = value => {
   if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) throw new Error("invalid_provider_result");
   return text;
 };
+const optionalExactDate = value => {
+  if (value == null || value === "") return "";
+  return exactDate(value);
+};
 const isBoundedText = (value, max, options) => {
   try {
     boundedText(value, max, options);
@@ -36,10 +40,21 @@ const isExactDate = value => {
     return false;
   }
 };
+const isOptionalExactDate = value => {
+  try {
+    optionalExactDate(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
 const isPositiveBoundedNumber = (value, max) => {
   const number = boundedNumber(value, max);
   return number != null && number > 0;
 };
+const reviewedItemName = (value, displayOrder) => isBoundedText(value, 160)
+  ? boundedText(value, 160)
+  : `Unidentified receipt line ${displayOrder + 1}`;
 
 // A rejected provider result must not make its extracted receipt content
 // observable in logs. Diagnostics expose only bounded property names, never
@@ -154,8 +169,8 @@ export function resultShapeDiagnostic(payload, expectedJobId, maxPages) {
     provider_usage_processed_is_nonzero: usageProcessedIsNonzero,
     provider_usage_processed_fits_total: usageProcessedFitsTotal,
     provider_usage_outcomes_fit_processed: usageOutcomesFitProcessed,
-    merchant_name_is_valid: isBoundedText(receipt?.merchant_name, 160),
-    purchase_date_is_valid: isExactDate(receipt?.purchase_date),
+    merchant_name_is_valid: isBoundedText(receipt?.merchant_name, 160, { optional: true }),
+    purchase_date_is_valid: isOptionalExactDate(receipt?.purchase_date),
     receipt_total_is_valid: isPositiveBoundedNumber(receiptTotal, MAX_MONEY),
     line_items_are_valid_records: itemsAreRecords,
     line_item_names_are_valid: itemsAreRecords && itemRecords.every(item => isBoundedText(item.name, 160)),
@@ -205,7 +220,7 @@ export function mapProviderReceipt(payload, expectedJobId, maxPages) {
     if (!item || typeof item !== "object") throw new Error("invalid_provider_result");
     const allowedItemKeys = new Set(["name","quantity","unit","line_total"]);
     if (Object.keys(item).some(key => !allowedItemKeys.has(key))) throw new Error("invalid_provider_result");
-    const name = boundedText(item.name, 160);
+    const name = reviewedItemName(item.name, display_order);
     const quantity = boundedNumber(item.quantity, MAX_QUANTITY);
     const unit = boundedText(item.unit, 30, { optional: true }) || null;
     const line_total = boundedNumber(item.line_total, MAX_MONEY);
@@ -215,8 +230,8 @@ export function mapProviderReceipt(payload, expectedJobId, maxPages) {
   const amount = boundedNumber(receipt.receipt_total, MAX_MONEY);
   const itemTotal = items.reduce((sum, item) => sum + item.line_total, 0);
   if (amount == null || amount <= 0 || Math.abs(amount - itemTotal) > .01) throw new Error("invalid_provider_result");
-  const label = boundedText(receipt.merchant_name, 160);
-  return { defaults: { label, category: "Groceries", amount: amount.toFixed(2), date: exactDate(receipt.purchase_date) }, items };
+  const label = boundedText(receipt.merchant_name, 160, { optional: true });
+  return { defaults: { label, category: "Groceries", amount: amount.toFixed(2), date: optionalExactDate(receipt.purchase_date) }, items };
 }
 
 export function fixedCompletionError(error) {

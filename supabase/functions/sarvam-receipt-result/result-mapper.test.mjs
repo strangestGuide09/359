@@ -28,6 +28,25 @@ test("synthetic structured output maps only reviewed draft fields", async () => 
   assert.doesNotMatch(JSON.stringify(draft), /customer|raw_text|must not escape/);
 });
 
+test("a visual item-table result can omit merchant and date that stayed local", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  const visualOnly = { ...fixture, result: { ...fixture.result, merchant_name: "", purchase_date: null } };
+  const draft = mapProviderReceipt(visualOnly, "provider-1", 1);
+  assert.equal(draft.defaults.label, "");
+  assert.equal(draft.defaults.date, "");
+  const diagnostic = resultShapeDiagnostic(visualOnly, "provider-1", 1);
+  assert.equal(diagnostic.merchant_name_is_valid, true);
+  assert.equal(diagnostic.purchase_date_is_valid, true);
+});
+
+test("an unreadable AI item name becomes an explicit review row without using provider text", async () => {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
+  const unreadableLine = { ...fixture, result: { ...fixture.result, line_items: [{ ...fixture.result.line_items[0], name: null }, ...fixture.result.line_items.slice(1)] } };
+  const draft = mapProviderReceipt(unreadableLine, "provider-1", 1);
+  assert.equal(draft.items[0].name, "Unidentified receipt line 1");
+  assert.equal(draft.items.reduce((sum, item) => sum + item.line_total, 0), 95);
+});
+
 test("rejected-result diagnostics expose shape but never extracted values", async () => {
   const fixture = JSON.parse(await readFile(new URL("./fixtures/completed-receipt.json", import.meta.url), "utf8"));
   const diagnostic = resultShapeDiagnostic(fixture, "provider-1", 1);

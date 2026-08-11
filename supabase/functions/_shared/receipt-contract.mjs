@@ -1,8 +1,8 @@
 export const RECEIPT_EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
-    merchant_name: { type: "string", description: "Merchant or store name only. Never return customer names, addresses, contact details, payment details, order identifiers or invoice identifiers." },
-    purchase_date: { type: "string", description: "Purchase date in YYYY-MM-DD format only. Never return an order or invoice identifier." },
+    merchant_name: { type: "string", description: "Merchant or store name only. Return an empty string if it is not visible. Never return customer names, addresses, contact details, payment details, order identifiers or invoice identifiers." },
+    purchase_date: { type: "string", description: "Purchase date in YYYY-MM-DD format only. Return an empty string if it is not visible. Never return an order or invoice identifier." },
     receipt_total: { type: "number", description: "Final paid or payable receipt total only." },
     // Sarvam Extract accepts its own compact schema dialect: type, description,
     // properties and items.  It rejects JSON Schema keywords such as `required`
@@ -11,7 +11,7 @@ export const RECEIPT_EXTRACTION_SCHEMA = {
     currency: { type: "string", description: "ISO 4217 receipt currency. Return INR only." },
     line_items: {
       type: "array",
-      description: "Purchased product and explicit fee lines only. Never return payment, address, contact, order, invoice, customer, tax-summary or identifier fields.",
+      description: "Purchased product and explicit fee lines only. Return an empty name when a row is readable but its product or fee name is not; never invent a name. Never return payment, address, contact, order, invoice, customer, tax-summary or identifier fields.",
       items: {
         type: "object",
         description: "One purchased item or explicit fee line, with only the approved receipt fields.",
