@@ -30,11 +30,14 @@ struct LedgerDate: Codable, Hashable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
+        try container.encode(isoString)
+    }
+
+    var isoString: String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let components = calendar.dateComponents([.year, .month, .day], from: value)
-        let text = String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
-        try container.encode(text)
+        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
 }
 
@@ -175,6 +178,7 @@ struct ReviewedImportItemPayload: Codable, Equatable, Sendable {
 /// Parameters for the clean schema's import_reviewed_purchase RPC.
 struct ReviewedImportRPCPayload: Codable, Equatable, Sendable {
     let householdID: UUID
+    let paidBy: UUID
     let exactPDFHash: String
     let contentHash: String
     let label: String
@@ -186,6 +190,7 @@ struct ReviewedImportRPCPayload: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case householdID = "p_household_id"
+        case paidBy = "p_paid_by"
         case exactPDFHash = "p_exact_pdf_hash"
         case contentHash = "p_content_hash"
         case label = "p_label"
@@ -294,6 +299,7 @@ enum SharedDataMapper {
         }
         return ReviewedImportRPCPayload(
             householdID: bundle.header.householdID,
+            paidBy: bundle.header.paidBy,
             exactPDFHash: exactPDFHash,
             contentHash: contentHash,
             label: bundle.header.label,

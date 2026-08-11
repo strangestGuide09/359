@@ -76,6 +76,7 @@ struct BalancesView: View {
 }
 
 private struct AddSettlementView: View {
+    @Environment(SupabaseLedgerController.self) private var sync
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @State private var payer: LedgerPerson = .ritesh
@@ -86,7 +87,7 @@ private struct AddSettlementView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Picker("Paid by", selection: $payer) { ForEach(LedgerPerson.allCases) { Text($0.rawValue).tag($0) } }
+                LabeledContent("Paid by", value: payer.rawValue)
                 LabeledContent("Received by", value: receiver.rawValue)
                 TextField("Amount", text: $amount).keyboardType(.decimalPad)
                 TextField("Note (optional)", text: $note)
@@ -97,11 +98,20 @@ private struct AddSettlementView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(Decimal(string: amount) == nil) }
             }
+            .onAppear {
+                guard let userID = sync.session?.user.id,
+                      let memberships = sync.snapshot?.memberships else { return }
+                payer = RemoteLedgerImporter.personMap(memberships)[userID] ?? payer
+            }
         }
     }
     private func save() {
         guard let decimal = Decimal(string: amount), decimal > 0 else { return }
-        modelContext.insert(Settlement(payer: payer, receiver: receiver, amount: decimal, note: note))
+        let settlement = Settlement(payer: payer, receiver: receiver, amount: decimal, note: note)
+        settlement.needsRemoteSync = true
+        modelContext.insert(settlement)
+        try? modelContext.save()
         dismiss()
+        Task { await RemoteSyncOutbox.flush(using: sync, context: modelContext) }
     }
 }

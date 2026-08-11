@@ -10,10 +10,17 @@ enum RestockNotificationFrequency: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
+    @Environment(SupabaseLedgerController.self) private var sync
     @AppStorage("restockNotificationFrequency") private var frequency = RestockNotificationFrequency.off.rawValue
     @AppStorage("restockNotificationTime") private var notificationTime = 32_400.0
     @AppStorage("restockNotificationWeekday") private var weekday = 2
     @State private var statusMessage: String?
+    @State private var email = ""
+    @State private var verificationCode = ""
+    @State private var displayName = ""
+    @State private var householdName = ""
+    @State private var inviteCode = ""
+    @State private var creatingAccount = false
 
     private var selectedFrequency: Binding<RestockNotificationFrequency> {
         Binding(
@@ -76,16 +83,7 @@ struct SettingsView: View {
                 }
 
                 Section("Household sync") {
-                    LabeledContent("Status", value: "Local only")
-                    Text("Account sign-in and household sync are not connected in this build. Your local ledger remains available.")
-                        .font(.footnote)
-                        .foregroundStyle(GroceryBrand.muted)
-                    Text("When enabled, Grocery Ledger will restore a saved session silently. Temporary network or service problems will show a waking/retrying state; sign-in appears only after the account service confirms that the session is invalid or revoked.")
-                        .font(.footnote)
-                        .foregroundStyle(GroceryBrand.muted)
-                    Text("Planned sign-in: email verification code.")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(GroceryBrand.pine)
+                    syncControls
                 }
 
                 if let statusMessage {
@@ -97,6 +95,63 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbarBackground(GroceryBrand.paper, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+        }
+    }
+
+    @ViewBuilder private var syncControls: some View {
+        LabeledContent("Status", value: syncStatusLabel)
+        switch sync.status {
+        case .signedOut, .failed:
+            Toggle("Create a new account", isOn: $creatingAccount)
+            if creatingAccount { TextField("Your name", text: $displayName) }
+            TextField("Email", text: $email).keyboardType(.emailAddress).textInputAutocapitalization(.never)
+            Button(creatingAccount ? "Create account and send code" : "Send verification code") {
+                Task { await sync.sendCode(email: email.trimmingCharacters(in: .whitespacesAndNewlines), createAccount: creatingAccount, displayName: displayName) }
+            }
+            .disabled(email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (creatingAccount && displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+            if case .failed(let message) = sync.status { Text(message).font(.footnote).foregroundStyle(.red) }
+        case .awaitingCode(let sentEmail):
+            Text("Enter the 6–8 digit code sent to \(sentEmail).")
+                .font(.footnote).foregroundStyle(GroceryBrand.muted)
+            TextField("Verification code", text: $verificationCode).keyboardType(.numberPad)
+            Button("Verify code") { Task { await sync.verify(email: sentEmail, code: verificationCode) } }
+                .disabled(!EmailVerificationCode.isValid(verificationCode))
+        case .needsHousehold:
+            TextField("Your name", text: $displayName)
+            TextField("Household name", text: $householdName)
+            Button("Create two-person household") { Task { await sync.createHousehold(name: householdName, displayName: displayName) } }
+                .disabled(displayName.isEmpty || householdName.isEmpty)
+            TextField("Partner invite code", text: $inviteCode).textInputAutocapitalization(.never)
+            Button("Join household") {
+                guard let code = UUID(uuidString: inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+                Task { await sync.joinHousehold(code: code, displayName: displayName) }
+            }
+            .disabled(displayName.isEmpty || UUID(uuidString: inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)) == nil)
+        case .waking(let message):
+            Text(message).font(.footnote).foregroundStyle(GroceryBrand.muted)
+            Button("Retry sync") { Task { await sync.reload() } }
+        case .ready(let lastSync):
+            Text("Reviewed purchases, item allocations, settlements, and household membership sync with the website. PDFs and extracted text never upload.")
+                .font(.footnote).foregroundStyle(GroceryBrand.muted)
+            Text("Last synced \(lastSync.formatted(date: .abbreviated, time: .shortened))")
+                .font(.caption).foregroundStyle(GroceryBrand.muted)
+            Button("Sync now") { Task { await sync.reload() } }
+            Button("Sign out", role: .destructive) { sync.signOut() }
+        case .restoring, .syncing:
+            HStack { ProgressView(); Text(sync.status == .restoring ? "Restoring session…" : "Syncing reviewed ledger…") }
+        }
+    }
+
+    private var syncStatusLabel: String {
+        switch sync.status {
+        case .signedOut: "Sign in required"
+        case .restoring: "Restoring"
+        case .awaitingCode: "Check email"
+        case .needsHousehold: "Household setup"
+        case .syncing: "Syncing"
+        case .ready: "Connected"
+        case .waking: "Retrying"
+        case .failed: "Action needed"
         }
     }
 

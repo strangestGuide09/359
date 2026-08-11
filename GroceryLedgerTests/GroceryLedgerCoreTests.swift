@@ -4,6 +4,21 @@ import XCTest
 
 @MainActor
 final class GroceryLedgerCoreTests: XCTestCase {
+    private func temporaryPendingDraftStore() throws -> PendingInvoiceDraftStore {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GroceryLedgerTests-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return PendingInvoiceDraftStore(rootURL: root)
+    }
+
+    private func temporaryPDF(named name: String = "private-invoice-name.pdf") throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-\(name)")
+        try Data("%PDF-1.7\n%%EOF".utf8).write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
     private func token(_ text: String, _ x: CGFloat, _ y: CGFloat, _ width: CGFloat = 40) -> PositionedInvoiceToken {
         PositionedInvoiceToken(text: text, x: x, y: y, width: width)
     }
@@ -200,6 +215,44 @@ final class GroceryLedgerCoreTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<Purchase>()).isEmpty)
     }
 
+    func testSharedPDFHandoffUsesOpaqueTemporaryNameAndCanBeDiscarded() throws {
+        let store = try temporaryPendingDraftStore()
+        let source = try temporaryPDF()
+
+        let draft = try store.stagePDF(from: source)
+
+        XCTAssertEqual(draft.url.pathExtension, "pdf")
+        XCTAssertEqual(draft.url.deletingPathExtension().lastPathComponent, draft.id.uuidString)
+        XCTAssertFalse(draft.url.lastPathComponent.contains("private-invoice-name"))
+        XCTAssertEqual(try store.pendingDrafts().map(\.id), [draft.id])
+
+        store.remove(draft)
+        XCTAssertTrue(try store.pendingDrafts().isEmpty)
+    }
+
+    func testSharedPDFHandoffRejectsNonPDFContent() throws {
+        let store = try temporaryPendingDraftStore()
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("not a receipt".utf8).write(to: source)
+        addTeardownBlock { try? FileManager.default.removeItem(at: source) }
+
+        XCTAssertThrowsError(try store.stagePDF(from: source)) { error in
+            XCTAssertEqual(error as? PendingInvoiceDraftError, .invalidPDF)
+        }
+        XCTAssertTrue(try store.pendingDrafts().isEmpty)
+    }
+
+    func testExpiredSharedPDFDraftIsRemoved() throws {
+        let store = try temporaryPendingDraftStore()
+        let source = try temporaryPDF()
+        let stagedAt = Date(timeIntervalSince1970: 1_000)
+        let draft = try store.stagePDF(from: source, now: stagedAt)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: draft.url.path))
+        XCTAssertTrue(try store.pendingDrafts(now: stagedAt.addingTimeInterval(PendingInvoiceDraftStore.lifetime + 1)).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: draft.url.path))
+    }
+
     func testReviewedImportPayloadContainsOnlySchemaApprovedFields() throws {
         let householdID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
         let ektaID = UUID(uuidString: "20000000-0000-0000-0000-000000000001")!
@@ -221,7 +274,7 @@ final class GroceryLedgerCoreTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         XCTAssertEqual(Set(object.keys), [
-            "p_household_id", "p_exact_pdf_hash", "p_content_hash", "p_label",
+            "p_household_id", "p_paid_by", "p_exact_pdf_hash", "p_content_hash", "p_label",
             "p_category", "p_amount", "p_purchased_on", "p_is_personal", "p_items"
         ])
         let encodedItems = try XCTUnwrap(object["p_items"] as? [[String: Any]])

@@ -194,6 +194,8 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.ok(app.indexOf("settlements-panel") < app.indexOf("expenses-panel"));
   assert.doesNotMatch(app, /<main class=/);
   assert.match(app, /class="command-actions primary-actions"/);
+  assert.match(app, /id="open-settings" class="settings-action" aria-controls="household-settings">Household settings/);
+  assert.match(style, /\.command-actions \.settings-action \{ grid-column:1\/-1; width:auto; min-height:43px; justify-self:center;/);
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.match(app, /id="household-settings" class="panel settings"/);
@@ -240,9 +242,10 @@ test("classic and sketch presentations share one accessible application surface"
   assert.match(page, /type="radio" name="presentation" value="classic" checked/);
   assert.match(page, /type="radio" name="presentation" value="sketch"/);
   assert.equal((page.match(/id="screen"/g) || []).length, 1);
-  assert.equal((page.match(/<dialog /g) || []).length, 7);
+  assert.equal((page.match(/<dialog /g) || []).length, 8);
   assert.match(page, /id="discard-pdf-draft" class="discard-draft-dialog"/);
   assert.match(page, /id="remove-receipt" class="remove-receipt-dialog"/);
+  assert.match(page, /id="purge-receipt" class="purge-receipt-dialog"/);
   assert.match(page, /id="ai-preview" aria-labelledby="ai-preview-title"/);
   assert.match(page, /id="visual-ai-preview" class="visual-preview-dialog" aria-labelledby="visual-ai-preview-title"/);
   assert.match(page, /id="import-choice" class="import-choice-dialog" aria-labelledby="import-choice-title"/);

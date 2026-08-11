@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import CryptoKit
 
 enum InvoiceProcessingMethod: String, CaseIterable, Identifiable, Sendable {
     case local = "Local"
@@ -66,6 +67,7 @@ struct InvoiceImportFlow: Equatable, Sendable {
 struct ImportInvoiceView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(SupabaseLedgerController.self) private var sync
     @Query private var purchases: [Purchase]
 
     @State private var showingFilePicker = false
@@ -82,6 +84,12 @@ struct ImportInvoiceView: View {
     @State private var parsingNote: String?
     @State private var hasImportedPDF = false
     @State private var isSaving = false
+    @State private var pendingSharedDraft: PendingInvoiceDraft?
+    @State private var exactPDFHash: String?
+
+    init(pendingDraft: PendingInvoiceDraft? = nil) {
+        _pendingSharedDraft = State(initialValue: pendingDraft)
+    }
 
     private var isDuplicate: Bool {
         let number = invoiceNumber.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -125,7 +133,7 @@ struct ImportInvoiceView: View {
             .navigationTitle(flow.isReviewing ? "Review PDF import" : "Import invoice")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { cancelImport() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Saving…" : "Save") { save() }
@@ -165,6 +173,7 @@ struct ImportInvoiceView: View {
             }
             .toolbarBackground(GroceryBrand.paper, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .onDisappear { discardPendingSharedPDF() }
         }
     }
 
@@ -181,7 +190,9 @@ struct ImportInvoiceView: View {
             if flow.selectedMethod == .local {
                 Label("Processed entirely on this iPhone", systemImage: "iphone")
                     .foregroundStyle(GroceryBrand.pine)
-                Text("Choose a selectable-text invoice. The original PDF and extracted text remain local, and nothing is saved until you review and tap Save.")
+                Text(pendingSharedDraft == nil
+                     ? "Choose a selectable-text invoice. The original PDF and extracted text remain local, and nothing is saved until you review and tap Save."
+                     : "A PDF shared with Grocery Ledger is waiting locally. Process it to create an editable draft; nothing is saved until you review and tap Save.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
@@ -192,9 +203,8 @@ struct ImportInvoiceView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button(flow.selectedMethod == .local ? "Choose PDF and process locally" : "Private AI unavailable", systemImage: "doc.badge.plus") {
-                guard flow.beginFileSelection() else { return }
-                showingFilePicker = true
+            Button(localProcessingButtonTitle, systemImage: "doc.badge.plus") {
+                beginSelectedImport()
             }
             .disabled(flow.isProcessing || !flow.selectedMethod.isAvailable)
         }
@@ -344,14 +354,37 @@ struct ImportInvoiceView: View {
         category == .groceries || category == .household
     }
 
+    private var localProcessingButtonTitle: String {
+        guard flow.selectedMethod == .local else { return "Private AI unavailable" }
+        return pendingSharedDraft == nil ? "Choose PDF and process locally" : "Process shared PDF locally"
+    }
+
+    private func beginSelectedImport() {
+        guard flow.beginFileSelection() else { return }
+        guard let pendingSharedDraft else {
+            showingFilePicker = true
+            return
+        }
+        guard flow.beginProcessing() else { return }
+        clearDraft()
+        Task { @MainActor in
+            await Task.yield()
+            readPDF(pendingSharedDraft.url)
+        }
+    }
+
     private func money(_ amount: Decimal) -> String {
         amount.formatted(.currency(code: "INR"))
     }
 
     private func readPDF(_ url: URL) {
         let didAccess = url.startAccessingSecurityScopedResource()
-        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        defer {
+            if didAccess { url.stopAccessingSecurityScopedResource() }
+            if pendingSharedDraft?.url == url { discardPendingSharedPDF() }
+        }
         do {
+            exactPDFHash = SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
             let invoice = try InvoiceParser.parse(url: url)
             merchant = invoice.merchant
             category = invoice.category
@@ -377,6 +410,19 @@ struct ImportInvoiceView: View {
         }
     }
 
+    private func cancelImport() {
+        discardPendingSharedPDF()
+        dismiss()
+    }
+
+    private func discardPendingSharedPDF() {
+        guard let draft = pendingSharedDraft else { return }
+        if let store = try? PendingInvoiceDraftStore.appGroupStore() {
+            store.remove(draft)
+        }
+        pendingSharedDraft = nil
+    }
+
     private func clearDraft() {
         merchant = ""
         category = .groceries
@@ -386,6 +432,7 @@ struct ImportInvoiceView: View {
         parsedItems = []
         suggestedTotal = nil
         parsingNote = nil
+        exactPDFHash = nil
         hasImportedPDF = false
         isSaving = false
     }
@@ -417,9 +464,13 @@ struct ImportInvoiceView: View {
             purchase.items.append(item)
         }
         modelContext.insert(purchase)
+        purchase.exactPDFHash = exactPDFHash
+        purchase.contentHash = exactPDFHash
+        purchase.needsRemoteSync = exactPDFHash != nil
         do {
             try modelContext.save()
             dismiss()
+            Task { await RemoteSyncOutbox.flush(using: sync, context: modelContext) }
         } catch {
             modelContext.delete(purchase)
             isSaving = false

@@ -31,15 +31,18 @@ final class Purchase {
     var createdAt: Date
     var paidBy: String
     var parsingNote: String?
+    var needsRemoteSync: Bool = false
+    var exactPDFHash: String?
+    var contentHash: String?
     @Relationship(deleteRule: .cascade, inverse: \PurchaseItem.purchase) var items: [PurchaseItem]
 
-    init(merchant: String, category: ExpenseCategory = .groceries, invoiceNumber: String? = nil, purchasedAt: Date = .now, paidBy: LedgerPerson = .ekta, parsingNote: String? = nil) {
-        self.id = UUID()
+    init(id: UUID = UUID(), merchant: String, category: ExpenseCategory = .groceries, invoiceNumber: String? = nil, purchasedAt: Date = .now, createdAt: Date = .now, paidBy: LedgerPerson = .ekta, parsingNote: String? = nil) {
+        self.id = id
         self.merchant = merchant
         self.category = category.rawValue
         self.invoiceNumber = invoiceNumber
         self.purchasedAt = purchasedAt
-        self.createdAt = .now
+        self.createdAt = createdAt
         self.paidBy = paidBy.rawValue
         self.parsingNote = parsingNote
         self.items = []
@@ -58,8 +61,8 @@ final class PurchaseItem {
     var estimatedUseBy: Date?
     var purchase: Purchase?
 
-    init(name: String, amount: Decimal, quantity: Decimal = 1, displayOrder: Int = 0, isPersonal: Bool = false, isTrackedForRestock: Bool = false, estimatedUseBy: Date? = nil) {
-        self.id = UUID()
+    init(id: UUID = UUID(), name: String, amount: Decimal, quantity: Decimal = 1, displayOrder: Int = 0, isPersonal: Bool = false, isTrackedForRestock: Bool = false, estimatedUseBy: Date? = nil) {
+        self.id = id
         self.name = name
         self.amount = amount
         self.quantity = quantity
@@ -78,9 +81,10 @@ final class Settlement {
     var amount: Decimal
     var settledAt: Date
     var note: String
+    var needsRemoteSync: Bool = false
 
-    init(payer: LedgerPerson, receiver: LedgerPerson, amount: Decimal, settledAt: Date = .now, note: String = "") {
-        self.id = UUID()
+    init(id: UUID = UUID(), payer: LedgerPerson, receiver: LedgerPerson, amount: Decimal, settledAt: Date = .now, note: String = "") {
+        self.id = id
         self.payer = payer.rawValue
         self.receiver = receiver.rawValue
         self.amount = amount

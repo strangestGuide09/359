@@ -49,6 +49,10 @@ async function measure(page, state, presentation = "classic") {
       mastheadBorder: getComputedStyle(document.querySelector(".household-masthead")).borderTopWidth,
       members: [...document.querySelectorAll(".member-block")].map(member => member.getBoundingClientRect().toJSON()),
       command: rect(".command-bar"),
+      commandActions: rect(".command-actions"),
+      importAction: rect(".command-actions button:nth-child(1)"),
+      addAction: rect(".command-actions button:nth-child(2)"),
+      settingsAction: rect(".settings-action"),
       insights: rect(".insights-grid"),
       restock: rect(".restock-panel"),
       settlements: rect(".settlements-panel"),
@@ -96,6 +100,11 @@ test("tablet and mobile retain order without horizontal overflow", async context
     assert.ok(measured.command.top < measured.insights.top);
     assert.ok(measured.insights.top < measured.ledger.top);
     assert.ok(measured.ledger.top < measured.settings.top);
+    assert.ok(measured.importAction.bottom <= measured.settingsAction.top);
+    assert.ok(measured.addAction.bottom <= measured.settingsAction.top);
+    assert.ok(measured.settingsAction.width < measured.commandActions.width * .7);
+    assert.equal(Math.round(measured.settingsAction.left + measured.settingsAction.width / 2), Math.round(measured.commandActions.left + measured.commandActions.width / 2));
+    if (viewport.width > 700) assert.equal(Math.round(measured.importAction.top), Math.round(measured.addAction.top));
     await page.close();
   }
 });

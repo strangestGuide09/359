@@ -76,6 +76,7 @@ let pendingPdfImport;
 let stagedPdfImport;
 let editingPurchase;
 let pendingReceiptRemovalId;
+let pendingReceiptPurgeId;
 let reviewedItems = [];
 let receiptReviewConfirmed = false;
 let expandedItemIndex = null;
@@ -453,7 +454,12 @@ function renderSettings(balance, archived, recoveryOpen) {
   const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
   const memberRows = members.map(member => `<div class="expense"><div><b>${esc(displayedMemberName(member))}</b><span>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</span></div></div>`).join("");
   const nameForm = archived ? "" : `<form id="display-name-form" class="inline-form"><label>Your display name<input id="display-name" maxlength="80" required autocomplete="name" value="${esc(memberDisplayName(members.find(member => member.user_id === session.user.id)))}"></label><button class="secondary">Update name</button></form>`;
-  const archiveList = archivedEntries.length ? `<details class="archive-list"><summary>Removed receipts & archived settlements (${archivedEntries.length})</summary>${archivedEntries.map(item => `<div class="expense"><div><b>${item.type === "purchase" ? `Removed receipt: ${esc(item.label)}` : "Archived settlement"}</b><span>${money(item.amount)} · ${item.type === "purchase" ? `Removed ${fmtTimestamp(item.archived_at)}${item.archived_by ? ` by ${esc(memberName(item.archived_by))}` : ""}` : `Archived ${fmtTimestamp(item.archived_at)}`}</span></div>${active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id) ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">${item.type === "purchase" ? "Restore to ledger" : "Restore settlement"}</button>` : ""}</div>`).join("")}</details>` : "";
+  const archiveList = archivedEntries.length ? `<details class="archive-list"><summary>Removed receipts & archived settlements (${archivedEntries.length})</summary>${archivedEntries.map(item => {
+    const canRestore = active() && (isOwner() || (item.type === "purchase" ? item.paid_by : item.payer) === session.user.id);
+    const restore = canRestore ? `<button class="secondary" data-restore-entry="${item.type}" data-id="${item.id}">${item.type === "purchase" ? "Restore to ledger" : "Restore settlement"}</button>` : "";
+    const purge = active() && isOwner() && item.type === "purchase" ? `<button class="archive-purge" data-purge-receipt="${item.id}" aria-label="Delete ${esc(item.label)} permanently">Delete permanently</button>` : "";
+    return `<div class="expense archived-entry"><div><b>${item.type === "purchase" ? `Removed receipt: ${esc(item.label)}` : "Archived settlement"}</b><span>${money(item.amount)} · ${item.type === "purchase" ? `Removed ${fmtTimestamp(item.archived_at)}${item.archived_by ? ` by ${esc(memberName(item.archived_by))}` : ""}` : `Archived ${fmtTimestamp(item.archived_at)}`}</span></div>${restore || purge ? `<div class="archived-entry-actions">${restore}${purge}</div>` : ""}</div>`;
+  }).join("")}</details>` : "";
   const accountSession = `<section class="account-session" aria-labelledby="account-session-title"><div><b id="account-session-title">Account and session</b><small>Sign out of Grocery Ledger on this browser.</small></div><button id="sign-out" class="secondary session-sign-out">Sign out</button></section>`;
   return `<details id="household-settings" class="panel settings"><summary><span><b>Household settings</b><small>Names, removed receipts and recovery</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body"><section class="settings-profile" aria-labelledby="settings-members-title"><div class="settings-section-heading"><b id="settings-members-title">Household members</b><small>Two people share this ledger.</small></div><div class="member-list">${memberRows}</div>${nameForm}</section><section class="settings-account" aria-label="Account and recovery">${accountSession}${archiveList}</section>${ownerControls}</div></details>`;
 }
@@ -472,7 +478,7 @@ function renderDashboard() {
   const restock = suggestionCards();
   const restockPanel = renderPreview(restock.cards, { id: "restock-preview", limit: 4, noun: "suggestions", empty: restock.empty });
   const settlementPanel = renderPreview(settlementRows, { id: "settlement-preview", limit: 3, noun: "settlements", empty: '<p class="empty-state">No settlements recorded.</p>' });
-  const actions = archived ? "" : `<nav class="command-actions primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button><button id="open-settings" class="plain" aria-controls="household-settings">Household settings</button></nav>`;
+  const actions = archived ? "" : `<nav class="command-actions primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button><button id="open-settings" class="settings-action" aria-controls="household-settings">Household settings</button></nav>`;
   const archiveBanner = archived ? `<p class="archive-banner">This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}</p>` : "";
   setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}<section class="command-bar">${renderBalance(balance, archived)}${actions}</section>${renderRemovalUndo()}<section class="insights-grid"><section class="panel insight-card restock-panel"><div class="heading"><div><p>RESTOCK</p><h2>Possible buys</h2></div></div>${restockPanel}</section><section class="panel insight-card settlements-panel"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section></section><section class="panel expenses-panel"><div class="heading"><div><p>LEDGER</p><h2>Recent expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div class="ledger-columns" aria-hidden="true"><span>Merchant</span><span>Paid by</span><span>Date</span><span>Reviewed items</span><span>Amount</span><span>Actions</span></div><div>${purchases}</div></section>${renderSettings(balance, archived, recoveryOpen)}</section>`);
   bindDashboard(balance);
@@ -517,6 +523,7 @@ function bindDashboard(balance) {
   document.querySelectorAll("[data-edit-receipt]").forEach(button => button.onclick = () => editReceipt(button.dataset.editReceipt));
   document.querySelectorAll("[data-delete-receipt]").forEach(button => button.onclick = () => deleteReceipt(button.dataset.deleteReceipt));
   document.querySelectorAll("[data-restore-entry]").forEach(button => button.onclick = () => restoreEntry(button.dataset.restoreEntry, button.dataset.id));
+  document.querySelectorAll("[data-purge-receipt]").forEach(button => button.onclick = () => requestReceiptPurge(button.dataset.purgeReceipt));
   $("undo-receipt-removal") && ($("undo-receipt-removal").onclick = event => restoreRemovedReceipt(event.currentTarget.dataset.receiptId, "undo"));
 }
 async function rpcReload(name, args, success) {
@@ -1099,6 +1106,10 @@ $("keep-receipt").onclick = keepReceipt;
 $("confirm-remove-receipt").onclick = confirmRemoveReceipt;
 $("remove-receipt").addEventListener("cancel", event => { event.preventDefault(); keepReceipt(); });
 $("remove-receipt").addEventListener("click", event => { if (event.target === $("remove-receipt")) keepReceipt(); });
+$("keep-removed-receipt").onclick = keepRemovedReceipt;
+$("confirm-purge-receipt").onclick = confirmReceiptPurge;
+$("purge-receipt").addEventListener("cancel", event => { event.preventDefault(); keepRemovedReceipt(); });
+$("purge-receipt").addEventListener("click", event => { if (event.target === $("purge-receipt")) keepRemovedReceipt(); });
 $("add-item").onclick = () => { reviewedItems.push(emptyReviewedItem()); resetReceiptReviewConfirmation(true); renderItemRows(); };
 $("confirm-receipt-review").onchange = event => { receiptReviewConfirmed = event.currentTarget.checked; };
 $("amount").oninput = () => { if (pendingPdfImport) pendingPdfImport.amountSource = "edited"; resetReceiptReviewConfirmation(); updateItemTotal(); };
@@ -1224,6 +1235,38 @@ async function restoreRemovedReceipt(id, source) {
   note(source === "duplicate" ? "Removed receipt restored. No duplicate was created." : "Receipt restored to the ledger; balances and Possible Buys were recalculated.");
   await loadLedger();
   return true;
+}
+function keepRemovedReceipt() {
+  pendingReceiptPurgeId = undefined;
+  $("purge-receipt-error").textContent = "";
+  $("purge-receipt").close();
+}
+function requestReceiptPurge(id) {
+  const purchase = ledger.archivedPurchases.find(item => item.id === id);
+  if (!purchase || !active() || !isOwner()) return;
+  pendingReceiptPurgeId = id;
+  $("purge-receipt-name").textContent = purchase.label;
+  $("purge-receipt-error").textContent = "";
+  $("purge-receipt").showModal();
+  requestAnimationFrame(() => $("keep-removed-receipt").focus());
+}
+async function confirmReceiptPurge() {
+  const id = pendingReceiptPurgeId;
+  if (!id || !isOwner()) return;
+  const button = $("confirm-purge-receipt");
+  button.disabled = true;
+  button.textContent = "Deleting…";
+  const { error } = await supabase.rpc("purge_purchase_receipt", { p_purchase_id: id });
+  button.disabled = false;
+  button.textContent = "Delete permanently";
+  if (error) { $("purge-receipt-error").textContent = error.message; return; }
+  forgetRemovedReceipt(sessionStorage, id);
+  lastPdfFeedback = undefined;
+  clearImportFeedback(document);
+  pendingReceiptPurgeId = undefined;
+  $("purge-receipt").close();
+  note("Receipt permanently deleted.");
+  await loadLedger();
 }
 function keepReceipt() {
   pendingReceiptRemovalId = undefined;
