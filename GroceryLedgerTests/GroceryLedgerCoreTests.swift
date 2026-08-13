@@ -72,6 +72,40 @@ final class GroceryLedgerCoreTests: XCTestCase {
         XCTAssertEqual(result[0].estimatedNextBuy, calendar.date(from: DateComponents(year: 2026, month: 7, day: 17)))
     }
 
+    func testDelayedUploadUsesReviewedReceiptDateForTimelinePayloadAndRestock() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
+        let july3 = calendar.date(from: DateComponents(year: 2026, month: 7, day: 3))!
+        let august13 = calendar.date(from: DateComponents(year: 2026, month: 8, day: 13))!
+
+        let delayed = purchase(name: "Milk", date: july3)
+        delayed.createdAt = august13 // Uploaded 41 days after the receipt event.
+        let sameDay = purchase(name: "Milk", date: august13)
+        sameDay.createdAt = august13
+
+        let chronology = LedgerEngine.purchasesByReceiptDate([delayed, sameDay])
+        XCTAssertEqual(chronology.map(\.id), [sameDay.id, delayed.id])
+        XCTAssertEqual(chronology.map(\.purchasedAt), [august13, july3])
+
+        let suggestions = LedgerEngine.possibleBuys(from: [sameDay, delayed], referenceDate: august13)
+        XCTAssertEqual(suggestions.first?.lastBought, august13)
+        XCTAssertEqual(suggestions.first?.usualIntervalDays, 41)
+        XCTAssertEqual(
+            suggestions.first?.estimatedNextBuy,
+            calendar.date(from: DateComponents(year: 2026, month: 9, day: 23))
+        )
+
+        let householdID = UUID(), ektaID = UUID()
+        let bundle = try SharedDataMapper.purchase(delayed, householdID: householdID, memberIDs: [.ekta: ektaID])
+        let payload = try SharedDataMapper.reviewedImport(
+            from: bundle,
+            exactPDFHash: String(repeating: "a", count: 64),
+            contentHash: String(repeating: "b", count: 64)
+        )
+        XCTAssertEqual(payload.purchasedOn.isoString, "2026-07-03")
+        XCTAssertEqual(bundle.header.createdAt, august13)
+    }
+
     func testEstimatedUseByOverridesRepeatCadence() {
         let calendar = Calendar(identifier: .gregorian)
         let first = calendar.date(from: DateComponents(year: 2026, month: 7, day: 1))!
@@ -213,6 +247,96 @@ final class GroceryLedgerCoreTests: XCTestCase {
         """)
 
         XCTAssertTrue(try context.fetch(FetchDescriptor<Purchase>()).isEmpty)
+    }
+
+    func testAuthoritativeRemoteSnapshotRemovesArchivedRecordsButPreservesOutbox() throws {
+        let container = try ModelContainer(
+            for: Purchase.self, PurchaseItem.self, Settlement.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let context = ModelContext(container)
+        let archived = Purchase(merchant: "Archived remotely", paidBy: .ekta)
+        archived.isRemoteBacked = true
+        let staleItem = PurchaseItem(name: "Stale", amount: 200)
+        staleItem.purchase = archived; archived.items.append(staleItem)
+        context.insert(archived)
+        let pending = Purchase(merchant: "Pending local", paidBy: .ritesh)
+        pending.needsRemoteSync = true
+        pending.exactPDFHash = String(repeating: "a", count: 64)
+        pending.contentHash = String(repeating: "b", count: 64)
+        context.insert(pending)
+        let removedPayment = Settlement(payer: .ritesh, receiver: .ekta, amount: 100)
+        removedPayment.isRemoteBacked = true
+        removedPayment.receiptAllocations = [.init(purchaseID: archived.id, purchaseItemID: nil, amount: 100)]
+        context.insert(removedPayment)
+        let pendingPayment = Settlement(payer: .ritesh, receiver: .ekta, amount: 10)
+        pendingPayment.needsRemoteSync = true
+        pendingPayment.receiptAllocations = [.init(purchaseID: pending.id, purchaseItemID: nil, amount: 10)]
+        context.insert(pendingPayment)
+        try context.save()
+
+        let householdID = UUID(), ektaID = UUID(), riteshID = UUID()
+        let snapshot = RemoteLedgerSnapshot(
+            household: .init(id: householdID, name: "Home", archivedAt: nil, purgeAfter: nil),
+            memberships: [
+                .init(householdID: householdID, userID: ektaID, displayName: "Ekta", role: .owner),
+                .init(householdID: householdID, userID: riteshID, displayName: "Ritesh", role: .partner)
+            ],
+            purchases: [], settlements: [], settlementAllocations: []
+        )
+        try RemoteLedgerImporter.apply(snapshot, to: context)
+
+        let purchases = try context.fetch(FetchDescriptor<Purchase>())
+        let settlements = try context.fetch(FetchDescriptor<Settlement>())
+        XCTAssertEqual(purchases.map(\.id), [pending.id])
+        XCTAssertEqual(settlements.map(\.id), [pendingPayment.id])
+        XCTAssertEqual(LedgerEngine.summary(purchases: purchases, settlements: settlements).ekta, -10)
+    }
+
+    func testAuthoritativeSnapshotReconcilesRemovedItemsAndAllocationHistory() throws {
+        let container = try ModelContainer(
+            for: Purchase.self, PurchaseItem.self, Settlement.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let context = ModelContext(container)
+        let householdID = UUID(), ektaID = UUID(), riteshID = UUID(), purchaseID = UUID()
+        let stale = Purchase(id: purchaseID, merchant: "Old", paidBy: .ekta)
+        stale.isRemoteBacked = true
+        let keptID = UUID(), removedID = UUID()
+        for id in [keptID, removedID] {
+            let item = PurchaseItem(id: id, name: "Old item", amount: 100)
+            item.purchase = stale; stale.items.append(item)
+        }
+        context.insert(stale)
+        let payment = Settlement(payer: .ritesh, receiver: .ekta, amount: 20)
+        payment.isRemoteBacked = true
+        payment.receiptAllocations = [.init(purchaseID: purchaseID, purchaseItemID: removedID, amount: 20)]
+        context.insert(payment)
+        try context.save()
+
+        let remotePurchase = RemotePurchase(
+            id: purchaseID, householdID: householdID, label: "Current", category: .groceries,
+            amount: 80, paidBy: ektaID, purchasedOn: LedgerDate(.now), createdAt: .now,
+            items: [.init(id: keptID, displayOrder: 0, name: "Kept", quantity: 1, lineTotal: 80, isPersonal: false, isTrackedForRestock: false, estimatedUseBy: nil)]
+        )
+        let snapshot = RemoteLedgerSnapshot(
+            household: .init(id: householdID, name: "Home", archivedAt: nil, purgeAfter: nil),
+            memberships: [.init(householdID: householdID, userID: ektaID, displayName: "Ekta", role: .owner), .init(householdID: householdID, userID: riteshID, displayName: "Ritesh", role: .partner)],
+            purchases: [remotePurchase], settlements: [], settlementAllocations: []
+        )
+        try RemoteLedgerImporter.apply(snapshot, to: context)
+        let current = try XCTUnwrap(context.fetch(FetchDescriptor<Purchase>()).first)
+        XCTAssertEqual(current.items.map(\.id), [keptID])
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Settlement>()).isEmpty)
+        XCTAssertEqual(LedgerEngine.summary(purchases: [current], settlements: []).ekta, 40)
+    }
+
+    func testInvoiceFingerprintsAreDistinctAndNormalizedWithoutPersistingIdentifiers() {
+        XCTAssertNotEqual(InvoiceFingerprint.sha256(Data("pdf-a".utf8)), InvoiceFingerprint.sha256(Data("pdf-b".utf8)))
+        XCTAssertEqual(
+            InvoiceFingerprint.contentHash("MILK   ₹80\nOrder #ABC-123"),
+            InvoiceFingerprint.contentHash("milk ₹80\norder abc123")
+        )
     }
 
     func testSharedPDFHandoffUsesOpaqueTemporaryNameAndCanBeDiscarded() throws {

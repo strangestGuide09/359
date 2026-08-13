@@ -82,8 +82,6 @@ private struct PurchaseDetailView: View {
                 LabeledContent("Merchant", value: purchase.merchant)
                 LabeledContent("Category", value: purchase.category)
                 LabeledContent("Paid by", value: purchase.paidBy)
-                if let invoice = purchase.invoiceNumber { LabeledContent("Invoice", value: invoice) }
-                if let note = purchase.parsingNote { Text(note).font(.footnote).foregroundStyle(.secondary) }
             }
             Section("Items") {
                 ForEach(purchase.items.sorted { lhs, rhs in
@@ -152,7 +150,7 @@ private struct AddExpenseView: View {
 
     private func save() {
         guard let decimal = Decimal(string: amount), decimal > 0 else { return }
-        let purchase = Purchase(merchant: label.trimmingCharacters(in: .whitespacesAndNewlines), category: category, purchasedAt: date, paidBy: paidBy, parsingNote: "Added manually")
+        let purchase = Purchase(merchant: label.trimmingCharacters(in: .whitespacesAndNewlines), category: category, purchasedAt: date, paidBy: paidBy)
         let item = PurchaseItem(name: label.trimmingCharacters(in: .whitespacesAndNewlines), amount: decimal, estimatedUseBy: includeEstimatedUseBy ? estimatedUseBy : nil)
         item.purchase = purchase
         purchase.items.append(item)

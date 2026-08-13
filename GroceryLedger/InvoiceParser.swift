@@ -14,7 +14,6 @@ struct ParsedInvoiceItem: Identifiable {
 struct ParsedInvoice {
     var merchant: String
     var category: ExpenseCategory
-    var invoiceNumber: String?
     var date: Date
     var buyer: LedgerPerson?
     var suggestedTotal: Decimal?
@@ -83,7 +82,6 @@ enum InvoiceParser {
 
         let buyerName = capture("(?:Invoice To:\\s*|Customer Name:\\s*|Name\\s*:\\s*)(Ekta(?:\\s+Dhan)?|Ritesh(?:\\s+Kumar)?)", in: text)
         let buyer = buyerName?.localizedCaseInsensitiveContains("Ritesh") == true ? LedgerPerson.ritesh : buyerName == nil ? nil : .ekta
-        let invoice = capture("(?:Invoice No|Invoice Number|Order ID)\\s*:?\\s*([A-Z0-9]+)", in: text)
         let parsedDate = foodOrderDate(in: text) ?? dateCapture("(?:Date\\s+of\\s+Invoice|Invoice\\s+Date|Date)\\s*:?\\s*([0-9]{2}[-/][A-Za-z0-9]{2,3}[-/][0-9]{2,4})", in: text) ?? .now
         let items: [ParsedInvoiceItem]
         let structured = positionedTableItems(from: positionedPages)
@@ -106,7 +104,7 @@ enum InvoiceParser {
                 : total == nil
                     ? "The payable total needs confirmation. Verify every item and enter or correct the receipt total before saving."
                     : "Product lines and invoice buyer were read from the PDF. Review the items and choose which ones to track for restock."
-        return ParsedInvoice(merchant: merchant, category: category, invoiceNumber: invoice, date: parsedDate, buyer: buyer, suggestedTotal: total, items: items, note: note)
+        return ParsedInvoice(merchant: merchant, category: category, date: parsedDate, buyer: buyer, suggestedTotal: total, items: items, note: note)
     }
 
     private struct PositionedTableResult {

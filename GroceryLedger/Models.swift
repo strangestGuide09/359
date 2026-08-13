@@ -26,25 +26,22 @@ final class Purchase {
     // A stored default lets existing local ledgers migrate safely when this
     // category field is introduced; older purchases are groceries by default.
     var category: String = "Groceries"
-    var invoiceNumber: String?
     var purchasedAt: Date
     var createdAt: Date
     var paidBy: String
-    var parsingNote: String?
     var needsRemoteSync: Bool = false
+    var isRemoteBacked: Bool = false
     var exactPDFHash: String?
     var contentHash: String?
     @Relationship(deleteRule: .cascade, inverse: \PurchaseItem.purchase) var items: [PurchaseItem]
 
-    init(id: UUID = UUID(), merchant: String, category: ExpenseCategory = .groceries, invoiceNumber: String? = nil, purchasedAt: Date = .now, createdAt: Date = .now, paidBy: LedgerPerson = .ekta, parsingNote: String? = nil) {
+    init(id: UUID = UUID(), merchant: String, category: ExpenseCategory = .groceries, purchasedAt: Date = .now, createdAt: Date = .now, paidBy: LedgerPerson = .ekta) {
         self.id = id
         self.merchant = merchant
         self.category = category.rawValue
-        self.invoiceNumber = invoiceNumber
         self.purchasedAt = purchasedAt
         self.createdAt = createdAt
         self.paidBy = paidBy.rawValue
-        self.parsingNote = parsingNote
         self.items = []
     }
 }
@@ -82,6 +79,7 @@ final class Settlement {
     var settledAt: Date
     var note: String
     var needsRemoteSync: Bool = false
+    var isRemoteBacked: Bool = false
     /// JSON for reviewed receipt allocations only. It contains stable database
     /// identifiers and amounts; no receipt source document data is stored here.
     var allocationsData: Data = Data()

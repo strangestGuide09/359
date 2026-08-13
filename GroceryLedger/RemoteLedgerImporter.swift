@@ -7,6 +7,10 @@ enum RemoteLedgerImporter {
         let people = personMap(snapshot.memberships)
         let purchases = try context.fetch(FetchDescriptor<Purchase>())
         let purchaseByID = Dictionary(uniqueKeysWithValues: purchases.map { ($0.id, $0) })
+        let remotePurchaseIDs = Set(snapshot.purchases.map(\.id))
+        for purchase in purchases where purchase.isRemoteBacked && !purchase.needsRemoteSync && !remotePurchaseIDs.contains(purchase.id) {
+            context.delete(purchase)
+        }
         for remote in snapshot.purchases {
             guard let paidBy = people[remote.paidBy] else { continue }
             let purchase = purchaseByID[remote.id] ?? Purchase(
@@ -15,16 +19,21 @@ enum RemoteLedgerImporter {
                 category: remote.category,
                 purchasedAt: remote.purchasedOn.value,
                 createdAt: remote.createdAt,
-                paidBy: paidBy,
-                parsingNote: "Synced reviewed purchase"
+                paidBy: paidBy
             )
             purchase.merchant = remote.label
             purchase.category = remote.category.rawValue
             purchase.purchasedAt = remote.purchasedOn.value
             purchase.paidBy = paidBy.rawValue
+            purchase.isRemoteBacked = true
+            purchase.needsRemoteSync = false
             if purchaseByID[remote.id] == nil { context.insert(purchase) }
 
             let itemByID = Dictionary(uniqueKeysWithValues: purchase.items.map { ($0.id, $0) })
+            let remoteItemIDs = Set(remote.items.map(\.id))
+            for item in purchase.items where !remoteItemIDs.contains(item.id) {
+                context.delete(item)
+            }
             for remoteItem in remote.items {
                 let item = itemByID[remoteItem.id] ?? PurchaseItem(
                     id: remoteItem.id,
@@ -47,6 +56,10 @@ enum RemoteLedgerImporter {
 
         let settlements = try context.fetch(FetchDescriptor<Settlement>())
         let settlementByID = Dictionary(uniqueKeysWithValues: settlements.map { ($0.id, $0) })
+        let remoteSettlementIDs = Set(snapshot.settlements.map(\.id))
+        for settlement in settlements where settlement.isRemoteBacked && !settlement.needsRemoteSync && !remoteSettlementIDs.contains(settlement.id) {
+            context.delete(settlement)
+        }
         let allocationsBySettlement = Dictionary(grouping: snapshot.settlementAllocations, by: \.settlementID)
         for remote in snapshot.settlements {
             guard let payer = people[remote.payer], let receiver = people[remote.receiver] else { continue }
@@ -62,12 +75,16 @@ enum RemoteLedgerImporter {
             settlement.receiver = receiver.rawValue
             settlement.amount = remote.amount
             settlement.settledAt = remote.settledOn.value
+            settlement.isRemoteBacked = true
+            settlement.needsRemoteSync = false
             // The canonical history identifies supporting receipts. Allocation
             // amounts remain server-enforced; distribute only for local display.
             if let remoteAllocations = allocationsBySettlement[remote.id], !remoteAllocations.isEmpty {
                 settlement.receiptAllocations = remoteAllocations.map {
                     SettlementAllocation(purchaseID: $0.purchaseID, purchaseItemID: $0.purchaseItemID, amount: $0.amount)
                 }
+            } else {
+                settlement.receiptAllocations = []
             }
             if settlementByID[remote.id] == nil { context.insert(settlement) }
         }

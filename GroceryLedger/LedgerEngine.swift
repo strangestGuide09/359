@@ -28,6 +28,15 @@ struct BalanceSummary {
 }
 
 enum LedgerEngine {
+    /// Event chronology is always the reviewed receipt date. `createdAt` is
+    /// optional upload/import metadata and must never reorder ledger events.
+    static func purchasesByReceiptDate(_ purchases: [Purchase]) -> [Purchase] {
+        purchases.sorted {
+            if $0.purchasedAt == $1.purchasedAt { return $0.id.uuidString < $1.id.uuidString }
+            return $0.purchasedAt > $1.purchasedAt
+        }
+    }
+
     static func sharedTotal(for purchase: Purchase) -> Decimal {
         purchase.items.filter { !$0.isPersonal }.reduce(0) { $0 + $1.amount }
     }

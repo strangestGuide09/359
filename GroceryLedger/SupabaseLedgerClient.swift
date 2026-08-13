@@ -150,6 +150,42 @@ struct RemoteSettlementAllocation: Codable, Equatable, Sendable {
     }
 }
 
+enum InvoiceDuplicateStatus: String, Codable, Equatable, Sendable {
+    case none
+    case linkedActive = "linked_active"
+    case linkedArchivedRestorable = "linked_archived_restorable"
+    case linkedArchivedNotAuthorized = "linked_archived_not_authorized"
+    case legacyUnlinked = "legacy_unlinked"
+    case ambiguous
+}
+
+struct InvoiceDuplicateResult: Codable, Equatable, Sendable {
+    let status: InvoiceDuplicateStatus
+    let matchBasis: String?
+    let purchaseID: UUID?
+    let purchaseArchived: Bool
+    let canRestore: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case status = "duplicate_status"
+        case matchBasis = "match_basis"
+        case purchaseID = "purchase_id"
+        case purchaseArchived = "purchase_archived"
+        case canRestore = "can_restore"
+    }
+
+    var userMessage: String {
+        switch status {
+        case .none: "No duplicate found."
+        case .linkedActive: "This receipt is already active in the household ledger. No duplicate was saved."
+        case .linkedArchivedRestorable: "This receipt was previously removed. Restore it on the website instead of creating a duplicate."
+        case .linkedArchivedNotAuthorized: "This receipt was removed. Only its payer or the household owner can restore it."
+        case .legacyUnlinked: "A legacy receipt fingerprint already exists and cannot be safely linked. No duplicate was saved."
+        case .ambiguous: "More than one receipt fingerprint matched. Review the household ledger before retrying."
+        }
+    }
+}
+
 struct RemoteLedgerSnapshot: Equatable, Sendable {
     let household: RemoteHousehold
     let memberships: [RemoteMembership]
@@ -301,6 +337,18 @@ struct SupabaseLedgerAPI: Sendable {
         _ = try await request(path: "/rest/v1/rpc/import_reviewed_purchase", method: "POST", body: body, authenticatedBy: token)
     }
 
+    func findInvoiceDuplicate(householdID: UUID, exactPDFHash: String, contentHash: String, token: String) async throws -> InvoiceDuplicateResult {
+        let data = try await request(
+            path: "/rest/v1/rpc/find_invoice_duplicate", method: "POST",
+            body: ["p_household_id": householdID.uuidString, "p_exact_pdf_hash": exactPDFHash, "p_content_hash": contentHash],
+            authenticatedBy: token
+        )
+        guard let result = try SupabaseJSON.decoder.decode([InvoiceDuplicateResult].self, from: data).first else {
+            return InvoiceDuplicateResult(status: .ambiguous, matchBasis: nil, purchaseID: nil, purchaseArchived: false, canRestore: false)
+        }
+        return result
+    }
+
     func recordReceiptBackedSettlement(_ payload: ReceiptBackedSettlementRPCPayload, token: String) async throws {
         let body = try JSONSerialization.jsonObject(with: SupabaseJSON.encoder.encode(payload))
         _ = try await request(path: "/rest/v1/rpc/record_receipt_backed_settlement", method: "POST", body: body, authenticatedBy: token)
@@ -385,8 +433,24 @@ final class SupabaseLedgerController {
 
     func uploadReviewedPurchase(_ payload: ReviewedImportRPCPayload) async throws {
         guard let session else { throw SupabaseClientError.noSession }
+        let duplicate = try await api.findInvoiceDuplicate(
+            householdID: payload.householdID, exactPDFHash: payload.exactPDFHash,
+            contentHash: payload.contentHash, token: session.accessToken
+        )
+        guard duplicate.status == .none else {
+            throw SupabaseClientError.server(status: 409, message: duplicate.userMessage)
+        }
         try await api.importReviewed(payload, token: session.accessToken)
         await reload()
+    }
+
+    func findInvoiceDuplicate(exactPDFHash: String, contentHash: String) async throws -> InvoiceDuplicateResult {
+        guard let session else { throw SupabaseClientError.noSession }
+        guard let householdID = snapshot?.household.id else { throw SupabaseClientError.noHousehold }
+        return try await api.findInvoiceDuplicate(
+            householdID: householdID, exactPDFHash: exactPDFHash,
+            contentHash: contentHash, token: session.accessToken
+        )
     }
 
     func uploadSettlement(_ settlement: SettlementDTO, allocations: [SettlementAllocation]) async throws {

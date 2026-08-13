@@ -7,6 +7,7 @@ struct DashboardView: View {
 
     private var summary: BalanceSummary { LedgerEngine.summary(purchases: purchases, settlements: settlements) }
     private var possibleBuys: [RestockSuggestion] { LedgerEngine.possibleBuys(from: purchases) }
+    private var recentPurchases: [Purchase] { LedgerEngine.purchasesByReceiptDate(purchases) }
 
     var body: some View {
         NavigationStack {
@@ -114,7 +115,7 @@ struct DashboardView: View {
             if purchases.isEmpty {
                 BrandEmptyState(icon: "doc.badge.plus", title: "No purchases yet", message: "Import a PDF from the Purchases tab to begin.")
             } else {
-                ForEach(Array(purchases.prefix(5)), id: \.id) { purchase in
+                ForEach(Array(recentPurchases.prefix(5)), id: \.id) { purchase in
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(purchase.merchant).font(.headline)
@@ -127,7 +128,7 @@ struct DashboardView: View {
                             .font(.subheadline.bold())
                             .foregroundStyle(GroceryBrand.pine)
                     }
-                    if purchase.id != purchases.prefix(5).last?.id { Divider().overlay(GroceryBrand.line) }
+                    if purchase.id != recentPurchases.prefix(5).last?.id { Divider().overlay(GroceryBrand.line) }
                 }
             }
         }

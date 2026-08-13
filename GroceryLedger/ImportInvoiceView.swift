@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 import CryptoKit
+import PDFKit
 
 enum InvoiceProcessingMethod: String, CaseIterable, Identifiable, Sendable {
     case local = "Local"
@@ -68,7 +69,6 @@ struct ImportInvoiceView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(SupabaseLedgerController.self) private var sync
-    @Query private var purchases: [Purchase]
 
     @State private var showingFilePicker = false
     @State private var flow = InvoiceImportFlow()
@@ -76,7 +76,6 @@ struct ImportInvoiceView: View {
     @State private var errorMessage: String?
     @State private var merchant = ""
     @State private var category: ExpenseCategory = .groceries
-    @State private var invoiceNumber = ""
     @State private var purchaseDate = Date.now
     @State private var paidBy: LedgerPerson = .ekta
     @State private var parsedItems: [ParsedInvoiceItem] = []
@@ -86,14 +85,10 @@ struct ImportInvoiceView: View {
     @State private var isSaving = false
     @State private var pendingSharedDraft: PendingInvoiceDraft?
     @State private var exactPDFHash: String?
+    @State private var contentHash: String?
 
     init(pendingDraft: PendingInvoiceDraft? = nil) {
         _pendingSharedDraft = State(initialValue: pendingDraft)
-    }
-
-    private var isDuplicate: Bool {
-        let number = invoiceNumber.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !number.isEmpty && purchases.contains { $0.invoiceNumber == number }
     }
 
     private var reviewedTotal: Decimal {
@@ -137,7 +132,7 @@ struct ImportInvoiceView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Saving…" : "Save") { save() }
-                        .disabled(isSaving || isDuplicate || !isValidDraft)
+                        .disabled(isSaving || !isValidDraft)
                 }
             }
             .fileImporter(isPresented: $showingFilePicker, allowedContentTypes: [.pdf]) { result in
@@ -244,15 +239,9 @@ struct ImportInvoiceView: View {
             Picker("Category", selection: $category) {
                 ForEach(ExpenseCategory.allCases) { Text($0.rawValue).tag($0) }
             }
-            TextField("Invoice number (optional)", text: $invoiceNumber)
-                .textInputAutocapitalization(.characters)
             DatePicker("Purchase date", selection: $purchaseDate, displayedComponents: .date)
             Picker("Paid by", selection: $paidBy) {
                 ForEach(LedgerPerson.allCases) { Text($0.rawValue).tag($0) }
-            }
-            if isDuplicate {
-                Label("This invoice number has already been saved.", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
             }
         }
     }
@@ -384,11 +373,16 @@ struct ImportInvoiceView: View {
             if pendingSharedDraft?.url == url { discardPendingSharedPDF() }
         }
         do {
-            exactPDFHash = SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+            let pdfData = try Data(contentsOf: url)
+            exactPDFHash = InvoiceFingerprint.sha256(pdfData)
+            guard let document = PDFDocument(data: pdfData) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let transientText = (0..<document.pageCount).compactMap { document.page(at: $0)?.string }.joined(separator: "\n")
+            contentHash = InvoiceFingerprint.contentHash(transientText)
             let invoice = try InvoiceParser.parse(url: url)
             merchant = invoice.merchant
             category = invoice.category
-            invoiceNumber = invoice.invoiceNumber ?? ""
             purchaseDate = invoice.date
             if let buyer = invoice.buyer { paidBy = buyer }
             suggestedTotal = invoice.suggestedTotal
@@ -426,13 +420,13 @@ struct ImportInvoiceView: View {
     private func clearDraft() {
         merchant = ""
         category = .groceries
-        invoiceNumber = ""
         purchaseDate = .now
         paidBy = .ekta
         parsedItems = []
         suggestedTotal = nil
         parsingNote = nil
         exactPDFHash = nil
+        contentHash = nil
         hasImportedPDF = false
         isSaving = false
     }
@@ -440,14 +434,31 @@ struct ImportInvoiceView: View {
     private func save() {
         guard isValidDraft else { return }
         isSaving = true
-        let number = invoiceNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task { await validateDuplicateAndSave() }
+    }
+
+    @MainActor
+    private func validateDuplicateAndSave() async {
+        guard let exactPDFHash, let contentHash else {
+            isSaving = false; errorMessage = "The receipt fingerprints could not be calculated."; return
+        }
+        if sync.session != nil, sync.snapshot != nil {
+            do {
+                let duplicate = try await sync.findInvoiceDuplicate(exactPDFHash: exactPDFHash, contentHash: contentHash)
+                guard duplicate.status == .none else {
+                    isSaving = false; errorMessage = duplicate.userMessage; return
+                }
+            } catch {
+                isSaving = false
+                errorMessage = "Duplicate verification is temporarily unavailable. Retry when online; nothing was saved."
+                return
+            }
+        }
         let purchase = Purchase(
             merchant: merchant.trimmingCharacters(in: .whitespacesAndNewlines),
             category: category,
-            invoiceNumber: number.isEmpty ? nil : number,
             purchasedAt: purchaseDate,
-            paidBy: paidBy,
-            parsingNote: parsingNote
+            paidBy: paidBy
         )
         for (displayOrder, reviewedItem) in parsedItems.enumerated() {
             let tracksForRestock = InvoiceReviewPolicy.shouldTrackForRestock(item: reviewedItem, category: category)
@@ -465,8 +476,8 @@ struct ImportInvoiceView: View {
         }
         modelContext.insert(purchase)
         purchase.exactPDFHash = exactPDFHash
-        purchase.contentHash = exactPDFHash
-        purchase.needsRemoteSync = exactPDFHash != nil
+        purchase.contentHash = contentHash
+        purchase.needsRemoteSync = true
         do {
             try modelContext.save()
             dismiss()
@@ -476,5 +487,28 @@ struct ImportInvoiceView: View {
             isSaving = false
             errorMessage = "The reviewed purchase could not be saved: \(error.localizedDescription)"
         }
+    }
+}
+
+enum InvoiceFingerprint {
+    static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func contentHash(_ transientExtractedText: String) -> String {
+        let lower = transientExtractedText.lowercased()
+        let allowed = lower.unicodeScalars.compactMap { scalar -> String? in
+            let value = scalar.value
+            let keep = (48...57).contains(value) || (97...122).contains(value)
+                || value == 46 || value == 44 || value == 8_377 || value == 10 || value == 32
+            return keep ? String(scalar) : nil
+        }
+        let filtered = allowed.joined()
+        let normalized = filtered
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.split(separator: " ").joined(separator: " ") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return sha256(Data(normalized.utf8))
     }
 }
