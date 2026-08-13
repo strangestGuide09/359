@@ -9,3 +9,12 @@ web/dist/
 web/.wrangler/
 .qa_change_log/
 .qa_research_brief/
+
+# Local-only Grocery Ledger product documentation and builders.
+/Grocery_Slip_Tracker_Market_Research.docx
+/Grocery_Change_Log.docx
+/INVOICE_IMPORT_ACCEPTANCE.md
+/TODO.md
+/REAL_WORLD_SCENARIOS.md
+/build_research_brief.py
+/build_change_log.py

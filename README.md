@@ -1,54 +1,52 @@
 # Grocery Ledger
 
-Grocery Ledger is a private, two-person household ledger for Ekta and Ritesh.
-It combines reviewed grocery and household expenses, equal-split balances,
-settlements, and transparent restock suggestions.
+Grocery Ledger is a private ledger for one two-person household. It turns
+reviewed grocery and household purchases into shared balances, payment history,
+and transparent Possible Buys suggestions.
 
-## Canonical applications
+Each household is limited to exactly two active members: Owner and Partner.
 
-- `docs/` is the production web client for Ekta's laptop. GitHub Pages publishes
-  this directory through `.github/workflows/pages.yml`.
+## Applications
+
+- `docs/` is the production web client and GitHub Pages static source.
 - `GroceryLedger/` is the native SwiftUI/SwiftData iPhone app.
-- `web/` is a retired Vinext/browser-local prototype. It is retained only as
-  implementation history and must not be deployed or used for new product work.
+- `web/` is a retired prototype and is not a production surface.
 
-New web features, fixes, and tests belong in `docs/`. Native iPhone work belongs
-in `GroceryLedger/` and `GroceryLedgerTests/`.
+## Run and test the web client
 
-## Product boundaries
+Serve the static client from the repository root:
 
-- Each household is limited to exactly two active members.
-- Receipt PDFs are selected on the user's device and processed locally.
-- Parsing creates an editable, itemized draft. The user reviews the extracted
-  merchant, date, total, and purchased items before saving.
-- Reviewed ledger fields and purchased items may sync. Raw PDFs, extracted
-  receipt text, addresses, payment methods, card/bank/UPI details, and payment
-  references must not be stored or synced.
-- Purchased items provide the evidence used by restock suggestions. Removing
-  raw-PDF persistence must never remove PDF import or itemized review.
+```sh
+python3 -m http.server 4173 --directory docs
+```
 
-## Database status
+Then open `http://localhost:4173`. Run the web tests with a supported Node.js
+installation:
 
-The inaccessible previous database has been replaced. The clean Supabase
-bootstrap is deployed and verified, including the two-member contract, RLS,
-guarded RPCs, Realtime publication, grant audit, and hosted pgTAP checks. Website
-and native clients must still complete their own cross-client production
-acceptance; do not treat the verified database foundation as proof of every
-client flow.
+```sh
+node --test docs/tests/*.test.mjs
+```
 
-## Project documents
+Browser-geometry tests require their Playwright browser executable; when it is
+not installed, those tests report as skipped rather than passed.
 
-- `Grocery_Slip_Tracker_Market_Research.docx` is the durable product and design
-  reference.
-- `Grocery_Change_Log.docx` is the dated record of implementation work,
-  verification, defects, and operational decisions.
+## Privacy boundary
 
-The corresponding Python builders are the editable sources for these files.
+Receipt PDFs and extracted receipt text stay local and transient. Import creates
+an editable itemized draft and never saves automatically. Only deliberately
+reviewed structured fields and opaque duplicate fingerprints may persist or
+sync. Original receipts, raw extracted text, addresses, and card, bank, UPI, or
+payment-reference details must not be uploaded or stored.
 
-## Visual orientation
+## Repository scope
 
-See the [Grocery Ledger project map](project-map/README.md) for an easy-to-scan
-view of the product purpose, clients, reviewed receipt flow, privacy boundary,
-Supabase foundation, optional Sarvam path, current status, and Possible Buys
-direction. The companion [Evolution Map](project-map/grocery-ledger-evolution-map.svg)
-traces adopted decisions, dropped or deferred ideas, and next milestones.
+Supabase provides the two-seat household database, Auth, RLS, guarded RPCs, and
+Realtime. The checked-in migration and test sources define that contract; client
+features still require their own verification before production claims.
+
+Detailed product references, acceptance notes, TODOs, changelogs, generated Word
+documents, and their builders are maintained locally and intentionally excluded
+from Git. This README carries only the public high-level project orientation.
+
+The tracked [project map](project-map/README.md) provides a visual overview of the
+clients, privacy boundary, platform foundation, and roadmap.
