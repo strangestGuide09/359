@@ -38,7 +38,8 @@ test("receipt deletion is audited, reversible, and payer-or-owner-gated", async 
   assert.match(app, /supabase\.from\("purchases"\)\.update\(changes\)\.eq\("id", editingPurchase\.id\)\.eq\("household_id", current\.id\)/);
   assert.match(app, /if \(!isOwner\(\)\) request = request\.eq\("paid_by", session\.user\.id\)/);
   assert.match(app, /This receipt can only be edited by its payer or the household owner/);
-  assert.match(app, /Reviewed items and their reconciled total stay unchanged/);
+  assert.match(app, /Review every saved item before updating/);
+  assert.match(app, /update_reviewed_purchase/);
   assert.match(app, /\$\("amount"\)\.readOnly = itemized/);
   assert.match(app, /Discard your unsaved receipt changes/);
   assert.doesNotMatch(app, /confirm\("Remove this receipt/);

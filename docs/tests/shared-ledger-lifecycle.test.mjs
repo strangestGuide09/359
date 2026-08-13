@@ -115,7 +115,8 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(app, /Reviewed item totals must match the receipt total/);
   assert.match(app, /parserWarning/);
   assert.match(app, /parserNotice/);
-  assert.match(app, /supabase\.rpc\("find_invoice_duplicate", \{ p_household_id: current\.id, p_exact_pdf_hash: fingerprint\.exactHash, p_content_hash: fingerprint\.contentHash \}\)/);
+  assert.match(app, /const lookupContentHash = fingerprint\.contentHashReliable === false \? fingerprint\.exactHash : fingerprint\.contentHash/);
+  assert.match(app, /supabase\.rpc\("find_invoice_duplicate", \{ p_household_id: current\.id, p_exact_pdf_hash: fingerprint\.exactHash, p_content_hash: lookupContentHash \}\)/);
   assert.match(app, /showDuplicateImport\(result, imported\)/);
   assert.match(app, /sameFingerprint\(imported, pendingPdfImport\)/);
   assert.match(app, /sameFingerprint\(imported, lastPdfFeedback\)/);
@@ -208,10 +209,10 @@ test("authenticated workspace has four accessible areas and one main landmark", 
   assert.match(app, /tools\.insertAdjacentElement\("beforebegin", navigation\)/);
   assert.match(app, /document\.querySelector\("header \.app-navigation"\)\?\.remove\(\)/);
   assert.match(app, /Household rhythm/);
-  assert.match(app, /Array\.from\(\{ length: 4 \}/);
+  assert.match(app, /purchaseDateTimeline\(ledger\.purchases, rhythmSelectedDate\)/);
   assert.match(app, /Household record/);
-  assert.match(app, /Open receipts/);
-  assert.match(app, /Active payment/);
+  assert.doesNotMatch(app, /<h2>Open receipts<\/h2>/);
+  assert.match(app, /function renderNeedsAttention/);
   assert.ok(app.indexOf("rhythm-week") < app.indexOf("rhythm-focus-grid"));
   assert.ok(app.indexOf("rhythm-focus-grid") < app.indexOf("rhythm-record-grid"));
   assert.doesNotMatch(app, /<main class=/);
@@ -240,7 +241,7 @@ test("authenticated workspace has four accessible areas and one main landmark", 
   assert.doesNotMatch(app, /Split the bill\.<br><i>See what’s next/);
   assert.match(style, /\.app-navigation button\[aria-current="page"\]/);
   assert.match(style, /header \{ min-height:52px; padding-bottom:10px; border-bottom:1px solid var\(--line\); \}/);
-  assert.match(style, /\.week-strip \{ display:grid; grid-template-columns:repeat\(4,1fr\)/);
+  assert.match(style, /\.week-strip \{ display:flex;/);
   assert.match(style, /\.household-title h1 \{ margin:0; font-size:20px;/);
   assert.match(style, /\.rhythm-focus-grid \{ display:grid;/);
   assert.match(style, /\.rhythm-record-grid \{ display:grid;/);

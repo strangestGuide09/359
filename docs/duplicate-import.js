@@ -8,5 +8,13 @@ export function isDuplicateImportError(error) {
 }
 
 export function sameFingerprint(left, right) {
-  return !!left && !!right && (left.exactHash === right.exactHash || left.contentHash === right.contentHash);
+  return !!left && !!right && (left.exactHash === right.exactHash
+    || (left.contentHashReliable !== false && right.contentHashReliable !== false && left.contentHash === right.contentHash));
+}
+
+export function contentFingerprintIsReliable(normalizedText) {
+  const text = String(normalizedText || "").trim();
+  const words = text.match(/[a-z]{3,}/g) || [];
+  const meaningful = new Set(words.filter(word => !["invoice", "total", "amount", "date", "page"].includes(word)));
+  return text.length >= 120 && meaningful.size >= 8;
 }
