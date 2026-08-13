@@ -36,7 +36,6 @@ create or replace function private.import_reviewed_purchase_core(
 declare new_purchase_id uuid; new_import_id uuid; item jsonb; item_index integer := 0; has_shared_items boolean;
 begin
   if auth.uid() is null or not private.is_household_active_member(p_household_id) then raise exception 'Active household membership is required'; end if;
-  if not private.is_household_owner(p_household_id) then raise exception 'Only the household owner can release an orphaned fingerprint'; end if;
   if not exists(select 1 from public.household_members where household_id=p_household_id and user_id=p_paid_by) then raise exception 'Selected payer must be an active household member'; end if;
   if p_content_hash_reliable is null then raise exception 'Content fingerprint reliability is required'; end if;
   if jsonb_typeof(p_items)<>'array' or jsonb_array_length(p_items)=0 then raise exception 'At least one reviewed item is required'; end if;
@@ -150,6 +149,7 @@ create or replace function public.release_orphaned_invoice_fingerprints(
 declare released_count integer;
 begin
   if auth.uid() is null or not private.is_household_active_member(p_household_id) then raise exception 'Active household membership is required'; end if;
+  if not private.is_household_owner(p_household_id) then raise exception 'Only the household owner can release an orphaned fingerprint'; end if;
   if p_exact_pdf_hash is null or p_exact_pdf_hash !~ '^[0-9a-f]{64}$'
     or p_content_hash is null or p_content_hash !~ '^[0-9a-f]{64}$' then raise exception 'Invalid duplicate fingerprint'; end if;
   perform pg_advisory_xact_lock(hashtextextended(p_household_id::text,7));

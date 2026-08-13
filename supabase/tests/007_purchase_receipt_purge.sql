@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(23);
 
 select has_function('public','purge_purchase_receipt',array['uuid'],'receipt purge RPC exists');
 select ok(not has_function_privilege('anon','public.purge_purchase_receipt(uuid)','execute'),'anonymous purge is denied');
@@ -70,10 +70,12 @@ select is((select count(*)::integer from public.purchase_items where purchase_id
 select is((select count(*)::integer from public.invoice_imports where purchase_id='93000000-0000-0000-0000-000000000002'),0,'linked duplicate fingerprints cascade away');
 select is((select count(*)::integer from public.ledger_activity where subject_id='93000000-0000-0000-0000-000000000002'),0,'receipt-specific audit identifiers are removed');
 select is((select count(*)::integer from public.ledger_activity where household_id='92000000-0000-0000-0000-000000000001' and action='receipt_purged' and subject_id is null),1,'one content-free purge audit event remains');
+select is((select count(*)::integer from public.ledger_activity where household_id='92000000-0000-0000-0000-000000000001' and (subject_id='93000000-0000-0000-0000-000000000002' or action='receipt_purged')),1,'purge leaves only its content-free lifecycle event');
 select is((select count(*)::integer from public.purchases where id='93000000-0000-0000-0000-000000000001'),1,'unrelated active receipt remains');
 
 set local role authenticated;
 set local request.jwt.claim.sub='91000000-0000-0000-0000-000000000001';
+select is((select duplicate_status from public.find_invoice_duplicate('92000000-0000-0000-0000-000000000001',repeat('c',64),repeat('d',64))),'none','purged receipt exact and content hashes no longer match');
 select throws_ok(
   $$select public.restore_purchase_receipt('93000000-0000-0000-0000-000000000002')$$,
   'P0001','Receipt not found','purged receipt cannot be restored');
