@@ -33,6 +33,46 @@ nav { display:flex; flex-wrap:wrap; gap:10px; padding:10px 0 25px; }
 .panel { padding:22px; border:1px solid var(--line); border-radius:19px; background:var(--paper); }
 .panel h2 { margin:0; font-size:25px; letter-spacing:-.05em; }
 .dashboard-shell { display:grid; gap:18px; margin-top:20px; padding-top:20px; border-top:1px solid var(--line); }
+.app-navigation { position:sticky; top:10px; z-index:7; display:grid; grid-template-columns:repeat(4,1fr); gap:4px; margin:0; padding:4px; border:1px solid var(--line); border-radius:14px; background:color-mix(in srgb,var(--paper) 94%,transparent); box-shadow:0 8px 24px #172f2212; backdrop-filter:blur(10px); }
+.app-navigation button { min-height:43px; padding:8px 12px; border-color:transparent; background:transparent; color:var(--muted); }
+.app-navigation button[aria-current="page"] { border-color:var(--pine); background:var(--pine); color:white; }
+.ledger-view { display:grid; gap:18px; min-width:0; }
+.section-heading,.household-view-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.section-heading p,.household-view-heading p { margin:0 0 6px; color:var(--orange); font-size:11px; font-weight:bold; letter-spacing:.14em; }
+.section-heading h2,.household-view-heading h2 { margin:0; font-size:clamp(23px,2.6vw,31px); letter-spacing:-.04em; }
+.section-heading>span { color:var(--muted); font-size:13px; }
+.rhythm-week { min-width:0; padding:18px 20px; border:1px solid var(--line); border-radius:19px; background:var(--paper); }
+.week-strip { display:grid; grid-template-columns:repeat(7,minmax(84px,1fr)); gap:7px; margin:16px 0 0; padding:0; list-style:none; }
+.week-day { min-width:0; padding:11px 10px; border:1px solid var(--line); border-radius:11px; background:var(--cream); }
+.week-day time { display:flex; justify-content:space-between; align-items:baseline; gap:6px; }
+.week-day time span { color:var(--muted); font-size:12px; font-weight:bold; }
+.week-day time b { font-size:20px; }
+.week-day small { display:block; margin-top:13px; color:var(--pine); font-size:11px; line-height:1.3; }
+.week-day small.quiet { color:var(--muted); }
+.week-day.is-today { border-color:var(--orange); background:#fff8e9; }
+.rhythm-focus-grid { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr); gap:18px; align-items:stretch; }
+.rhythm-money { grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr); height:100%; }
+.rhythm-shopping { min-width:0; border-left:4px solid var(--orange); }
+.rhythm-shopping .suggestion { padding:11px 0; }
+.rhythm-record-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(330px,.65fr); gap:18px; align-items:start; }
+.household-timeline { margin:14px 0 0; padding:0; list-style:none; }
+.household-timeline li { display:grid; grid-template-columns:12px minmax(0,1fr) auto auto; gap:10px; align-items:center; padding:12px 0; border-top:1px solid #eee6d9; }
+.timeline-mark { width:10px; height:10px; border:2px solid var(--pine); border-radius:50%; }
+.timeline-mark.payment { border-radius:2px; background:var(--orange); border-color:var(--orange); transform:rotate(45deg); }
+.household-timeline b,.household-timeline span { display:block; }
+.household-timeline span,.household-timeline time { color:var(--muted); font-size:12px; }
+.timeline-link { min-height:36px; padding:6px 8px; color:var(--pine); }
+.open-receipts { display:grid; gap:10px; margin-top:14px; }
+.open-receipt { display:grid; gap:10px; padding:13px; border:1px solid var(--line); border-radius:12px; background:var(--cream); }
+.open-receipt>div span { display:block; margin-top:4px; color:var(--muted); font-size:12px; }
+.open-receipt dl { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:0; }
+.open-receipt dl div { min-width:0; }
+.open-receipt dt { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+.open-receipt dd { margin:4px 0 0; font-size:13px; font-weight:bold; overflow-wrap:anywhere; }
+.open-receipt button { width:max-content; min-height:36px; padding:6px 10px; font-size:12px; }
+.view-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.household-view-heading { padding:6px 2px; }
+.household-view { align-content:start; }
 .household-masthead { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; padding:4px 2px; }
 .household-title { padding:4px 2px; }
 .household-title>p,.insight-card .heading p,.expenses-panel .heading p { margin:0 0 7px; color:var(--orange); font-size:11px; font-weight:bold; letter-spacing:.14em; }
@@ -220,12 +260,15 @@ html[data-presentation="sketch"] body { background-image:repeating-linear-gradie
 html[data-presentation="sketch"] .panel,
 html[data-presentation="sketch"] .household-masthead,
 html[data-presentation="sketch"] .command-bar,
+html[data-presentation="sketch"] .rhythm-week,
+html[data-presentation="sketch"] .app-navigation,
 html[data-presentation="sketch"] .import-feedback,
 html[data-presentation="sketch"] .update-banner,
 html[data-presentation="sketch"] dialog { position:relative; border-color:var(--pine); }
 html[data-presentation="sketch"] .panel::after,
 html[data-presentation="sketch"] .household-masthead::after,
 html[data-presentation="sketch"] .command-bar::after,
+html[data-presentation="sketch"] .rhythm-week::after,
 html[data-presentation="sketch"] .import-feedback::after,
 html[data-presentation="sketch"] .update-banner::after,
 html[data-presentation="sketch"] dialog::after { content:""; position:absolute; inset:3px -4px -4px 3px; z-index:4; border:1px solid var(--pine); border-radius:inherit; opacity:.34; pointer-events:none; transform:rotate(.12deg); }
@@ -252,6 +295,9 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .command-actions .plain { grid-column:auto; }
   .command-actions .settings-action { grid-column:1/-1; }
   .insights-grid { grid-template-columns:minmax(0,1.45fr) minmax(280px,1fr); gap:14px; }
+  .rhythm-focus-grid,.rhythm-record-grid { grid-template-columns:1fr; gap:14px; }
+  .rhythm-money { grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr); }
+  .week-strip { overflow-x:auto; grid-template-columns:repeat(7,minmax(104px,1fr)); padding-bottom:4px; }
   .ledger-columns,.purchase-row { grid-template-columns:minmax(145px,1.5fr) 95px minmax(110px,.8fr) minmax(190px,1fr); }
   .ledger-columns span:nth-child(2),.ledger-columns span:nth-child(4),.purchase-row>[data-label="Paid by"],.purchase-row>[data-label="Items"] { display:none; }
 }
@@ -259,7 +305,7 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   main { width:min(100% - 24px,600px); }
   header { align-items:flex-start; flex-wrap:wrap; }
   .header-tools { width:100%; justify-content:space-between; }
-  .two,.name-form,.inline-form,.command-bar,.insights-grid { grid-template-columns:1fr; }
+  .two,.name-form,.inline-form,.command-bar,.insights-grid,.rhythm-focus-grid,.rhythm-record-grid,.rhythm-money { grid-template-columns:1fr; }
   .field-with-help small { min-height:0; }
   .suggestion,.expense { display:grid; gap:6px; }
   .account-gate,.state-panel { margin-top:28px; padding:28px 20px; }
@@ -271,6 +317,23 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .entry-actions { justify-content:space-between; }
   nav button { flex:1 1 100%; }
   .dashboard-shell { gap:14px; padding-top:16px; }
+  .app-navigation { position:fixed; top:auto; right:12px; bottom:8px; left:12px; grid-template-columns:repeat(4,1fr); padding:4px; }
+  .app-navigation button { min-width:0; padding:7px 3px; font-size:12px; }
+  main[data-layout="dashboard"] { padding-bottom:96px; }
+  .ledger-view { gap:14px; }
+  .rhythm-week { padding:16px 14px; overflow:hidden; }
+  .week-strip { overflow-x:auto; grid-template-columns:repeat(7,92px); margin-inline:-2px; padding:0 2px 6px; scroll-snap-type:x proximity; }
+  .week-day { scroll-snap-align:start; }
+  .section-heading,.household-view-heading { align-items:flex-start; }
+  .section-heading>span { display:none; }
+  .rhythm-shopping .section-heading,.receipt-trace .section-heading { align-items:center; }
+  .household-timeline li { grid-template-columns:12px minmax(0,1fr) auto; }
+  .household-timeline time { grid-column:2; }
+  .household-timeline .timeline-link { grid-column:2/4; width:max-content; }
+  .open-receipt dl { grid-template-columns:1fr 1fr; }
+  .view-actions { width:100%; margin-top:10px; }
+  .view-actions button { flex:1; }
+  .expenses-panel>.heading { align-items:flex-start; flex-wrap:wrap; }
   .household-title h1 { font-size:40px; }
   .household-masthead { flex-direction:column; gap:12px; }
   .member-blocks { justify-content:flex-start; max-width:none; padding-top:0; }

@@ -30,5 +30,5 @@ test("Paid by help stays below its control and metadata stacks on mobile", async
   assert.match(style, /\.expense-meta-grid \{ align-items:start; \}/);
   assert.match(style, /\.field-with-help \{ display:grid; gap:6px; min-width:0;/);
   assert.match(style, /\.dialog-help:empty \{ display:none; \}/);
-  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.two,\.name-form,\.inline-form,\.command-bar,\.insights-grid \{ grid-template-columns:1fr; \}/);
+  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.two,\.name-form,\.inline-form,\.command-bar,\.insights-grid,\.rhythm-focus-grid,\.rhythm-record-grid,\.rhythm-money \{ grid-template-columns:1fr; \}/);
 });

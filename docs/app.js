@@ -89,6 +89,7 @@ let formDirty = false;
 let explicitSignOut = false;
 let restorePromise;
 let verifyingOtp = false;
+let dashboardView = "home";
 
 document.addEventListener("input", event => { if (event.target.closest?.("form")) formDirty = true; });
 document.addEventListener("change", event => { if (event.target.closest?.("form")) formDirty = true; });
@@ -290,6 +291,7 @@ function row(item, type) {
 }
 function suggestionCards() {
   const { groups, stats } = restockEligibility(ledger.purchases);
+  const dueItems = [];
   const cards = [...groups.values()].map(items => {
     items.sort((a, b) => a.purchased_on.localeCompare(b.purchased_on));
     const dates = [...new Set(items.map(item => item.purchased_on))];
@@ -298,6 +300,7 @@ function suggestionCards() {
     const days = Math.max(1, Math.round((Date.parse(`${last}T12:00:00`) - Date.parse(`${previous}T12:00:00`)) / 86400000));
     const latest = items.at(-1);
     const due = latest.estimated_use_by || new Date(Date.parse(`${last}T12:00:00`) + days * 86400000).toISOString().slice(0, 10);
+    dueItems.push({ due, name: latest.display_name });
     const timing = due <= today() && latest.purchase_id
       ? `<button type="button" class="restock-review" data-review-restock="${latest.purchase_id}" data-review-name="${esc(latest.display_name)}" aria-label="Review ${esc(latest.display_name)} in its latest receipt">Review now</button>`
       : `<time class="restock-timing${due <= today() ? " due" : ""}" datetime="${due}">${due <= today() ? "Review due" : `Around ${fmt(due)}`}</time>`;
@@ -306,6 +309,7 @@ function suggestionCards() {
   const guidance = restockEmptyGuidance(groups, stats);
   return {
     cards,
+    dueItems,
     empty: `<div class="restock-empty"><b>${esc(guidance.title)}</b><p>${esc(guidance.next)}</p><details><summary>Why nothing is showing yet</summary><p>${esc(guidance.detail)}</p></details></div>`
   };
 }
@@ -474,7 +478,7 @@ function renderBalance(balance, archived) {
   const guidance = settlement.kind === "settled" ? "" : `<div class="balance-next"><b>Next step</b><span>${esc(settlement.guidance)}</span>${settlement.actionLabel ? `<button id="settle">${esc(settlement.actionLabel)} · ${money(settlement.amount)}</button>` : ""}</div>`;
   return `<section class="balance-card" aria-labelledby="balance-title"><small id="balance-title">Current balance</small><strong>${balanceText}</strong><span>Shared items split equally</span>${archived ? "" : guidance}</section>`;
 }
-function renderSettings(balance, archived, recoveryOpen) {
+function renderSettings(balance, archived, recoveryOpen, expanded = false) {
   const ownerControls = isOwner() ? archived ? `<div class="danger-zone">${recoveryOpen ? `<button id="restore-household" class="secondary">Restore household</button><small>Recovery is available until ${fmt(current.purge_after)}.</small>` : `<button id="delete-household" class="danger">Permanently delete</button><small>The 30-day recovery period has ended.</small>`}</div>` : `<div class="danger-zone"><b>Close household</b><small>${Math.abs(balance) >= .005 ? "Settle the balance before closing." : "Starts a 30-day recovery period."}</small><button id="archive-household" class="danger"${Math.abs(balance) >= .005 ? " disabled" : ""}>Close household</button></div>` : "";
   const archivedEntries = [...ledger.archivedPurchases.map(item => ({ ...item, type: "purchase" })), ...ledger.archivedSettlements.map(item => ({ ...item, type: "settlement" }))];
   const memberRows = members.map(member => `<div class="expense"><div><b>${esc(displayedMemberName(member))}</b><span>${member.role === "owner" ? "Owner" : "Partner"}${member.user_id === session.user.id ? " · you" : ""}</span></div></div>`).join("");
@@ -487,12 +491,53 @@ function renderSettings(balance, archived, recoveryOpen) {
   }).join("") : `<p class="settings-empty">No removed receipts or archived settlements.</p>`;
   const recovery = `<section class="settings-recovery" aria-labelledby="settings-recovery-title"><div class="settings-section-heading"><b id="settings-recovery-title">Receipt recovery</b><small>Restore removed ledger entries or permanently delete receipts you own.</small></div><div class="archive-list">${archiveRows}</div></section>`;
   const accountSession = `<section class="account-session" aria-labelledby="account-session-title"><div><b id="account-session-title">Account and session</b><small>Sign out of Grocery Ledger on this browser.</small></div><button id="sign-out" class="secondary session-sign-out">Sign out</button></section>`;
-  return `<details id="household-settings" class="panel settings"><summary><span><b>Household settings</b><small>Recovery, members and account</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body">${recovery}<div class="settings-columns"><section class="settings-profile" aria-labelledby="settings-members-title"><div class="settings-section-heading"><b id="settings-members-title">Household members</b><small>Two people share this ledger.</small></div><div class="member-list">${memberRows}</div>${nameForm}</section><section class="settings-account" aria-label="Account and session">${accountSession}</section></div>${ownerControls}</div></details>`;
+  return `<details id="household-settings" class="panel settings"${expanded ? " open" : ""}><summary><span><b>Household settings</b><small>Recovery, members and account</small></span><span aria-hidden="true">Open</span></summary><div class="settings-body">${recovery}<div class="settings-columns"><section class="settings-profile" aria-labelledby="settings-members-title"><div class="settings-section-heading"><b id="settings-members-title">Household members</b><small>Two people share this ledger.</small></div><div class="member-list">${memberRows}</div>${nameForm}</section><section class="settings-account" aria-label="Account and session">${accountSession}</section></div>${ownerControls}</div></details>`;
 }
 function renderRemovalUndo() {
   const purchase = readRemovedReceipt(sessionStorage, current.id, session.user.id, ledger.archivedPurchases);
   if (!purchase || !canManageReceipt(purchase, session.user.id, isOwner(), active())) return "";
   return `<section class="removal-undo" role="status" aria-live="polite"><span><b>${esc(purchase.label)} was removed from the ledger.</b><small>It no longer affects balances or Possible Buys and remains restorable.</small></span><button id="undo-receipt-removal" type="button" class="secondary" data-receipt-id="${purchase.id}">Undo</button></section>`;
+}
+function renderAppNavigation() {
+  return `<nav class="app-navigation" aria-label="Grocery Ledger sections">${[["home", "Home"], ["receipts", "Receipts"], ["shopping", "Shopping"], ["household", "Household"]].map(([id, label]) => `<button type="button" data-dashboard-view="${id}" aria-controls="view-${id}"${dashboardView === id ? ' aria-current="page"' : ""}>${label}</button>`).join("")}</nav>`;
+}
+function renderWeekStrip(dueItems = suggestionCards().dueItems) {
+  const start = new Date(`${today()}T12:00:00`);
+  return `<section class="rhythm-week" aria-labelledby="rhythm-title"><div class="section-heading"><div><p>THIS WEEK</p><h2 id="rhythm-title">Household rhythm</h2></div><span>Today + 6 days</span></div><ol class="week-strip">${Array.from({ length: 7 }, (_, offset) => {
+    const date = new Date(start); date.setDate(start.getDate() + offset);
+    const key = date.toISOString().slice(0, 10);
+    const receipts = ledger.purchases.filter(item => item.purchased_on === key).length;
+    const payments = ledger.settlements.filter(item => item.settled_on === key).length;
+    const shopping = dueItems.filter(item => item.due === key).length;
+    const activity = shopping ? `${shopping} shopping review${shopping === 1 ? "" : "s"}` : receipts ? `${receipts} receipt${receipts === 1 ? "" : "s"}` : payments ? `${payments} payment${payments === 1 ? "" : "s"}` : "No action";
+    return `<li class="week-day${offset === 0 ? " is-today" : ""}"><time datetime="${key}"><span>${offset === 0 ? "Today" : new Intl.DateTimeFormat("en-IN", { weekday: "short" }).format(date)}</span><b>${date.getDate()}</b></time><small${shopping || receipts || payments ? "" : ' class="quiet"'}>${activity}</small></li>`;
+  }).join("")}</ol></section>`;
+}
+function renderHouseholdRecord() {
+  const events = [...ledger.purchases.map(item => ({ date: item.purchased_on, kind: "receipt", id: item.id, title: item.label, detail: `${memberName(item.paid_by)} paid · ${money(item.amount)}` })), ...ledger.settlements.map(item => ({ date: item.settled_on, kind: "payment", title: `${memberName(item.payer)} paid ${memberName(item.receiver)}`, detail: `${money(item.amount)} · ${item.allocation_count || 0} active receipt allocation${item.allocation_count === 1 ? "" : "s"}` }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  if (!events.length) return '<p class="empty-state">Your first saved receipt will start the household record.</p>';
+  return `<ol class="household-timeline">${events.map(event => `<li><span class="timeline-mark ${event.kind}" aria-hidden="true"></span><div><b>${esc(event.title)}</b><span>${esc(event.detail)}</span></div><time datetime="${event.date}">${fmt(event.date)}</time>${event.kind === "receipt" ? `<button type="button" class="plain timeline-link" data-open-receipt="${event.id}">View receipt</button>` : ""}</li>`).join("")}</ol>`;
+}
+function renderOpenReceipts() {
+  const activeSettlementIds = new Set(ledger.settlements.map(item => item.id));
+  const allocationByPurchase = new Map();
+  ledger.settlementAllocations.filter(item => activeSettlementIds.has(item.settlement_id)).forEach(item => allocationByPurchase.set(item.purchase_id, (allocationByPurchase.get(item.purchase_id) || 0) + Number(item.amount || 0)));
+  const receipts = [...ledger.purchases].sort((a, b) => b.purchased_on.localeCompare(a.purchased_on)).slice(0, 5);
+  if (!receipts.length) return '<p class="empty-state">No open receipts. Import or add one to begin.</p>';
+  return `<div class="open-receipts">${receipts.map(item => {
+    const tracked = (item.purchase_items || []).filter(entry => !entry.is_personal && entry.is_tracked_for_restock && isRestockMerchandise(entry.name)).length;
+    return `<article class="open-receipt"><div><b>${esc(item.label)}</b><span>${fmt(item.purchased_on)} · ${esc(memberName(item.paid_by))}</span></div><dl><div><dt>Shared total</dt><dd>${money(sharedPurchaseAmount(item))}</dd></div><div><dt>Active payment</dt><dd>${money(allocationByPurchase.get(item.id) || 0)}</dd></div><div><dt>Shopping tracked</dt><dd>${tracked} item${tracked === 1 ? "" : "s"}</dd></div></dl><button type="button" class="secondary" data-open-receipt="${item.id}">Trace receipt</button></article>`;
+  }).join("")}</div>`;
+}
+function showDashboardView(view, focus = false) {
+  dashboardView = ["home", "receipts", "shopping", "household"].includes(view) ? view : "home";
+  document.querySelectorAll("[data-dashboard-panel]").forEach(panel => { panel.hidden = panel.dataset.dashboardPanel !== dashboardView; });
+  document.querySelectorAll("[data-dashboard-view]").forEach(button => button.dataset.dashboardView === dashboardView ? button.setAttribute("aria-current", "page") : button.removeAttribute("aria-current"));
+  if (focus) {
+    const heading = document.querySelector(`[data-dashboard-panel="${dashboardView}"] h2`);
+    heading?.setAttribute("tabindex", "-1");
+    heading?.focus();
+  }
 }
 function renderDashboard() {
   const balance = balanceFor(session.user.id);
@@ -504,16 +549,29 @@ function renderDashboard() {
   const restock = suggestionCards();
   const restockPanel = renderPreview(restock.cards, { id: "restock-preview", limit: 4, noun: "suggestions", empty: restock.empty });
   const settlementPanel = renderPreview(settlementRows, { id: "settlement-preview", limit: 3, noun: "settlements", empty: '<p class="empty-state">No settlements recorded.</p>' });
-  const actions = archived ? "" : `<nav class="command-actions primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button><button id="open-settings" class="settings-action" aria-controls="household-settings">Household settings</button></nav>`;
+  const actions = archived ? "" : `<nav class="command-actions primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button><button id="open-settings" class="settings-action" aria-controls="view-household">Household settings</button></nav>`;
   const archiveBanner = archived ? `<p class="archive-banner">This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}</p>` : "";
-  setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}<section class="command-bar">${renderBalance(balance, archived)}${actions}</section>${renderRemovalUndo()}<section class="insights-grid"><section class="panel insight-card restock-panel"><div class="heading"><div><p>RESTOCK</p><h2>Possible buys</h2></div></div>${restockPanel}</section><section class="panel insight-card settlements-panel"><div class="heading"><div><p>SETTLEMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section></section><section class="panel expenses-panel"><div class="heading"><div><p>LEDGER</p><h2>Recent expenses</h2></div><span>${ledger.purchases.length} saved</span></div><div class="ledger-columns" aria-hidden="true"><span>Merchant</span><span>Paid by</span><span>Date</span><span>Reviewed items</span><span>Amount</span><span>Actions</span></div><div>${purchases}</div></section>${renderSettings(balance, archived, recoveryOpen)}</section>`);
+  const homeSuggestions = restock.cards.slice(0, 3).join("") || restock.empty;
+  const receiptActions = archived ? "" : `<div class="view-actions"><button type="button" data-import-pdf>Import receipt</button><button type="button" class="secondary" data-add-expense>Add expense</button></div>`;
+  setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}${renderAppNavigation()}<section id="view-home" class="ledger-view household-rhythm" data-dashboard-panel="home"${dashboardView === "home" ? "" : " hidden"} aria-labelledby="rhythm-title">${renderWeekStrip()}<section class="rhythm-focus-grid"><section class="command-bar rhythm-money">${renderBalance(balance, archived)}${actions}</section><section class="panel rhythm-shopping"><div class="section-heading"><div><p>SHOPPING NEXT</p><h2>Possible buys</h2></div><button type="button" class="plain" data-go-view="shopping">View shopping</button></div>${homeSuggestions}</section></section>${renderRemovalUndo()}<section class="rhythm-record-grid"><section class="panel household-record"><div class="section-heading"><div><p>CHRONOLOGY</p><h2>Household record</h2></div><span>Receipts and linked payments</span></div>${renderHouseholdRecord()}</section><section class="panel receipt-trace"><div class="section-heading"><div><p>TRACEABILITY</p><h2>Open receipts</h2></div><button type="button" class="plain" data-go-view="receipts">View all receipts</button></div>${renderOpenReceipts()}</section></section></section><section id="view-receipts" class="ledger-view" data-dashboard-panel="receipts"${dashboardView === "receipts" ? "" : " hidden"} aria-labelledby="receipts-title"><section class="panel expenses-panel"><div class="heading"><div><p>RECEIPTS</p><h2 id="receipts-title" tabindex="-1">Recent expenses</h2></div>${receiptActions || `<span>${ledger.purchases.length} saved</span>`}</div><div class="ledger-columns" aria-hidden="true"><span>Merchant</span><span>Paid by</span><span>Date</span><span>Reviewed items</span><span>Amount</span><span>Actions</span></div><div>${purchases}</div></section></section><section id="view-shopping" class="ledger-view" data-dashboard-panel="shopping"${dashboardView === "shopping" ? "" : " hidden"} aria-labelledby="shopping-title"><section class="panel insight-card restock-panel"><div class="heading"><div><p>SHOPPING</p><h2 id="shopping-title" tabindex="-1">Possible buys</h2></div></div>${restockPanel}</section></section><section id="view-household" class="ledger-view household-view" data-dashboard-panel="household"${dashboardView === "household" ? "" : " hidden"} aria-labelledby="household-title"><div class="household-view-heading"><div><p>HOUSEHOLD</p><h2 id="household-title" tabindex="-1">People, payments and recovery</h2></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></div><section class="panel settlements-panel"><div class="heading"><div><p>LINKED PAYMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section>${renderSettings(balance, archived, recoveryOpen, true)}</section></section>`);
   bindDashboard(balance);
 }
 function bindDashboard(balance) {
+  document.querySelectorAll("[data-dashboard-view]").forEach(button => button.onclick = () => showDashboardView(button.dataset.dashboardView, true));
+  document.querySelectorAll("[data-go-view]").forEach(button => button.onclick = () => showDashboardView(button.dataset.goView, true));
+  document.querySelectorAll("[data-open-receipt]").forEach(button => button.onclick = () => {
+    showDashboardView("receipts", true);
+    const target = document.querySelector(`[data-purchase-id="${button.dataset.openReceipt}"]`);
+    target?.classList.add("restock-review-target");
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
   $("add") && ($("add").onclick = () => openEntry("expense"));
+  document.querySelectorAll("[data-add-expense]").forEach(button => button.onclick = () => openEntry("expense"));
   $("settle") && ($("settle").onclick = () => openEntry("settlement", { amount: (-balance).toFixed(2) }));
   $("import-pdf") && ($("import-pdf").onclick = () => $("pdf-file").click());
+  document.querySelectorAll("[data-import-pdf]").forEach(button => button.onclick = () => $("pdf-file").click());
   $("open-settings") && ($("open-settings").onclick = () => {
+    showDashboardView("household", true);
     const settings = $("household-settings");
     settings.open = true;
     settings.querySelector("summary").focus();
@@ -543,6 +601,7 @@ function bindDashboard(balance) {
   $("delete-household") && ($("delete-household").onclick = async () => { if (confirm("Permanently delete this household and its reviewed ledger data? This cannot be undone.")) await rpcReload("permanently_delete_household", { p_household_id: current.id }, "Household permanently deleted."); });
   document.querySelectorAll("[data-archive]").forEach(button => button.onclick = () => archiveEntry(button.dataset.archive, button.dataset.id));
   document.querySelectorAll("[data-review-restock]").forEach(button => button.onclick = () => {
+    showDashboardView("receipts", true);
     if (focusRestockReceipt(document, button.dataset.reviewRestock)) note(`Reviewing the latest receipt containing ${button.dataset.reviewName}.`);
     else note("That receipt is no longer in the active ledger. Refresh Possible buys and try again.");
   });

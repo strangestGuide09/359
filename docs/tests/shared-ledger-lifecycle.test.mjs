@@ -188,20 +188,31 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(style, /\.item-row \{[^}]*background:#fffaf0;/);
 });
 
-test("authenticated dashboard prioritizes household work and one main landmark", async () => {
+test("authenticated workspace has four accessible areas and one main landmark", async () => {
   const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
   assert.equal((page.match(/<main(?:\s[^>]*)?>/g) || []).length, 1);
   assert.equal((app.match(/function renderDashboard\(\)/g) || []).length, 1);
   assert.equal((app.match(/bindDashboard\(balance\);/g) || []).length, 1);
   assert.match(app, /class="dashboard-shell"/);
   assert.match(app, /class="household-masthead"/);
-  assert.match(app, /class="command-bar"/);
-  assert.match(app, /class="insights-grid"/);
-  assert.ok(app.indexOf("restock-panel") < app.indexOf("expenses-panel"));
-  assert.ok(app.indexOf("settlements-panel") < app.indexOf("expenses-panel"));
+  assert.match(app, /class="command-bar rhythm-money"/);
+  assert.match(app, /class="app-navigation" aria-label="Grocery Ledger sections"/);
+  assert.match(app, /\[\["home", "Home"\], \["receipts", "Receipts"\], \["shopping", "Shopping"\], \["household", "Household"\]\]/);
+  assert.match(app, /data-dashboard-view="\$\{id\}"/);
+  for (const view of ["home", "receipts", "shopping", "household"]) {
+    assert.match(app, new RegExp(`id="view-${view}"`));
+    assert.match(app, new RegExp(`data-dashboard-panel="${view}"`));
+  }
+  assert.match(app, /function showDashboardView/);
+  assert.match(app, /Household rhythm/);
+  assert.match(app, /Household record/);
+  assert.match(app, /Open receipts/);
+  assert.match(app, /Active payment/);
+  assert.ok(app.indexOf("rhythm-week") < app.indexOf("rhythm-focus-grid"));
+  assert.ok(app.indexOf("rhythm-focus-grid") < app.indexOf("rhythm-record-grid"));
   assert.doesNotMatch(app, /<main class=/);
   assert.match(app, /class="command-actions primary-actions"/);
-  assert.match(app, /id="open-settings" class="settings-action" aria-controls="household-settings">Household settings/);
+  assert.match(app, /id="open-settings" class="settings-action" aria-controls="view-household">Household settings/);
   assert.match(style, /\.command-actions \.settings-action \{ grid-column:1\/-1; width:auto; min-height:43px; justify-self:center;/);
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
   assert.match(page, /<footer>Original PDFs stay local/);
@@ -223,10 +234,13 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.match(page, /<div class="page-meta"><p id="status"/);
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.doesNotMatch(app, /Split the bill\.<br><i>See what’s next/);
-  assert.match(style, /\.insights-grid \{ display:grid; grid-template-columns:minmax\(0,2fr\)/);
+  assert.match(style, /\.app-navigation button\[aria-current="page"\]/);
+  assert.match(style, /\.rhythm-focus-grid \{ display:grid;/);
+  assert.match(style, /\.rhythm-record-grid \{ display:grid;/);
   assert.match(style, /\.household-masthead \{ display:flex; justify-content:space-between;/);
   assert.match(style, /@media \(max-width:900px\) and \(min-width:701px\)/);
-  assert.match(style, /\.two,\.name-form,\.inline-form,\.command-bar,\.insights-grid \{ grid-template-columns:1fr; \}/);
+  assert.match(style, /\.two,\.name-form,\.inline-form,\.command-bar,\.insights-grid,\.rhythm-focus-grid,\.rhythm-record-grid,\.rhythm-money \{ grid-template-columns:1fr; \}/);
+  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.app-navigation \{ position:fixed;/);
   assert.match(style, /\.page-meta \{ width:100%;/);
   assert.doesNotMatch(style, /\.activity,\.settings \{ margin-top:/);
   assert.match(style, /\.insight-card,\.expenses-panel \{ margin:0; \}/);
