@@ -25,7 +25,9 @@ const reviewedItem = values => ({
   line_total: values.line_total ?? null,
   is_personal: false,
   is_tracked_for_restock: values.is_tracked_for_restock ?? true,
-  estimated_use_by: ""
+  estimated_use_by: "",
+  item_kind: values.item_kind || "product",
+  include_in_total: values.include_in_total ?? values.item_kind !== "fee"
 });
 
 export function receiptDate(text, fallback = new Date().toISOString().slice(0, 10)) {
@@ -92,10 +94,18 @@ function reconcileReceiptDiscount(items, total, lines) {
   const discount = itemTotal - total;
   const hasExplicitDiscount = lines.some(line => /\b(?:discount|coupon|promo|savings?)\b/i.test(line));
   if (!hasExplicitDiscount || discount / itemTotal > .5) return { items, notice: "", mismatch: true };
+  const fees = items.filter(item => item.item_kind === "fee").reduce((sum, item) => sum + Number(item.line_total || 0), 0);
+  const products = items.filter(item => item.item_kind !== "fee");
+  const productTotal = products.reduce((sum, item) => sum + Number(item.line_total || 0), 0);
+  const discountedProductTotal = total - fees;
+  if (!products.length || discountedProductTotal < 0) return { items, notice: "", mismatch: true };
   let allocated = 0;
-  const adjusted = items.map((item, index) => {
-    const lineTotal = index === items.length - 1 ? Number((total - allocated).toFixed(2)) : Number((Number(item.line_total || 0) * total / itemTotal).toFixed(2));
+  let productIndex = 0;
+  const adjusted = items.map(item => {
+    if (item.item_kind === "fee") return item;
+    const lineTotal = productIndex === products.length - 1 ? Number((discountedProductTotal - allocated).toFixed(2)) : Number((Number(item.line_total || 0) * discountedProductTotal / productTotal).toFixed(2));
     allocated += lineTotal;
+    productIndex += 1;
     return { ...item, line_total: lineTotal, unit_price: item.quantity ? Number((lineTotal / item.quantity).toFixed(2)) : item.unit_price };
   });
   return { items: adjusted, notice: `Receipt-wide discount of ₹${discount.toFixed(2)} was allocated across item totals. Review before saving.`, mismatch: false };
@@ -123,7 +133,7 @@ function genericItems(lines) {
     const positiveAmounts = allAmounts([line]).filter(amount => amount > 0);
     const amount = rowKind === "charge" ? positiveAmounts.at(-1) : numberFrom(match[2]);
     if (!name || amount == null) continue;
-    const item = reviewedItem({ name, line_total: amount, is_tracked_for_restock: rowKind !== "charge" });
+    const item = reviewedItem({ name, line_total: amount, is_tracked_for_restock: rowKind !== "charge", item_kind: rowKind === "charge" ? "fee" : "product" });
     if (rowKind === "charge") {
       const existing = items.find(result => result.name === name && !result.is_tracked_for_restock);
       if (existing) {
@@ -214,7 +224,8 @@ function positionedInvoiceTable(pages) {
         quantity,
         line_total: lineTotal,
         unit_price: quantity ? Number((lineTotal / quantity).toFixed(2)) : null,
-        is_tracked_for_restock: kind !== "charge"
+        is_tracked_for_restock: kind !== "charge",
+        item_kind: kind === "charge" ? "fee" : "product"
       }) });
     });
   }
@@ -297,7 +308,8 @@ function instamartItems(pages) {
         quantity: price.quantity,
         line_total: lineTotal,
         unit_price: price.quantity ? Number((lineTotal / price.quantity).toFixed(2)) : null,
-        is_tracked_for_restock: rowKind !== "charge"
+        is_tracked_for_restock: rowKind !== "charge",
+        item_kind: rowKind === "charge" ? "fee" : "product"
       });
       if (rowKind === "charge") {
         const existing = results.find(result => result.name === name && !result.is_tracked_for_restock);
@@ -312,6 +324,25 @@ function instamartItems(pages) {
   return results;
 }
 
+function invoiceBreakdown(positionedPages, normalizedPages, merchant) {
+  const pages = normalizedPages.map((page, index) => {
+    const lines = page.map(line => line.text);
+    const hasHeader = lines.some(line => /\b(?:tax\s+invoice|invoice\s+(?:no\.?|number|date)|invoice\s+value)\b/i.test(line));
+    const structured = positionedInvoiceTable([positionedPages[index]]);
+    const items = structured?.items?.length ? structured.items : merchant === "Instamart" ? instamartItems([page]) : genericItems(lines);
+    const itemTotal = Number(items.reduce((sum, item) => sum + Number(item.line_total || 0), 0).toFixed(2));
+    const candidates = lines.flatMap(line => amountsAfter(line, /\binvoice\s+value\b/i)).filter(amount => amount > 0);
+    const amount = candidates.length ? [...candidates].sort((a, b) => Math.abs(a - itemTotal) - Math.abs(b - itemTotal))[0] : null;
+    return { page: index + 1, hasHeader, amount, itemTotal, itemCount: items.length };
+  });
+  const invoices = pages.filter(page => page.hasHeader && page.amount != null && page.itemCount > 0);
+  return {
+    invoices: invoices.length > 1 ? invoices : [],
+    repeatedHeaders: pages.filter(page => page.hasHeader).length > 1,
+    mismatch: invoices.some(invoice => Math.abs(invoice.amount - invoice.itemTotal) > .01)
+  };
+}
+
 export function parseReceipt(pages, fallbackDate) {
   const positionedPages = pages.map((page, pageIndex) => page.map(record => typeof record === "string"
     ? { page: pageIndex + 1, y: 0, text: cleanText(record) }
@@ -319,6 +350,7 @@ export function parseReceipt(pages, fallbackDate) {
   const normalizedPages = positionedPages.map(linesForPage);
   const lines = normalizedPages.flatMap(page => page.map(line => line.text));
   const merchant = merchantFrom(lines);
+  const bundle = invoiceBreakdown(positionedPages, normalizedPages, merchant);
   const structured = positionedInvoiceTable(positionedPages);
   const parsedItems = (structured?.items?.length ? structured.items : merchant === "Instamart" ? instamartItems(normalizedPages) : genericItems(lines))
     .map(item => ({ ...item, name: cleanImportedItemName(item.name) }))
@@ -330,11 +362,16 @@ export function parseReceipt(pages, fallbackDate) {
   const reconciled = total.confidence === "high" ? reconcileReceiptDiscount(parsedItems, total.amount, lines) : { items: parsedItems, notice: "", mismatch: false };
   const unresolvedTotal = !["high", "calculated"].includes(total.confidence);
   const unreconciled = !!reconciled.mismatch || (total.amount != null && Math.abs(reconciled.items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0) - total.amount) > .01);
-  const parserWarning = unresolvedTotal
+  const parserWarning = bundle.mismatch
+    ? "One or more invoice pages do not reconcile with the line items parsed from that page. Review each invoice breakdown before continuing."
+    : unresolvedTotal
     ? "We could not confidently identify a final paid or payable total. Enter it from the receipt, then verify every item and charge before saving."
     : unreconciled
       ? "The extracted products and charges do not reconcile with the payable total. Check for a missing discount, fee, or incorrect line total before saving."
       : "";
+  const feeTotal = Number(reconciled.items.filter(item => item.item_kind === "fee").reduce((sum, item) => sum + Number(item.line_total || 0), 0).toFixed(2));
+  const breakdownNotice = bundle.invoices.length ? `${bundle.invoices.length} invoices: ${bundle.invoices.map(invoice => `₹${invoice.amount.toFixed(2)}`).join(" + ")}. Repeated invoice headers were treated as separate invoices.` : "";
+  const feeNotice = feeTotal > 0 ? `Fees of ₹${feeTotal.toFixed(2)} were found separately from products. Choose whether to include each fee during review.` : "";
   return {
     defaults: {
       label: merchant,
@@ -343,8 +380,11 @@ export function parseReceipt(pages, fallbackDate) {
       category: merchant === "Imported invoice" ? "Other" : "Groceries"
     },
     items: reconciled.items,
+    invoiceBreakdown: bundle.invoices,
+    repeatedInvoiceHeaders: bundle.repeatedHeaders,
+    feeTotal,
     parserWarning,
-    parserNotice: calculatedTotal == null ? reconciled.notice : "Receipt total was calculated from the labelled Total column across complete item rows. Verify it against the invoice before saving.",
+    parserNotice: [breakdownNotice, feeNotice, calculatedTotal == null ? reconciled.notice : "Receipt total was calculated from the labelled Total column across complete item rows. Verify it against the invoice before saving."].filter(Boolean).join(" "),
     totalConfidence: unreconciled ? "low" : total.confidence
   };
 }

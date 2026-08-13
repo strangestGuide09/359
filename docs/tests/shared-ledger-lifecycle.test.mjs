@@ -177,9 +177,9 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{/);
   assert.match(app, /Your draft is still here; check your connection and retry/);
-  assert.match(app, /is_tracked_for_restock: personal \|\| !merchandise \? false : values\.is_tracked_for_restock \?\? true/);
+  assert.match(app, /is_tracked_for_restock: fee \|\| personal \|\| !merchandise \? false : values\.is_tracked_for_restock \?\? true/);
   assert.match(app, /if \(field === "is_personal"\) reviewedItems\[index\]\.is_tracked_for_restock = !input\.checked && isRestockMerchandise/);
-  assert.match(app, /is_tracked_for_restock: !item\.is_personal && isRestockMerchandise\(item\.name\)/);
+  assert.match(app, /is_tracked_for_restock: item\.item_kind !== "fee" && !item\.is_personal && isRestockMerchandise\(item\.name\)/);
   assert.match(app, /class="secondary edit-item" aria-expanded=/);
   assert.match(style, /\.item-primary \{ display:grid;/);
   assert.match(style, /\.item-secondary-fields \{ display:grid;/);
@@ -204,7 +204,11 @@ test("authenticated workspace has four accessible areas and one main landmark", 
     assert.match(app, new RegExp(`data-dashboard-panel="${view}"`));
   }
   assert.match(app, /function showDashboardView/);
+  assert.match(app, /function mountDashboardNavigation/);
+  assert.match(app, /tools\.insertAdjacentElement\("beforebegin", navigation\)/);
+  assert.match(app, /document\.querySelector\("header \.app-navigation"\)\?\.remove\(\)/);
   assert.match(app, /Household rhythm/);
+  assert.match(app, /Array\.from\(\{ length: 4 \}/);
   assert.match(app, /Household record/);
   assert.match(app, /Open receipts/);
   assert.match(app, /Active payment/);
@@ -235,6 +239,9 @@ test("authenticated workspace has four accessible areas and one main landmark", 
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.doesNotMatch(app, /Split the bill\.<br><i>See what’s next/);
   assert.match(style, /\.app-navigation button\[aria-current="page"\]/);
+  assert.match(style, /header \{ min-height:52px; padding-bottom:10px; border-bottom:1px solid var\(--line\); \}/);
+  assert.match(style, /\.week-strip \{ display:grid; grid-template-columns:repeat\(4,1fr\)/);
+  assert.match(style, /\.household-title h1 \{ margin:0; font-size:20px;/);
   assert.match(style, /\.rhythm-focus-grid \{ display:grid;/);
   assert.match(style, /\.rhythm-record-grid \{ display:grid;/);
   assert.match(style, /\.household-masthead \{ display:flex; justify-content:space-between;/);

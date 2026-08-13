@@ -6,7 +6,7 @@ const read = path => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("receipt items render as compact rows with one expandable editor and no per-item acknowledgement", async () => {
   const [app, page] = await Promise.all([read("app.js"), read("index.html")]);
-  assert.match(app, /<article class="item-row"/);
+  assert.match(app, /<article class="item-row\$\{/);
   assert.match(app, /class="item-checklist-row"/);
   assert.doesNotMatch(app, /data-reviewed|item\.reviewed/);
   assert.match(page, /id="confirm-receipt-review" type="checkbox" aria-describedby="item-total"/);
@@ -45,4 +45,16 @@ test("compact checklist has dense desktop geometry and explicit mobile reflow", 
   assert.match(style, /\.receipt-review-confirmation \{ min-height:43px;/);
   assert.match(style, /\.item-checklist-row \{ grid-template-columns:26px minmax\(0,1fr\) 72px;/);
   assert.match(style, /\.item-checklist-row \.edit-item \{ grid-column:1\/-1; width:100%; \}/);
+});
+
+test("parsed fees require an explicit inclusion decision and never become restock items", async () => {
+  const [app, style] = await Promise.all([read("app.js"), read("style.css")]);
+  assert.match(app, /item_kind: fee \? "fee" : "product"/);
+  assert.match(app, /Include this fee in the ledger total/);
+  assert.match(app, /item\.item_kind === "fee" && item\.include_in_total/);
+  assert.match(app, /filter\(item => item\.item_kind !== "fee" \|\| item\.include_in_total\)\.map/);
+  assert.match(app, /item\.item_kind !== "fee" && !item\.is_personal/);
+  assert.match(app, /Products: \$\{money\(productSum\)\} · Included fees:/);
+  assert.match(style, /\.item-row\.fee-row/);
+  assert.match(style, /\.fee-decision/);
 });

@@ -60,6 +60,40 @@ test("separate seller invoice values are combined only when they reconcile with 
   assert.equal(parsed.defaults.amount, "871.00");
   assert.equal(parsed.totalConfidence, "calculated");
   assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 871);
+  assert.deepEqual(parsed.invoiceBreakdown.map(invoice => ({ page: invoice.page, amount: invoice.amount, itemTotal: invoice.itemTotal })), [
+    { page: 1, amount: 727, itemTotal: 727 },
+    { page: 2, amount: 144, itemTotal: 144 }
+  ]);
+  assert.equal(parsed.repeatedInvoiceHeaders, true);
+  assert.match(parsed.parserNotice, /2 invoices: ₹727\.00 \+ ₹144\.00/);
+});
+
+test("multi-seller pages are checked independently before review", () => {
+  const parsed = parseReceipt([
+    [{ y: 800, text: "Tax Invoice" }, { y: 700, text: "Seller one product 1 NOS 0803 700.00" }, { y: 120, text: "Invoice Value 727.00" }],
+    [{ y: 800, text: "Tax Invoice" }, { y: 700, text: "Seller two product 1 NOS 0803 144.00" }, { y: 120, text: "Invoice Value 144.00" }]
+  ], "2026-08-13");
+
+  assert.equal(parsed.invoiceBreakdown.length, 2);
+  assert.equal(parsed.invoiceBreakdown[0].itemTotal, 700);
+  assert.match(parsed.parserWarning, /invoice pages do not reconcile/i);
+  assert.equal(parsed.totalConfidence, "low");
+});
+
+test("operational fees remain separate and require an explicit inclusion decision", () => {
+  const parsed = parseReceipt([[
+    { y: 800, text: "Blinkit Tax Invoice" },
+    { y: 700, text: "Fresh oranges 100.00" },
+    { y: 680, text: "Handling fee 10.00" },
+    { y: 120, text: "Amount payable 110.00" }
+  ]], "2026-08-13");
+
+  assert.deepEqual(parsed.items.map(item => ({ name: item.name, kind: item.item_kind, included: item.include_in_total, tracked: item.is_tracked_for_restock })), [
+    { name: "Fresh oranges", kind: "product", included: true, tracked: true },
+    { name: "Handling fee", kind: "fee", included: false, tracked: false }
+  ]);
+  assert.equal(parsed.feeTotal, 10);
+  assert.match(parsed.parserNotice, /Choose whether to include each fee during review/);
 });
 
 test("local parsing strips HSN labels while preserving sizes and rejects HSN-only rows", () => {

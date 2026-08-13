@@ -175,6 +175,7 @@ function populatePayers(selectedId = session?.user?.id) {
 }
 function setScreen(html, { busy = false, focus = true } = {}) {
   const screen = $("screen");
+  document.querySelector("header .app-navigation")?.remove();
   formDirty = false;
   screen.innerHTML = html;
   const main = document.querySelector("main");
@@ -501,9 +502,14 @@ function renderRemovalUndo() {
 function renderAppNavigation() {
   return `<nav class="app-navigation" aria-label="Grocery Ledger sections">${[["home", "Home"], ["receipts", "Receipts"], ["shopping", "Shopping"], ["household", "Household"]].map(([id, label]) => `<button type="button" data-dashboard-view="${id}" aria-controls="view-${id}"${dashboardView === id ? ' aria-current="page"' : ""}>${label}</button>`).join("")}</nav>`;
 }
+function mountDashboardNavigation() {
+  const navigation = document.querySelector("#screen .app-navigation");
+  const tools = document.querySelector("header .header-tools");
+  if (navigation && tools) tools.insertAdjacentElement("beforebegin", navigation);
+}
 function renderWeekStrip(dueItems = suggestionCards().dueItems) {
   const start = new Date(`${today()}T12:00:00`);
-  return `<section class="rhythm-week" aria-labelledby="rhythm-title"><div class="section-heading"><div><p>THIS WEEK</p><h2 id="rhythm-title">Household rhythm</h2></div><span>Today + 6 days</span></div><ol class="week-strip">${Array.from({ length: 7 }, (_, offset) => {
+  return `<section class="rhythm-week" aria-labelledby="rhythm-title"><div class="section-heading"><div><p>THIS WEEK</p><h2 id="rhythm-title">Household rhythm</h2></div><span>Today + 3 days</span></div><ol class="week-strip">${Array.from({ length: 4 }, (_, offset) => {
     const date = new Date(start); date.setDate(start.getDate() + offset);
     const key = date.toISOString().slice(0, 10);
     const receipts = ledger.purchases.filter(item => item.purchased_on === key).length;
@@ -554,6 +560,7 @@ function renderDashboard() {
   const homeSuggestions = restock.cards.slice(0, 3).join("") || restock.empty;
   const receiptActions = archived ? "" : `<div class="view-actions"><button type="button" data-import-pdf>Import receipt</button><button type="button" class="secondary" data-add-expense>Add expense</button></div>`;
   setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}${renderAppNavigation()}<section id="view-home" class="ledger-view household-rhythm" data-dashboard-panel="home"${dashboardView === "home" ? "" : " hidden"} aria-labelledby="rhythm-title">${renderWeekStrip()}<section class="rhythm-focus-grid"><section class="command-bar rhythm-money">${renderBalance(balance, archived)}${actions}</section><section class="panel rhythm-shopping"><div class="section-heading"><div><p>SHOPPING NEXT</p><h2>Possible buys</h2></div><button type="button" class="plain" data-go-view="shopping">View shopping</button></div>${homeSuggestions}</section></section>${renderRemovalUndo()}<section class="rhythm-record-grid"><section class="panel household-record"><div class="section-heading"><div><p>CHRONOLOGY</p><h2>Household record</h2></div><span>Receipts and linked payments</span></div>${renderHouseholdRecord()}</section><section class="panel receipt-trace"><div class="section-heading"><div><p>TRACEABILITY</p><h2>Open receipts</h2></div><button type="button" class="plain" data-go-view="receipts">View all receipts</button></div>${renderOpenReceipts()}</section></section></section><section id="view-receipts" class="ledger-view" data-dashboard-panel="receipts"${dashboardView === "receipts" ? "" : " hidden"} aria-labelledby="receipts-title"><section class="panel expenses-panel"><div class="heading"><div><p>RECEIPTS</p><h2 id="receipts-title" tabindex="-1">Recent expenses</h2></div>${receiptActions || `<span>${ledger.purchases.length} saved</span>`}</div><div class="ledger-columns" aria-hidden="true"><span>Merchant</span><span>Paid by</span><span>Date</span><span>Reviewed items</span><span>Amount</span><span>Actions</span></div><div>${purchases}</div></section></section><section id="view-shopping" class="ledger-view" data-dashboard-panel="shopping"${dashboardView === "shopping" ? "" : " hidden"} aria-labelledby="shopping-title"><section class="panel insight-card restock-panel"><div class="heading"><div><p>SHOPPING</p><h2 id="shopping-title" tabindex="-1">Possible buys</h2></div></div>${restockPanel}</section></section><section id="view-household" class="ledger-view household-view" data-dashboard-panel="household"${dashboardView === "household" ? "" : " hidden"} aria-labelledby="household-title"><div class="household-view-heading"><div><p>HOUSEHOLD</p><h2 id="household-title" tabindex="-1">People, payments and recovery</h2></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></div><section class="panel settlements-panel"><div class="heading"><div><p>LINKED PAYMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section>${renderSettings(balance, archived, recoveryOpen, true)}</section></section>`);
+  mountDashboardNavigation();
   bindDashboard(balance);
 }
 function bindDashboard(balance) {
@@ -659,14 +666,16 @@ async function loadLedger() {
 function emptyReviewedItem(values = {}) {
   const personal = !!values.is_personal;
   const merchandise = isRestockMerchandise(values.name);
-  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "" };
+  const fee = values.item_kind === "fee";
+  return { name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: fee || personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "", item_kind: fee ? "fee" : "product", include_in_total: fee ? values.include_in_total === true : true };
 }
 function renderItemRows() {
   $("item-rows").innerHTML = reviewedItems.map((item, index) => {
     const restockAllowed = !item.is_personal && isRestockMerchandise(item.name);
     const expanded = expandedItemIndex === index;
-    const allocation = item.is_personal ? "Personal · Restock off" : `Shared · Restock ${item.is_tracked_for_restock && restockAllowed ? "on" : "off"}`;
-    return `<article class="item-row" data-item="${index}" aria-labelledby="item-name-${index}"><div class="item-checklist-row"><span class="item-number" aria-hidden="true">${index + 1}</span><div class="item-compact-name"><b id="item-name-${index}">${esc(item.name) || "Unnamed item"}</b><small>${esc(allocation)}</small></div><span class="item-compact-value"><small>Qty</small><b>${esc(item.quantity ?? "—")}</b></span><span class="item-compact-value item-compact-total"><small>Total</small><b>${item.line_total == null || item.line_total === "" ? "—" : money(item.line_total)}</b></span><button type="button" class="secondary edit-item" aria-expanded="${expanded}" aria-controls="item-editor-${index}">${expanded ? "Close" : "Edit"}</button></div><div id="item-editor-${index}" class="item-editor"${expanded ? "" : " hidden"}><div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label></div><div class="item-secondary-fields"><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></div></article>`;
+    const allocation = item.item_kind === "fee" ? `Fee · ${item.include_in_total ? "included" : "not included"} · Restock off` : item.is_personal ? "Personal · Restock off" : `Shared · Restock ${item.is_tracked_for_restock && restockAllowed ? "on" : "off"}`;
+    const feeDecision = item.item_kind === "fee" ? `<label class="check fee-decision"><input data-field="include_in_total" type="checkbox"${item.include_in_total ? " checked" : ""}> Include this fee in the ledger total</label>` : "";
+    return `<article class="item-row${item.item_kind === "fee" ? " fee-row" : ""}" data-item="${index}" aria-labelledby="item-name-${index}"><div class="item-checklist-row"><span class="item-number" aria-hidden="true">${index + 1}</span><div class="item-compact-name"><b id="item-name-${index}">${esc(item.name) || "Unnamed item"}</b><small>${esc(allocation)}</small></div><span class="item-compact-value"><small>Qty</small><b>${esc(item.quantity ?? "—")}</b></span><span class="item-compact-value item-compact-total"><small>Total</small><b>${item.line_total == null || item.line_total === "" ? "—" : money(item.line_total)}</b></span><button type="button" class="secondary edit-item" aria-expanded="${expanded}" aria-controls="item-editor-${index}">${expanded ? "Close" : "Edit"}</button></div><div id="item-editor-${index}" class="item-editor"${expanded ? "" : " hidden"}>${feeDecision}<div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}${item.item_kind === "fee" ? " disabled" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label></div><div class="item-secondary-fields"><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></div></article>`;
   }).join("");
   bindItemRows();
   updateItemTotal();
@@ -702,7 +711,7 @@ function resetReceiptReviewConfirmation(recalculateItemSum = false) {
   receiptReviewConfirmed = false;
   $("confirm-receipt-review").checked = false;
   if (recalculateItemSum && pendingPdfImport?.amountSource === "item-sum") {
-    const totals = reviewedItems.map(item => item.line_total == null || item.line_total === "" ? NaN : Number(item.line_total));
+    const totals = reviewedItems.filter(item => item.item_kind !== "fee" || item.include_in_total).map(item => item.line_total == null || item.line_total === "" ? NaN : Number(item.line_total));
     if (totals.length && totals.every(total => Number.isFinite(total) && total >= 0) && totals.some(total => total > 0)) {
       $("amount").value = totals.reduce((sum, total) => sum + total, 0).toFixed(2);
     } else pendingPdfImport.amountSource = "needs-review";
@@ -710,20 +719,22 @@ function resetReceiptReviewConfirmation(recalculateItemSum = false) {
 }
 function updateItemTotal() {
   updateReceiptReviewConfirmation();
-  const sum = reviewedItems.reduce((total, item) => total + (Number(item.line_total) || 0), 0);
+  const productSum = reviewedItems.filter(item => item.item_kind !== "fee").reduce((total, item) => total + (Number(item.line_total) || 0), 0);
+  const includedFeeSum = reviewedItems.filter(item => item.item_kind === "fee" && item.include_in_total).reduce((total, item) => total + (Number(item.line_total) || 0), 0);
+  const sum = productSum + includedFeeSum;
   const rawReceiptTotal = $("amount").value.trim();
   if (!rawReceiptTotal) {
-    $("item-total").textContent = `Reviewed items: ${money(sum)} · Receipt total: needs confirmation · Difference unavailable`;
+    $("item-total").textContent = `Products: ${money(productSum)} · Included fees: ${money(includedFeeSum)} · Receipt total: needs confirmation · Difference unavailable`;
     return;
   }
   const receiptTotal = Number(rawReceiptTotal);
   if (!Number.isFinite(receiptTotal)) {
-    $("item-total").textContent = `Reviewed items: ${money(sum)} · Receipt total: needs confirmation · Difference unavailable`;
+    $("item-total").textContent = `Products: ${money(productSum)} · Included fees: ${money(includedFeeSum)} · Receipt total: needs confirmation · Difference unavailable`;
     return;
   }
   const difference = receiptTotal - sum;
   const amountLabel = pendingPdfImport?.amountSource === "item-sum" ? "Calculated from item totals — verify against receipt" : pendingPdfImport?.amountSource === "edited" ? "Entered amount" : pendingPdfImport?.amountSource === "needs-review" ? "Amount to verify" : "Receipt total";
-  $("item-total").textContent = `Reviewed items: ${money(sum)} · ${amountLabel}: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Difference: ${money(difference)}` : " · Totals match"}`;
+  $("item-total").textContent = `Products: ${money(productSum)} · Included fees: ${money(includedFeeSum)} · ${amountLabel}: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Difference: ${money(difference)}` : " · Totals match"}`;
 }
 function duplicateRestoreControl() {
   let button = $("restore-duplicate-receipt");
@@ -746,7 +757,7 @@ function openEntry(next, defaults = {}, pdfImport) {
   dialog.classList.toggle("pdf-review-dialog", !!pdfImport);
   $("dialog-title").textContent = next === "settlement" ? "Record settlement" : pdfImport ? "Review PDF import" : defaults.personal ? "Add personal expense" : "Add expense";
   $("dialog-kicker").textContent = pdfImport?.processedBy === "ai" ? "PRIVATE AI DRAFT" : pdfImport ? "LOCAL PDF DRAFT" : "NEW ENTRY";
-  const parserMessage = pdfImport?.parserWarning || pdfImport?.parserNotice || "";
+  const parserMessage = [pdfImport?.parserWarning, pdfImport?.parserNotice].filter(Boolean).join(" ");
   const privacyMessage = pdfImport?.processedBy === "ai" ? "The original PDF and extracted text stayed local; only the approved private derivative was processed by AI." : "The PDF and extracted text remain local and are discarded when this draft closes.";
   $("dialog-help").textContent = pdfImport ? `${privacyMessage} Non-personal items are tracked for restock by default; uncheck any you do not want suggested. Review every field before saving.${parserMessage ? ` ${parserMessage}` : ""}` : "";
   $("dialog-help").classList.toggle("parser-warning", !!pdfImport?.parserWarning);
@@ -1196,7 +1207,7 @@ $("entry-form").onsubmit = async event => {
       error = result.error || (!result.data ? { message: "This receipt can only be edited by its payer or the household owner." } : undefined);
     } else if (pendingPdfImport) {
       if (!receiptReviewConfirmed) { errorBox.textContent = "Confirm that you reviewed all items and totals before saving this receipt."; $("confirm-receipt-review").focus(); button.disabled = false; button.textContent = "Save"; return; }
-      const items = reviewedItems.map((item, display_order) => ({ name: cleanImportedItemName(item.name), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: !item.is_personal && isRestockMerchandise(item.name) && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
+      const items = reviewedItems.filter(item => item.item_kind !== "fee" || item.include_in_total).map((item, display_order) => ({ name: cleanImportedItemName(item.name), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: item.item_kind !== "fee" && !item.is_personal && isRestockMerchandise(item.name) && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order }));
       if (!items.length || items.some(item => !item.name)) { errorBox.textContent = "Every reviewed item needs a name."; button.disabled = false; button.textContent = "Save"; return; }
       if (hasUnidentifiedAiItems(items)) { errorBox.textContent = "Replace every ‘Unidentified receipt line’ with the item name before saving."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.line_total == null)) { errorBox.textContent = "Every reviewed item needs a line total."; button.disabled = false; button.textContent = "Save"; return; }
