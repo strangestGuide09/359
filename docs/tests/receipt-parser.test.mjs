@@ -43,6 +43,25 @@ test("Instamart combined product and quantity rows retain the product name", () 
   assert.deepEqual(parsed.items.map(item => item.line_total), [65]);
 });
 
+test("separate seller invoice values are combined only when they reconcile with all imported items", () => {
+  const parsed = parseReceipt([
+    [
+      { y: 800, text: "Greenmania Modern Retails Pvt Ltd" },
+      { y: 700, text: "First seller item 1 NOS 0803 727.00" },
+      { y: 120, text: "Invoice Value 727.00" }
+    ],
+    [
+      { y: 800, text: "Second seller" },
+      { y: 700, text: "Second seller item 1 NOS 0803 144.00" },
+      { y: 120, text: "Invoice Value 144.00" }
+    ]
+  ], "2026-07-16");
+
+  assert.equal(parsed.defaults.amount, "871.00");
+  assert.equal(parsed.totalConfidence, "calculated");
+  assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 871);
+});
+
 test("local parsing strips HSN labels while preserving sizes and rejects HSN-only rows", () => {
   const parsed = parseReceipt([[
     { y: 700, text: "Blinkit" },

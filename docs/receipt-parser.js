@@ -57,6 +57,20 @@ function semanticAmount(line, label, itemTotal) {
 }
 
 function receiptTotal(lines, itemTotal) {
+  // Some marketplace orders contain separate tax invoices from more than one
+  // seller. Each invoice has its own explicitly labelled Invoice Value, while
+  // the imported item table contains every seller's items. Prefer their sum
+  // only when it exactly reconciles with those item rows; repeated page
+  // footers and unrelated summary figures therefore remain ineligible.
+  const invoiceValues = lines
+    .map(line => amountsAfter(line, /\binvoice\s+value\b/i).at(0))
+    .filter(amount => amount != null && amount > 0);
+  if (invoiceValues.length > 1) {
+    const combined = Number(invoiceValues.reduce((sum, amount) => sum + amount, 0).toFixed(2));
+    if (itemTotal > 0 && Math.abs(combined - itemTotal) <= .01) {
+      return { amount: combined, confidence: "calculated", source: "combined labelled invoice values" };
+    }
+  }
   const preferred = [
     /\b(?:final amount payable|total payable|amount payable|amount paid|total paid|you paid|grand total|invoice value|net amount)\b/i
   ];
