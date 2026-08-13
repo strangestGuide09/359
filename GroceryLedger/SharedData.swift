@@ -151,6 +151,32 @@ struct SettlementDTO: Codable, Equatable, Sendable {
     }
 }
 
+struct ReceiptSettlementAllocationPayload: Codable, Equatable, Sendable {
+    let purchaseID: UUID
+    let purchaseItemID: UUID?
+    let amount: Decimal
+    enum CodingKeys: String, CodingKey {
+        case amount
+        case purchaseID = "purchase_id"
+        case purchaseItemID = "purchase_item_id"
+    }
+}
+
+struct ReceiptBackedSettlementRPCPayload: Codable, Equatable, Sendable {
+    let householdID: UUID
+    let receiver: UUID
+    let amount: Decimal
+    let settledOn: LedgerDate
+    let allocations: [ReceiptSettlementAllocationPayload]
+    enum CodingKeys: String, CodingKey {
+        case householdID = "p_household_id"
+        case receiver = "p_receiver"
+        case amount = "p_amount"
+        case settledOn = "p_settled_on"
+        case allocations = "p_allocations"
+    }
+}
+
 /// Exact JSON object accepted for each entry in import_reviewed_purchase.p_items.
 /// Source-document fields deliberately cannot be represented by this type.
 struct ReviewedImportItemPayload: Codable, Equatable, Sendable {

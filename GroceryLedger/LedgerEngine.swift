@@ -48,16 +48,49 @@ enum LedgerEngine {
                 ekta -= half
             }
         }
-        for settlement in settlements {
+        // Once a receipt-backed payment exists, free-standing legacy payments
+        // are history-only. A local-only ledger with no allocated payments keeps
+        // its previous behaviour until the server migration is available.
+        let usesCanonicalHistory = settlements.contains(where: \.isReceiptBacked)
+        let activePurchaseIDs = Set(purchases.map(\.id))
+        let activeSettlements = usesCanonicalHistory ? settlements.filter {
+            activeSettlementAmount($0, activePurchaseIDs: activePurchaseIDs) > 0
+        } : settlements
+        for settlement in activeSettlements {
+            let amount = usesCanonicalHistory
+                ? activeSettlementAmount(settlement, activePurchaseIDs: activePurchaseIDs)
+                : settlement.amount
             if settlement.payer == LedgerPerson.ekta.rawValue {
-                ekta += settlement.amount
-                ritesh -= settlement.amount
+                ekta += amount
+                ritesh -= amount
             } else {
-                ritesh += settlement.amount
-                ekta -= settlement.amount
+                ritesh += amount
+                ekta -= amount
             }
         }
         return BalanceSummary(ekta: ekta, ritesh: ritesh)
+    }
+
+    static func activeSettlementAmount(_ settlement: Settlement, activePurchaseIDs: Set<UUID>) -> Decimal {
+        settlement.receiptAllocations
+            .filter { activePurchaseIDs.contains($0.purchaseID) }
+            .reduce(Decimal.zero) { $0 + $1.amount }
+    }
+
+    static func eligibleReceipts(
+        purchases: [Purchase], settlements: [Settlement], receiver: LedgerPerson,
+        settledOn: Date
+    ) -> [(purchase: Purchase, outstanding: Decimal)] {
+        purchases.compactMap { purchase in
+            guard purchase.paidBy == receiver.rawValue,
+                  Calendar.current.startOfDay(for: purchase.purchasedAt) <= Calendar.current.startOfDay(for: settledOn) else { return nil }
+            let share = sharedTotal(for: purchase) / 2
+            let allocated = settlements.flatMap(\.receiptAllocations)
+                .filter { $0.purchaseID == purchase.id }
+                .reduce(Decimal.zero) { $0 + $1.amount }
+            let outstanding = share - allocated
+            return outstanding > 0 ? (purchase, outstanding) : nil
+        }.sorted { $0.purchase.purchasedAt < $1.purchase.purchasedAt }
     }
 
     /// A transparent, local-only cue. Only explicitly tracked, non-personal

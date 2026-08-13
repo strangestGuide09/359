@@ -75,7 +75,11 @@ test("production UI is owner and partner only and gates shared actions", async (
   assert.match(settlement, /must sign in and record the payment/);
   assert.match(app, /settlementAmountError\(latestBalance, amount\)/);
   assert.match(app, /settlementConfirmation\(payer, receiverName, amount, \$\("date"\)\.value\)/);
-  assert.match(app, /payer: session\.user\.id, receiver: receiver\.user_id/);
+  assert.match(app, /record_receipt_backed_settlement/);
+  assert.match(app, /p_receiver: receiver\.user_id/);
+  assert.match(app, /p_allocations: allocations/);
+  assert.match(app, /receipt_backed_settlement_history/);
+  assert.doesNotMatch(app, /from\("settlements"\)\.insert/);
 });
 
 test("clean bootstrap enforces the approved two-person lifecycle", async () => {
@@ -129,7 +133,8 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(duplicateSql, /create or replace function public\.find_invoice_duplicate/);
   assert.match(duplicateSql, /'legacy_unlinked'/);
   assert.match(duplicateSql, /'ambiguous'/);
-  assert.match(app, /restoreButton\.onclick = canRestore \? async/);
+  assert.match(app, /restoreButton\.onclick = restoreId \? async/);
+  assert.match(app, /orphaned \? async \(\) =>/);
   assert.match(app, /await restoreRemovedReceipt\(restoreId, "duplicate"\)/);
   assert.match(app, /pendingPdfImport = undefined;[\s\S]{0,220}dialog\.close\(\)/);
   assert.match(feedback, /feedbackTimers/);
@@ -156,6 +161,8 @@ test("mixed reviewed receipts use shared item totals for balances and restock", 
   assert.match(restock, /if \(!isRestockMerchandise\(item\.name\)\)/);
   assert.match(app, /restockEmptyGuidance\(groups, stats\)/);
   assert.match(restock, /Possible Buys needs the same item on 2 different dates/);
+  assert.match(app, /chronologicalBalance\(expenses, settlements\)/);
+  assert.match(app, /ledger\.settlements\][\s\S]*\.map\(item => row\(item, "settlement"\)\)/, "payment history remains rendered independently of balance clamping");
 });
 
 test("itemized review is editable and retains failed drafts", async () => {

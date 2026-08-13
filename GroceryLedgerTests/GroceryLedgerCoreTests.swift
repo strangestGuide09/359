@@ -465,4 +465,49 @@ final class GroceryLedgerCoreTests: XCTestCase {
         XCTAssertEqual(flow.phase, .choosingMethod)
         XCTAssertFalse(flow.isReviewing)
     }
+
+    func testSettlementEligibilityUsesOnlyActiveSharedOutstandingReceiptsAsOfDate() {
+        let old = Purchase(merchant: "Old receipt", purchasedAt: Date(timeIntervalSince1970: 86_400), paidBy: .ekta)
+        let shared = PurchaseItem(name: "Shared", amount: 200)
+        let personal = PurchaseItem(name: "Personal", amount: 500, isPersonal: true)
+        for item in [shared, personal] { item.purchase = old; old.items.append(item) }
+        let future = Purchase(merchant: "Future", purchasedAt: Date(timeIntervalSince1970: 864_000), paidBy: .ekta)
+        let futureItem = PurchaseItem(name: "Later", amount: 100)
+        futureItem.purchase = future; future.items.append(futureItem)
+        let prior = Settlement(payer: .ritesh, receiver: .ekta, amount: 40)
+        prior.receiptAllocations = [.init(purchaseID: old.id, purchaseItemID: nil, amount: 40)]
+
+        let eligible = LedgerEngine.eligibleReceipts(
+            purchases: [old, future], settlements: [prior], receiver: .ekta,
+            settledOn: Date(timeIntervalSince1970: 432_000)
+        )
+        XCTAssertEqual(eligible.count, 1)
+        XCTAssertEqual(eligible.first?.purchase.id, old.id)
+        XCTAssertEqual(eligible.first?.outstanding, 60)
+    }
+
+    func testReceiptBackedSettlementPayloadMatchesRPCAndExcludesReceiptSourceData() throws {
+        let payload = ReceiptBackedSettlementRPCPayload(
+            householdID: UUID(), receiver: UUID(), amount: 75, settledOn: LedgerDate(.now),
+            allocations: [.init(purchaseID: UUID(), purchaseItemID: nil, amount: 75)]
+        )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: SupabaseJSON.encoder.encode(payload)) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["p_household_id", "p_receiver", "p_amount", "p_settled_on", "p_allocations"])
+        let allocations = try XCTUnwrap(object["p_allocations"] as? [[String: Any]])
+        XCTAssertEqual(Set(allocations[0].keys), ["purchase_id", "amount"])
+        XCTAssertTrue(Set(object.keys).isDisjoint(with: ["pdf", "raw_text", "file_name", "address", "payment_credentials"]))
+    }
+
+    func testLegacyLocalSettlementFallbackRemainsUntilReceiptBackedHistoryExists() {
+        let purchase = Purchase(merchant: "Shared", paidBy: .ekta)
+        let item = PurchaseItem(name: "Milk", amount: 200)
+        item.purchase = purchase; purchase.items.append(item)
+        let legacy = Settlement(payer: .ritesh, receiver: .ekta, amount: 25)
+        XCTAssertEqual(LedgerEngine.summary(purchases: [purchase], settlements: [legacy]).ekta, 75)
+
+        let backed = Settlement(payer: .ritesh, receiver: .ekta, amount: 10)
+        backed.receiptAllocations = [.init(purchaseID: purchase.id, purchaseItemID: nil, amount: 10)]
+        XCTAssertEqual(LedgerEngine.summary(purchases: [purchase], settlements: [legacy, backed]).ekta, 90)
+        XCTAssertEqual(LedgerEngine.summary(purchases: [], settlements: [backed]).ekta, 0)
+    }
 }

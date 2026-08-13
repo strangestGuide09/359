@@ -82,6 +82,9 @@ final class Settlement {
     var settledAt: Date
     var note: String
     var needsRemoteSync: Bool = false
+    /// JSON for reviewed receipt allocations only. It contains stable database
+    /// identifiers and amounts; no receipt source document data is stored here.
+    var allocationsData: Data = Data()
 
     init(id: UUID = UUID(), payer: LedgerPerson, receiver: LedgerPerson, amount: Decimal, settledAt: Date = .now, note: String = "") {
         self.id = id
@@ -91,4 +94,19 @@ final class Settlement {
         self.settledAt = settledAt
         self.note = note
     }
+
+    var receiptAllocations: [SettlementAllocation] {
+        get { (try? JSONDecoder().decode([SettlementAllocation].self, from: allocationsData)) ?? [] }
+        set { allocationsData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
+
+    var isReceiptBacked: Bool { !receiptAllocations.isEmpty }
+}
+
+struct SettlementAllocation: Codable, Equatable, Identifiable, Sendable {
+    let purchaseID: UUID
+    let purchaseItemID: UUID?
+    let amount: Decimal
+
+    var id: String { "\(purchaseID.uuidString):\(purchaseItemID?.uuidString ?? "receipt")" }
 }

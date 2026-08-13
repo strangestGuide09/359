@@ -23,6 +23,8 @@ import { hasUnidentifiedAiItems, reconcileAiItemNames } from "./ai-item-names.js
 import { resolveAiReceiptTotal } from "./ai-receipt-total.js";
 import { cleanImportedItemName } from "./imported-item-name.js";
 import { withItemSumReviewAmount } from "./receipt-review-total.js";
+import { chronologicalBalance } from "./balance.js";
+import { receiptSettlementAllocations } from "./settlement-allocations.js";
 
 const authStorage = createResilientAuthStorage(window.localStorage);
 const AI_IDLE_MESSAGE = "AI processing is ready to begin.";
@@ -68,7 +70,7 @@ document.querySelectorAll('input[name="presentation"]').forEach(input => input.a
 let session;
 let current;
 let members = [];
-let ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSettlements: [] };
+let ledger = { purchases: [], settlements: [], settlementAllocations: [], archivedPurchases: [], archivedSettlements: [] };
 let channel;
 let mode = "expense";
 let pendingPdfImport;
@@ -111,12 +113,27 @@ async function findInvoiceDuplicate(fingerprint) {
   const { data, error } = await supabase.rpc("find_invoice_duplicate", { p_household_id: current.id, p_exact_pdf_hash: fingerprint.exactHash, p_content_hash: fingerprint.contentHash });
   return { result: Array.isArray(data) ? data[0] : data, error };
 }
+async function releaseOrphanedImport(fingerprint) {
+  const { data, error } = await supabase.rpc("release_orphaned_invoice_fingerprints", { p_household_id: current.id, p_exact_pdf_hash: fingerprint.exactHash, p_content_hash: fingerprint.contentHash });
+  return { released: Number(data) || 0, error };
+}
 function showDuplicateImport(result, fingerprint) {
   const existing = duplicatePurchase(result);
   const message = duplicateImportMessage(result);
   lastPdfFeedback = { exactHash: fingerprint?.exactHash, contentHash: fingerprint?.contentHash, message, result };
   const restoreId = restorableDuplicatePurchaseId(result);
-  return showImportFeedback(message, "duplicate", restoreId ? { durationMs: 0, action: { label: "Restore removed receipt", ariaLabel: `Restore ${existing?.label || "removed receipt"} to the ledger`, onClick: async event => { event.currentTarget.disabled = true; if (!await restoreRemovedReceipt(restoreId, "duplicate")) event.currentTarget.disabled = false; } } } : undefined);
+  const orphaned = duplicateState(result) === "legacy_unlinked";
+  const action = restoreId ? { label: "Restore removed receipt", ariaLabel: `Restore ${existing?.label || "removed receipt"} to the ledger`, onClick: async event => { event.currentTarget.disabled = true; if (!await restoreRemovedReceipt(restoreId, "duplicate")) event.currentTarget.disabled = false; } }
+    : orphaned ? { label: "Check and reimport", ariaLabel: "Ask the ledger to verify and release this orphaned import reservation", onClick: async event => {
+      event.currentTarget.disabled = true;
+      const release = await releaseOrphanedImport(fingerprint);
+      if (release.error || !release.released) { showImportFeedback(`This reservation could not be released safely. ${release.error?.message || "The database did not approve it."}`, "error", { durationMs: 0 }); return; }
+      lastPdfFeedback = undefined;
+      clearImportFeedback(document);
+      openImportChoice(fingerprint);
+      note("The orphaned reservation was released. Choose how to process this invoice; nothing has been saved yet.");
+    } } : undefined;
+  return showImportFeedback(message, "duplicate", action ? { durationMs: 0, action } : undefined);
 }
 function inviteCodeFromUrl() {
   const code = new URLSearchParams(location.search).get("invite")?.trim() || "";
@@ -218,7 +235,7 @@ function clearSignedInState() {
   session = undefined;
   current = undefined;
   members = [];
-  ledger = { purchases: [], settlements: [], archivedPurchases: [], archivedSettlements: [] };
+  ledger = { purchases: [], settlements: [], settlementAllocations: [], archivedPurchases: [], archivedSettlements: [] };
   channel?.unsubscribe();
 }
 async function signOutSafely() {
@@ -241,15 +258,23 @@ function sharedPurchaseAmount(purchase) {
   if (!items.length) return purchase.is_personal ? 0 : Number(purchase.amount);
   return items.reduce((total, item) => total + (item.is_personal ? 0 : Number(item.line_total) || 0), 0);
 }
+function settlementAllocations(receiver, amount, settledOn) {
+  return receiptSettlementAllocations({
+    purchases: ledger.purchases.map(purchase => ({ id: purchase.id, paid_by: purchase.paid_by, purchased_on: purchase.purchased_on, shared_amount: sharedPurchaseAmount(purchase) })),
+    existingAllocations: ledger.settlementAllocations,
+    receiver,
+    amount,
+    settledOn
+  });
+}
 function balanceFor(userId) {
   if (!hasPartner()) return 0;
-  let total = 0;
-  for (const purchase of ledger.purchases) {
+  const expenses = ledger.purchases.map(purchase => {
     const sharedAmount = sharedPurchaseAmount(purchase);
-    total += purchase.paid_by === userId ? sharedAmount / 2 : -sharedAmount / 2;
-  }
-  for (const settlement of ledger.settlements) total += settlement.payer === userId ? Number(settlement.amount) : settlement.receiver === userId ? -Number(settlement.amount) : 0;
-  return total;
+    return { date: purchase.purchased_on, amount: purchase.paid_by === userId ? sharedAmount / 2 : -sharedAmount / 2 };
+  });
+  const settlements = ledger.settlements.map(settlement => ({ date: settlement.settled_on, amount: settlement.payer === userId ? Number(settlement.amount) : settlement.receiver === userId ? -Number(settlement.amount) : 0 }));
+  return chronologicalBalance(expenses, settlements);
 }
 function row(item, type) {
   const own = type === "purchase" ? item.paid_by === session.user.id : item.payer === session.user.id;
@@ -260,7 +285,8 @@ function row(item, type) {
     const receiptActions = canManage && active() ? `<div class="receipt-action-buttons" data-label="Actions" role="group" aria-label="Receipt actions for ${heading}"><button type="button" class="receipt-edit" data-edit-receipt="${item.id}" aria-label="Edit receipt for ${heading}"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="m4 20 4.2-1 10.7-10.7a2.1 2.1 0 0 0-3-3L5.2 16 4 20Zm10.7-13.7 3 3"/></svg><span>Edit</span></button><button type="button" class="receipt-delete" data-delete-receipt="${item.id}" aria-label="Remove ${heading} from the ledger"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg><span>Remove</span></button></div>` : `<span class="receipt-actions-empty" aria-hidden="true"></span>`;
     return `<div class="expense purchase-row" data-purchase-id="${item.id}"><div class="purchase-merchant"><b>${heading}</b><span>${esc(item.category)}${item.is_personal ? " · personal" : ""}</span></div><span data-label="Paid by">${esc(memberName(item.paid_by))}</span><time data-label="Date">${fmt(item.purchased_on)}</time><span data-label="Items">${itemCount ? `${itemCount} reviewed` : "Manual entry"}</span><div class="purchase-amount" data-label="Amount"><b>${money(item.amount)}</b></div>${receiptActions}</div>`;
   }
-  return `<div class="expense"><div><b>${heading}</b><span>${fmt(item.settled_on)}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
+  const support = item.allocation_count ? ` · ${item.allocation_count} active receipt allocation${item.allocation_count === 1 ? "" : "s"}` : "";
+  return `<div class="expense"><div><b>${heading}</b><span>${fmt(item.settled_on)}${support}</span></div><div class="entry-actions"><b>${money(item.amount)}</b>${canManage && active() ? `<button class="plain action" data-archive="${type}" data-id="${item.id}">Archive</button>` : ""}</div></div>`;
 }
 function suggestionCards() {
   const { groups, stats } = restockEligibility(ledger.purchases);
@@ -546,17 +572,18 @@ async function loadHousehold() {
 async function loadLedger() {
   if (!current) return loadHousehold();
   renderLoading("Syncing reviewed expenses and items…");
-  const [memberResult, purchaseResult, settlementResult, archivedPurchaseResult, archivedSettlementResult] = await Promise.all([
+  const [memberResult, purchaseResult, settlementResult, allocationResult, archivedPurchaseResult, archivedSettlementResult] = await Promise.all([
     supabase.from("household_members").select("user_id,role,display_name").eq("household_id", current.id),
     supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).is("archived_at", null),
-    supabase.from("settlements").select("*").eq("household_id", current.id).is("archived_at", null),
+    supabase.from("receipt_backed_settlement_history").select("*").eq("household_id", current.id),
+    supabase.from("settlement_allocations").select("settlement_id,purchase_id,purchase_item_id,amount"),
     supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).not("archived_at", "is", null),
     supabase.from("settlements").select("*").eq("household_id", current.id).not("archived_at", "is", null)
   ]);
-  const error = memberResult.error || purchaseResult.error || settlementResult.error || archivedPurchaseResult.error || archivedSettlementResult.error;
+  const error = memberResult.error || purchaseResult.error || settlementResult.error || allocationResult.error || archivedPurchaseResult.error || archivedSettlementResult.error;
   if (error) return renderLoadError("We couldn’t load the current ledger.", error.message, loadLedger);
   members = memberResult.data;
-  ledger = { purchases: purchaseResult.data, settlements: settlementResult.data, archivedPurchases: archivedPurchaseResult.data, archivedSettlements: archivedSettlementResult.data };
+  ledger = { purchases: purchaseResult.data, settlements: settlementResult.data.filter(settlement => Number(settlement.amount) > 0), settlementAllocations: allocationResult.data, archivedPurchases: archivedPurchaseResult.data, archivedSettlements: archivedSettlementResult.data };
   const self = members.find(member => member.user_id === session.user.id);
   if (!current.archived_at && needsDisplayName(self)) renderDisplayNameGate(self);
   else if (members.length < 2 && !current.archived_at) renderPartnerInvite();
@@ -1089,10 +1116,12 @@ $("entry-form").onsubmit = async event => {
     const latestBalance = balanceFor(session.user.id);
     const amountError = settlementAmountError(latestBalance, amount);
     if (amountError) { errorBox.textContent = amountError; button.disabled = false; button.textContent = "Save"; return; }
+    const allocations = settlementAllocations(receiver.user_id, amount, $("date").value);
+    if (!allocations.length) { errorBox.textContent = "This payment cannot be matched to enough active shared receipt balance on or before this date. Check the amount and date, or restore the supporting receipt first."; button.disabled = false; button.textContent = "Save"; return; }
     const payer = displayedMemberName(members.find(member => member.user_id === session.user.id));
     const receiverName = displayedMemberName(receiver);
     if (!confirm(settlementConfirmation(payer, receiverName, amount, $("date").value))) { button.disabled = false; button.textContent = "Save"; return; }
-    ({ error } = await supabase.from("settlements").insert({ household_id: current.id, payer: session.user.id, receiver: receiver.user_id, amount, settled_on: $("date").value }));
+    ({ error } = await supabase.rpc("record_receipt_backed_settlement", { p_household_id: current.id, p_receiver: receiver.user_id, p_amount: amount, p_settled_on: $("date").value, p_allocations: allocations }));
   } else {
     const label = $("label").value.trim();
     if (!label) { errorBox.textContent = "Add a merchant or description."; button.disabled = false; button.textContent = "Save"; return; }
@@ -1135,10 +1164,11 @@ $("entry-form").onsubmit = async event => {
       const restoreButton = duplicateRestoreControl();
       const existing = duplicatePurchase(result);
       const restoreId = restorableDuplicatePurchaseId(result);
-      const canRestore = !!restoreId;
-      restoreButton.classList.toggle("hide", !canRestore);
-      restoreButton.setAttribute("aria-label", canRestore ? `Restore ${existing?.label || "removed receipt"} to the ledger` : "");
-      restoreButton.onclick = canRestore ? async () => {
+      const orphaned = duplicateState(result) === "legacy_unlinked";
+      restoreButton.classList.toggle("hide", !restoreId && !orphaned);
+      restoreButton.textContent = restoreId ? "Restore removed receipt" : "Check and retry import";
+      restoreButton.setAttribute("aria-label", restoreId ? `Restore ${existing?.label || "removed receipt"} to the ledger` : orphaned ? "Ask the ledger to verify and release this orphaned import reservation" : "");
+      restoreButton.onclick = restoreId ? async () => {
         restoreButton.disabled = true;
         if (await restoreRemovedReceipt(restoreId, "duplicate")) {
           discardPreparedVisualDerivative();
@@ -1148,6 +1178,13 @@ $("entry-form").onsubmit = async event => {
           formDirty = false;
           dialog.close();
         } else restoreButton.disabled = false;
+      } : orphaned ? async () => {
+        restoreButton.disabled = true;
+        const release = await releaseOrphanedImport(pendingPdfImport);
+        if (release.error || !release.released) { errorBox.textContent = `This reservation could not be released safely. ${release.error?.message || "The database did not approve it."}`; restoreButton.disabled = false; return; }
+        lastPdfFeedback = undefined;
+        restoreButton.classList.add("hide");
+        errorBox.textContent = "The orphaned reservation was released. Review the draft, then save again.";
       } : null;
       button.disabled = false;
       button.textContent = "Save receipt";

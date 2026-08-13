@@ -47,6 +47,7 @@ enum RemoteLedgerImporter {
 
         let settlements = try context.fetch(FetchDescriptor<Settlement>())
         let settlementByID = Dictionary(uniqueKeysWithValues: settlements.map { ($0.id, $0) })
+        let allocationsBySettlement = Dictionary(grouping: snapshot.settlementAllocations, by: \.settlementID)
         for remote in snapshot.settlements {
             guard let payer = people[remote.payer], let receiver = people[remote.receiver] else { continue }
             let settlement = settlementByID[remote.id] ?? Settlement(
@@ -61,6 +62,13 @@ enum RemoteLedgerImporter {
             settlement.receiver = receiver.rawValue
             settlement.amount = remote.amount
             settlement.settledAt = remote.settledOn.value
+            // The canonical history identifies supporting receipts. Allocation
+            // amounts remain server-enforced; distribute only for local display.
+            if let remoteAllocations = allocationsBySettlement[remote.id], !remoteAllocations.isEmpty {
+                settlement.receiptAllocations = remoteAllocations.map {
+                    SettlementAllocation(purchaseID: $0.purchaseID, purchaseItemID: $0.purchaseItemID, amount: $0.amount)
+                }
+            }
             if settlementByID[remote.id] == nil { context.insert(settlement) }
         }
         try context.save()

@@ -125,11 +125,28 @@ struct RemoteSettlement: Codable, Equatable, Sendable {
     let receiver: UUID
     let amount: Decimal
     let settledOn: LedgerDate
+    let purchaseIDs: [UUID]?
+    let purchaseItemIDs: [UUID]?
 
     enum CodingKeys: String, CodingKey {
         case id, payer, receiver, amount
         case householdID = "household_id"
         case settledOn = "settled_on"
+        case purchaseIDs = "purchase_ids"
+        case purchaseItemIDs = "purchase_item_ids"
+    }
+}
+
+struct RemoteSettlementAllocation: Codable, Equatable, Sendable {
+    let settlementID: UUID
+    let purchaseID: UUID
+    let purchaseItemID: UUID?
+    let amount: Decimal
+    enum CodingKeys: String, CodingKey {
+        case amount
+        case settlementID = "settlement_id"
+        case purchaseID = "purchase_id"
+        case purchaseItemID = "purchase_item_id"
     }
 }
 
@@ -138,6 +155,7 @@ struct RemoteLedgerSnapshot: Equatable, Sendable {
     let memberships: [RemoteMembership]
     let purchases: [RemotePurchase]
     let settlements: [RemoteSettlement]
+    let settlementAllocations: [RemoteSettlementAllocation]
 }
 
 enum NativeSyncStatus: Equatable, Sendable {
@@ -251,15 +269,31 @@ struct SupabaseLedgerAPI: Sendable {
         async let householdData = get("/rest/v1/households?select=id,name,archived_at,purge_after&id=eq.\(id)", token: token)
         async let membersData = get("/rest/v1/household_members?select=household_id,user_id,display_name,role&household_id=eq.\(id)", token: token)
         async let purchasesData = get("/rest/v1/purchases?select=id,household_id,label,category,amount,paid_by,purchased_on,created_at,purchase_items(id,display_order,name,quantity,line_total,is_personal,is_tracked_for_restock,estimated_use_by)&household_id=eq.\(id)&archived_at=is.null", token: token)
-        async let settlementsData = get("/rest/v1/settlements?select=id,household_id,payer,receiver,amount,settled_on&household_id=eq.\(id)&archived_at=is.null", token: token)
+        async let settlementBundle = loadSettlementHistory(householdID: id, token: token)
         let households = try SupabaseJSON.decoder.decode([RemoteHousehold].self, from: await householdData)
         guard let household = households.first else { throw SupabaseClientError.noHousehold }
+        let remoteSettlements = try await settlementBundle
         return try await RemoteLedgerSnapshot(
             household: household,
             memberships: SupabaseJSON.decoder.decode([RemoteMembership].self, from: membersData),
             purchases: SupabaseJSON.decoder.decode([RemotePurchase].self, from: purchasesData),
-            settlements: SupabaseJSON.decoder.decode([RemoteSettlement].self, from: settlementsData)
+            settlements: SupabaseJSON.decoder.decode([RemoteSettlement].self, from: remoteSettlements.history),
+            settlementAllocations: SupabaseJSON.decoder.decode([RemoteSettlementAllocation].self, from: remoteSettlements.allocations)
         )
+    }
+
+    private func loadSettlementHistory(householdID: String, token: String) async throws -> (history: Data, allocations: Data) {
+        do {
+            async let history = get("/rest/v1/receipt_backed_settlement_history?select=id,household_id,payer,receiver,amount,settled_on,purchase_ids,purchase_item_ids&household_id=eq.\(householdID)", token: token)
+            async let allocations = get("/rest/v1/settlement_allocations?select=settlement_id,purchase_id,purchase_item_id,amount", token: token)
+            return try await (history, allocations)
+        } catch let error as SupabaseClientError {
+            // The migration is intentionally not deployed yet. Keep the existing
+            // local ledger readable until PostgREST exposes the canonical view.
+            guard case .server(let status, _) = error, status == 404 else { throw error }
+            let history = try await get("/rest/v1/settlements?select=id,household_id,payer,receiver,amount,settled_on&household_id=eq.\(householdID)&archived_at=is.null", token: token)
+            return (history, Data("[]".utf8))
+        }
     }
 
     func importReviewed(_ payload: ReviewedImportRPCPayload, token: String) async throws {
@@ -267,11 +301,9 @@ struct SupabaseLedgerAPI: Sendable {
         _ = try await request(path: "/rest/v1/rpc/import_reviewed_purchase", method: "POST", body: body, authenticatedBy: token)
     }
 
-    func insertSettlement(_ settlement: SettlementDTO, token: String) async throws {
-        let body: [String: Any] = ["id": settlement.id.uuidString, "household_id": settlement.householdID.uuidString,
-                                   "payer": settlement.payer.uuidString, "receiver": settlement.receiver.uuidString,
-                                   "amount": NSDecimalNumber(decimal: settlement.amount), "settled_on": settlement.settledOn.isoString]
-        _ = try await request(path: "/rest/v1/settlements", method: "POST", body: body, authenticatedBy: token)
+    func recordReceiptBackedSettlement(_ payload: ReceiptBackedSettlementRPCPayload, token: String) async throws {
+        let body = try JSONSerialization.jsonObject(with: SupabaseJSON.encoder.encode(payload))
+        _ = try await request(path: "/rest/v1/rpc/record_receipt_backed_settlement", method: "POST", body: body, authenticatedBy: token)
     }
 
     private func get(_ path: String, token: String) async throws -> Data {
@@ -357,9 +389,15 @@ final class SupabaseLedgerController {
         await reload()
     }
 
-    func uploadSettlement(_ settlement: SettlementDTO) async throws {
+    func uploadSettlement(_ settlement: SettlementDTO, allocations: [SettlementAllocation]) async throws {
         guard let session else { throw SupabaseClientError.noSession }
-        try await api.insertSettlement(settlement, token: session.accessToken)
+        guard !allocations.isEmpty else { throw SupabaseClientError.invalidResponse }
+        let payload = ReceiptBackedSettlementRPCPayload(
+            householdID: settlement.householdID, receiver: settlement.receiver,
+            amount: settlement.amount, settledOn: settlement.settledOn,
+            allocations: allocations.map { .init(purchaseID: $0.purchaseID, purchaseItemID: $0.purchaseItemID, amount: $0.amount) }
+        )
+        try await api.recordReceiptBackedSettlement(payload, token: session.accessToken)
         await reload()
     }
 

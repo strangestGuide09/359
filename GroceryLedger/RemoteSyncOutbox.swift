@@ -22,7 +22,7 @@ enum RemoteSyncOutbox {
             let pendingSettlements = try context.fetch(FetchDescriptor<Settlement>(predicate: #Predicate { $0.needsRemoteSync }))
             for settlement in pendingSettlements {
                 let payload = try SharedDataMapper.settlement(settlement, householdID: snapshot.household.id, memberIDs: memberIDs)
-                try await sync.uploadSettlement(payload)
+                try await sync.uploadSettlement(payload, allocations: settlement.receiptAllocations)
                 context.delete(settlement)
                 try context.save()
             }
