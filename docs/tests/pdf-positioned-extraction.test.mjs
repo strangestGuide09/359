@@ -69,6 +69,7 @@ test("visual derivatives mask the page and copy only approved original-pixel cel
   const visual = await read("docs/ai-visual-derivative.js");
   assert.match(visual, /tableContext\.fillStyle = "#ffffff";[\s\S]*tableContext\.fillRect\(0, 0, sourceWidth, sourceHeight\)/);
   assert.match(visual, /for \(const cell of crop\.cells \|\| \[\]\)/);
+  assert.match(visual, /pdf\.getPage\(crop\.pageNumber\)/, "omitted non-table pages do not shift source rendering");
   assert.match(visual, /tableContext\.drawImage\(fullPage, cellX, cellY, cellWidth, cellHeight/);
   assert.doesNotMatch(visual, /drawImage\(fullPage, sourceX, sourceY, sourceWidth, sourceHeight/);
   assert.doesNotMatch(visual, /cells\.push\(\{[^}]*text:/);

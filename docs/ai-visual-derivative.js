@@ -1,4 +1,4 @@
-const VISUAL_SANITIZER_VERSION = "visual-cells-v5";
+const VISUAL_SANITIZER_VERSION = "visual-cells-v6";
 const MAX_DERIVATIVE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 5;
 export const VISUAL_RENDER_SCALE = 2.5;
@@ -29,58 +29,101 @@ function vendorFor(merchant) {
 }
 
 const privateToken = /(?:\b(?:customer|buyer|recipient|deliver(?:y|ed)?|ship(?:ping|ped)?|bill(?:ing|ed)?|address|phone|mobile|email|contact|landmark|payment|card|upi|transaction|account|bank|order\s*(?:id|number|no)|invoice\s*(?:id|number|no))\b|@|\b(?:\+?91[\s-]?)?[6-9]\d{9}\b)/i;
-const integerToken = token => /^\d{1,3}$/.test(String(token.text || "").trim());
+const operationalChargeToken = /\b(?:delivery\s+and\s+other(?:\s+(?:fee|fees|charge|charges))?|(?:delivery|handling|platform|service)\s+(?:fee|fees|charge|charges))\b/i;
+const hasPrivateToken = token => privateToken.test(String(token.text || ""));
+const serialValue = token => {
+  const match = String(token.text || "").trim().match(/^(\d{1,3})[.)]?$/);
+  return match ? Number(match[1]) : undefined;
+};
+const numericToken = token => /^(?:₹\s*)?-?\d[\d,]*(?:\.\d{1,2})?$/.test(String(token.text || "").trim());
+const summaryToken = /(?:^(?:sub\s*total|grand\s*total|total|tax|discount|round(?:ing|ed)?|amount\s+(?:paid|payable)|invoice\s+value)$|\b(?:cgst|sgst|igst|cess)\b)/i;
 
-function dominantSerialX(pages, pageSizes) {
-  const candidates = pages.flatMap((tokens, pageIndex) => tokens
-    .filter(token => integerToken(token) && number(token.x) <= number(pageSizes[pageIndex]?.width) * 0.28)
-    .map(token => ({ x: number(token.x) / number(pageSizes[pageIndex]?.width), value: Number(token.text) })));
-  if (candidates.length < 2) return undefined;
+function pageSerials(tokens, pageSize) {
+  const width = number(pageSize?.width);
+  if (!width) return [];
   const bins = new Map();
-  candidates.forEach(candidate => {
-    const key = Math.round(candidate.x * 50) / 50;
-    const values = bins.get(key) || [];
-    values.push(candidate);
-    bins.set(key, values);
+  tokens.forEach(token => {
+    const value = serialValue(token);
+    if (value == null || number(token.x) > width * 0.28) return;
+    const key = Math.round(number(token.x) / width * 100) / 100;
+    const entries = bins.get(key) || [];
+    entries.push({ ...token, serial: value });
+    bins.set(key, entries);
   });
-  const best = [...bins.entries()].sort((a, b) => b[1].length - a[1].length)[0];
-  if (!best || best[1].length < 2) return undefined;
-  return best[0];
+  return [...bins.values()]
+    .map(entries => entries.sort((a, b) => b.y - a.y))
+    .filter(entries => entries.length >= 2 && entries.every((entry, index) => index === 0 || entry.serial === entries[index - 1].serial + 1))
+    .sort((a, b) => b.length - a.length)[0] || [];
 }
 
-function detectTableCells(tokens, pageSize, serialXRatio) {
+function inferredAmountRows(tokens, pageSize) {
+  const width = number(pageSize?.width);
+  const height = number(pageSize?.height);
+  if (!width || !height) return [];
+  const bins = new Map();
+  tokens.forEach(token => {
+    if (!numericToken(token) || number(token.x) < width * 0.55) return;
+    const key = Math.round(number(token.x) / width * 50) / 50;
+    const entries = bins.get(key) || [];
+    entries.push(token);
+    bins.set(key, entries);
+  });
+  const columns = [...bins.values()].filter(entries => entries.length >= 2).sort((a, b) => {
+    const rightA = Math.max(...a.map(token => number(token.x) + number(token.width)));
+    const rightB = Math.max(...b.map(token => number(token.x) + number(token.width)));
+    return rightB - rightA || b.length - a.length;
+  });
+  for (const column of columns) {
+    const anchors = column
+      .filter(anchor => {
+        const nearby = tokens.filter(token => Math.abs(number(token.y) - number(anchor.y)) <= Math.max(5, number(anchor.height) * 0.8));
+        const words = nearby.filter(token => !numericToken(token) && number(token.x) < width * 0.72 && String(token.text || "").trim().length > 1);
+        const numericCells = nearby.filter(numericToken);
+        const wordsText = words.map(token => token.text).join(" ");
+        return words.length > 0 && numericCells.length >= 2 && !operationalChargeToken.test(wordsText) && !words.some(token => summaryToken.test(String(token.text || "").trim()));
+      })
+      .sort((a, b) => b.y - a.y);
+    const distinct = anchors.filter((anchor, index) => index === 0 || Math.abs(anchor.y - anchors[index - 1].y) > 5);
+    if (distinct.length >= 2) return distinct.map(token => ({ ...token, inferred: true }));
+  }
+  return [];
+}
+
+function detectTableCells(tokens, pageSize) {
   const width = number(pageSize?.width);
   const height = number(pageSize?.height);
   if (!width || !height || !Array.isArray(tokens) || !tokens.length) return undefined;
-  const serials = tokens
-    .filter(token => integerToken(token) && Math.abs(number(token.x) / width - serialXRatio) <= 0.025)
-    .map(token => ({ ...token, serial: Number(token.text) }))
-    .sort((a, b) => b.y - a.y);
-  if (!serials.length) return undefined;
-  const gaps = serials.slice(0, -1).map((token, index) => token.y - serials[index + 1].y).filter(gap => gap > 8 && gap < height * 0.18);
+  const serials = pageSerials(tokens, pageSize);
+  const anchors = serials.length ? serials : inferredAmountRows(tokens, pageSize);
+  if (!anchors.length) return undefined;
+  const gaps = anchors.slice(0, -1).map((token, index) => token.y - anchors[index + 1].y).filter(gap => gap > 8 && gap < height * 0.18);
   const typicalGap = gaps.length ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : height * 0.065;
   const cells = [];
   let privacyRisk = false;
-  serials.forEach((serial, index) => {
-    const previous = serials[index - 1];
-    const next = serials[index + 1];
-    const upper = previous ? (previous.y + serial.y) / 2 : Math.min(height, serial.y + typicalGap * 0.6);
-    const lower = next ? (serial.y + next.y) / 2 : Math.max(0, serial.y - typicalGap * 0.55);
-    const row = tokens.filter(token => token.y <= upper && token.y >= lower && token.x >= Math.max(0, serial.x - width * 0.015) && token.x + number(token.width) <= width * 0.985);
-    if (row.some(token => privateToken.test(String(token.text || "")))) privacyRisk = true;
-    row.filter(token => !privateToken.test(String(token.text || ""))).forEach(token => {
+  anchors.forEach((anchor, index) => {
+    const previous = anchors[index - 1];
+    const next = anchors[index + 1];
+    const upper = previous ? (previous.y + anchor.y) / 2 : Math.min(height, anchor.y + typicalGap * 0.6);
+    const lower = next ? (anchor.y + next.y) / 2 : Math.max(0, anchor.y - typicalGap * 0.55);
+    const rowLeft = serials.length ? Math.max(0, anchor.x - width * 0.015) : 0;
+    const row = tokens.filter(token => token.y <= upper && token.y >= lower && token.x >= rowLeft && token.x + number(token.width) <= width * 0.985);
+    const rowText = row.map(token => token.text).join(" ");
+    const operationalChargeRow = operationalChargeToken.test(rowText);
+    const rowPrivate = token => hasPrivateToken(token) && !(operationalChargeRow && /^deliver(?:y|ed)?(?:\s+and\s+other)?$/i.test(String(token.text || "").trim()));
+    if (row.some(rowPrivate)) privacyRisk = true;
+    row.filter(token => !rowPrivate(token)).forEach(token => {
       const padX = Math.max(1.5, number(token.height) * 0.18);
       const padY = Math.max(1, number(token.height) * 0.14);
       cells.push({ x: Math.max(0, number(token.x) - padX), y: Math.max(0, number(token.y) - padY), width: Math.min(width - number(token.x) + padX, Math.max(2, number(token.width)) + padX * 2), height: Math.min(height - number(token.y) + padY, Math.max(2, number(token.height)) + padY * 2) });
     });
   });
-  if (privacyRisk || cells.length < serials.length * 3) return undefined;
+  if (privacyRisk || cells.length < anchors.length * 3) return undefined;
   const left = Math.max(0, Math.min(...cells.map(cell => cell.x)));
   const right = Math.min(width, Math.max(...cells.map(cell => cell.x + cell.width)));
   const bottom = Math.max(0, Math.min(...cells.map(cell => cell.y)));
   const top = Math.min(height, Math.max(...cells.map(cell => cell.y + cell.height)));
   if (right - left < width * 0.35 || top - bottom < height * 0.04) return undefined;
-  return { x: left, y: bottom, width: right - left, height: top - bottom, pageWidth: width, pageHeight: height, cells, serials: serials.map(token => token.serial) };
+  return { x: left, y: bottom, width: right - left, height: top - bottom, pageWidth: width, pageHeight: height, cells, rowCount: anchors.length, evidence: serials.length ? "serial" : "amount-column", serials: serials.map(token => token.serial) };
 }
 
 /**
@@ -89,20 +132,21 @@ function detectTableCells(tokens, pageSize, serialXRatio) {
  */
 export function planVisualDerivative({ pages, pageSizes, merchant, itemCount }) {
   if (!Array.isArray(pages) || !Array.isArray(pageSizes) || !pages.length || pages.length > MAX_PAGES) return undefined;
-  const serialXRatio = dominantSerialX(pages, pageSizes);
-  if (serialXRatio == null) return undefined;
-  const crops = pages.map((tokens, index) => detectTableCells(tokens, pageSizes[index], serialXRatio));
-  if (crops.some(crop => !crop)) return undefined;
-
-  const serials = crops.flatMap(crop => crop.serials);
-  const unique = new Set(serials);
-  const ordered = [...serials].sort((a, b) => a - b);
-  const contiguous = unique.size === serials.length && ordered.every((value, index) => index === 0 || value === ordered[index - 1] + 1);
-  if (!contiguous) return undefined;
+  const crops = pages
+    .map((tokens, index) => {
+      const crop = detectTableCells(tokens, pageSizes[index]);
+      return crop ? { ...crop, pageNumber: index + 1 } : undefined;
+    })
+    .filter(Boolean);
+  if (!crops.length) return undefined;
 
   const vendor = vendorFor(merchant);
-  const itemAgreement = Number.isInteger(itemCount) && itemCount > 0 ? Math.abs(serials.length - itemCount) <= 1 : false;
-  const confidence = itemAgreement && serials.length >= 2 ? "high" : "medium";
+  const rowCount = crops.reduce((sum, crop) => sum + crop.rowCount, 0);
+  const hasItemEvidence = Number.isInteger(itemCount) && itemCount > 0;
+  const itemDifference = hasItemEvidence ? Math.abs(rowCount - itemCount) : undefined;
+  if (hasItemEvidence && itemDifference > 1) return undefined;
+  const itemAgreement = hasItemEvidence && itemDifference <= 1;
+  const confidence = itemAgreement && rowCount >= 2 ? "high" : "medium";
   const geometry = crops
     .map(crop => `${[crop.x, crop.y, crop.width, crop.height].map(value => Math.round(value)).join(",")}:${crop.cells.map(cell => [cell.x, cell.y, cell.width, cell.height].map(value => Math.round(value)).join(",")).join(";")}`)
     .join("|");
@@ -199,10 +243,10 @@ export async function createFlattenedVisualDerivative(pdfjsLib, sourcePdfBytes, 
   let pdf;
   try {
     pdf = await pdfjsLib.getDocument({ data: sourcePdfBytes.slice() }).promise;
-    if (pdf.numPages !== plan.crops.length) throw new Error("visual_derivative_failed");
+    if (plan.crops.some(crop => !Number.isInteger(crop.pageNumber) || crop.pageNumber < 1 || crop.pageNumber > pdf.numPages)) throw new Error("visual_derivative_failed");
     const images = [];
     for (const [index, crop] of plan.crops.entries()) {
-      const page = await pdf.getPage(index + 1);
+      const page = await pdf.getPage(crop.pageNumber);
       const viewport = page.getViewport({ scale: VISUAL_RENDER_SCALE });
       const fullPage = document.createElement("canvas");
       fullPage.width = Math.ceil(viewport.width);
@@ -231,7 +275,7 @@ export async function createFlattenedVisualDerivative(pdfjsLib, sourcePdfBytes, 
         const cellHeight = cellBottom - cellY;
         if (cellWidth > 0 && cellHeight > 0) tableContext.drawImage(fullPage, cellX, cellY, cellWidth, cellHeight, cellX - sourceX, cellY - sourceY, cellWidth, cellHeight);
       }
-      const image = await canvasJpeg(canvasForCrop(table, `Receipt item table — page ${index + 1}`));
+      const image = await canvasJpeg(canvasForCrop(table, `Receipt item table — page ${crop.pageNumber}`));
       previews.push(image.previewUrl);
       images.push(image);
     }

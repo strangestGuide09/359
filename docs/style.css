@@ -77,17 +77,18 @@ nav { display:flex; flex-wrap:wrap; gap:10px; padding:10px 0 25px; }
 .settings>summary span:first-child { display:grid; gap:3px; }
 .settings>summary small { color:var(--muted); font-weight:normal; }
 .settings[open]>summary { border-bottom:1px solid var(--line); }
-.settings-body { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr); gap:18px; padding:18px; align-items:start; }
-.settings-profile,.settings-account { min-width:0; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
+.settings-body { display:grid; gap:12px; padding:14px; align-items:start; }
+.settings-recovery,.settings-profile,.settings-account { min-width:0; padding:14px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
+.settings-columns { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:12px; align-items:start; }
 .settings-section-heading { display:grid; gap:4px; margin-bottom:8px; }
 .settings-section-heading small { color:var(--muted); line-height:1.4; }
-.settings-profile .member-list .expense { padding:10px 0; }
-.settings-profile .inline-form { grid-template-columns:minmax(180px,1fr) auto; max-width:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+.settings-profile .member-list .expense { padding:8px 0; }
+.settings-profile .inline-form { grid-template-columns:minmax(180px,1fr) auto; max-width:none; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
 .account-session { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:0; padding:0; border:0; background:transparent; }
 .account-session>div { display:grid; gap:4px; }
 .account-session small { color:var(--muted); line-height:1.4; }
 .session-sign-out { flex:0 0 auto; min-width:110px; }
-.danger-zone { grid-column:1/-1; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; align-items:center; margin:0; padding:16px; border:1px solid #d7aaa0; border-radius:12px; background:#fff8f4; }
+.danger-zone { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; align-items:center; margin:0; padding:14px; border:1px solid #d7aaa0; border-radius:12px; background:#fff8f4; }
 .danger-zone small { grid-column:1; color:var(--muted); }
 .danger-zone button { grid-column:2; grid-row:1/3; }
 .empty-state { margin:14px 0 0; color:var(--muted); line-height:1.45; }
@@ -202,9 +203,13 @@ menu { display:flex; justify-content:flex-end; gap:9px; margin:16px 0 0; padding
 .settings-actions small { color:var(--muted); font-size:12px; line-height:1.4; }
 .entry-actions { display:flex; align-items:center; gap:8px; }
 .action { padding:6px 8px; font-size:12px; }
-.archive-list { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
-.archive-list summary { color:var(--pine); font-weight:bold; cursor:pointer; }
+.archive-list { display:grid; }
+.settings-empty { margin:0; padding:8px 0 2px; color:var(--muted); line-height:1.4; }
+.archived-entry { padding:9px 0; align-items:center; }
+.archived-entry:first-child { border-top:0; }
+.archived-entry span { margin-top:2px; font-size:12px; }
 .archived-entry-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:8px; }
+.archived-entry-actions button { min-height:43px; padding:8px 10px; font-size:12px; }
 .archive-purge { border-color:var(--danger); background:var(--paper); color:var(--danger); }
 .archive-purge:hover { background:var(--danger-soft); }
 .spinner { display:inline-block; width:18px; height:18px; margin:0 10px -3px 0; border:3px solid var(--line); border-top-color:var(--pine); border-radius:50%; animation:spin .8s linear infinite; }
@@ -260,7 +265,8 @@ html[data-presentation="sketch"] .page-meta { border-top:2px solid var(--pine); 
   .account-gate,.state-panel { margin-top:28px; padding:28px 20px; }
   .account-gate .auth-form,.account-gate .auth-form.auth-signup { grid-template-columns:1fr; }
   .name-form button,.inline-form button { width:100%; }
-  .settings-body { grid-template-columns:1fr; padding:14px; }
+  .settings-body { padding:10px; }
+  .settings-columns { grid-template-columns:1fr; }
   .settings-profile .inline-form { grid-template-columns:1fr; }
   .entry-actions { justify-content:space-between; }
   nav button { flex:1 1 100%; }

@@ -59,7 +59,7 @@ async function measure(page, state, presentation = "classic") {
       ledger: rect(".expenses-panel"),
       settings: rect(".settings")
     });
-    if (state === "settings") Object.assign(result, { settingsProfile: rect(".settings-profile"), settingsAccount: rect(".settings-account"), settingsBody: rect(".settings-body") });
+    if (state === "settings") Object.assign(result, { settingsRecovery: rect(".settings-recovery"), settingsColumns: rect(".settings-columns"), settingsProfile: rect(".settings-profile"), settingsAccount: rect(".settings-account"), settingsBody: rect(".settings-body"), dangerZone: rect(".danger-zone") });
     return result;
   }, state);
 }
@@ -115,6 +115,8 @@ test("open settings use compact columns on desktop and stack cleanly on mobile",
     const page = await browser.newPage({ viewport });
     const measured = await measure(page, "settings", presentation);
     assert.equal(measured.scrollWidth, measured.viewport);
+    assert.ok(measured.settingsRecovery.bottom < measured.settingsColumns.top);
+    assert.ok(measured.settingsColumns.bottom < measured.dangerZone.top);
     if (viewport.width > 700) {
       assert.equal(Math.round(measured.settingsProfile.top), Math.round(measured.settingsAccount.top));
       assert.ok(measured.settingsProfile.right < measured.settingsAccount.left);

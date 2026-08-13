@@ -199,12 +199,15 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.match(app, /id="household-settings" class="panel settings"/);
+  assert.match(app, /<section class="settings-recovery" aria-labelledby="settings-recovery-title">/);
+  assert.match(app, /id="settings-recovery-title">Receipt recovery/);
+  assert.ok(app.indexOf('${recovery}<div class="settings-columns">') >= 0, "receipt recovery is the first open-settings section");
   assert.match(app, /<section class="settings-profile" aria-labelledby="settings-members-title">/);
-  assert.match(app, /<section class="settings-account" aria-label="Account and recovery">/);
+  assert.match(app, /<section class="settings-account" aria-label="Account and session">/);
   assert.match(app, /<section class="account-session" aria-labelledby="account-session-title">/);
   assert.match(app, /id="account-session-title">Account and session/);
   assert.match(app, /id="sign-out" class="secondary session-sign-out">Sign out/);
-  assert.ok(app.indexOf("${accountSession}${archiveList}</section>${ownerControls}") >= 0, "account/session section remains separate from destructive household controls");
+  assert.ok(app.indexOf('${accountSession}</section></div>${ownerControls}') >= 0, "account/session remains ahead of separate destructive household controls");
   assert.match(app, /class="member-block"/);
   assert.match(app, /<strong>\$\{esc\(displayedMemberName\(member\)\)\}<\/strong><span aria-hidden="true">·<\/span><span>\$\{member\.role/);
   assert.match(app, /class="you-badge">you<\/small>/);
@@ -220,7 +223,9 @@ test("authenticated dashboard prioritizes household work and one main landmark",
   assert.match(style, /\.page-meta \{ width:100%;/);
   assert.doesNotMatch(style, /\.activity,\.settings \{ margin-top:/);
   assert.match(style, /\.insight-card,\.expenses-panel \{ margin:0; \}/);
-  assert.match(style, /\.settings-body \{ display:grid; grid-template-columns:/);
+  assert.match(style, /\.settings-body \{ display:grid; gap:12px;/);
+  assert.match(style, /\.settings-columns \{ display:grid; grid-template-columns:/);
+  assert.match(style, /\.archived-entry-actions button \{ min-height:43px;/);
   assert.match(style, /\.account-session \{ display:flex; justify-content:space-between;/);
   assert.match(style, /\.restock-empty \{ max-width:60ch;/);
   assert.match(style, /\.session-sign-out \{ flex:0 0 auto; min-width:110px; \}/);

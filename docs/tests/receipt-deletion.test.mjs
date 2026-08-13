@@ -53,7 +53,8 @@ test("receipt deletion is audited, reversible, and payer-or-owner-gated", async 
   assert.match(app, /rememberRemovedReceipt\(sessionStorage, current\.id, session\.user\.id, id\)/);
   assert.match(app, /id="undo-receipt-removal"/);
   assert.match(app, /restoreRemovedReceipt\(event\.currentTarget\.dataset\.receiptId, "undo"\)/);
-  assert.match(app, /Removed receipts & archived settlements/);
+  assert.match(app, /id="settings-recovery-title">Receipt recovery/);
+  assert.match(app, /No removed receipts or archived settlements/);
   assert.match(app, /Restore to ledger/);
   assert.doesNotMatch(app, />Delete receipt</);
   assert.match(migration, /receipt_deleted/);

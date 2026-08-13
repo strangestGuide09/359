@@ -32,13 +32,13 @@ test("cell masks retain original raster detail without requiring header words", 
   assert.equal(cellIncludes(plan.crops[0], safeTable.at(-1)), false, "aggregate footer is masked");
 });
 
-test("multi-page continuation rows and multiline descriptions share geometry without repeated headers", () => {
+test("page-local serials may restart while multiline continuation descriptions remain intact", () => {
   const page = (start, lastName, subtotal) => [
     token(String(start), 20, 188, 8), token("Everyday Apple", 70, 188, 120), token("(Pack)", 70, 176, 42), token("2", 330, 188, 8), token("100.00", 535, 188, 48),
     token(String(start + 1), 20, 146, 8), token(lastName, 70, 146, 260), token("1", 330, 146, 8), token("145.00", 535, 146, 48),
     token("Total", 20, 110, 35), token("4", 330, 110, 8), token(subtotal, 535, 110, 48)
   ];
-  const pages = [page(1, "Akshayakalpa Malai Paneer", "292.00"), page(3, "Akshayakalpa Set Cup Curd", "603.00")];
+  const pages = [page(1, "Akshayakalpa Malai Paneer", "292.00"), page(1, "Akshayakalpa Set Cup Curd", "603.00")];
   const plan = planVisualDerivative({ pages, pageSizes: [pageSize, pageSize], merchant: "Blinkit", itemCount: 4 });
   assert.equal(plan.crops.length, 2);
   assert.equal(plan.confidence, "high");
@@ -49,6 +49,29 @@ test("multi-page continuation rows and multiline descriptions share geometry wit
   });
 });
 
+test("serial-free merchant tables use repeated right amount geometry and ignore repeated charge rows", () => {
+  const serialFree = [
+    token("Private content above", 45, 750, 150),
+    token("Fresh milk 500 ml", 70, 610, 150), token("1", 250, 610, 8), token("65.00", 535, 610, 42),
+    token("Delivery", 70, 585, 48), token("and other", 120, 585, 58), token("charges", 180, 585, 45), token("0.00", 535, 585, 36),
+    token("Malai Paneer 200 g", 70, 550, 170), token("1", 250, 550, 8), token("145.00", 535, 550, 48),
+    token("Delivery and other", 70, 525, 120), token("0.00", 535, 525, 36),
+    token("Total", 70, 110, 35), token("210.00", 535, 110, 48)
+  ];
+  const plan = planVisualDerivative({ pages: [serialFree], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 2 });
+  assert.equal(plan?.known, true);
+  assert.equal(plan?.crops[0].evidence, "amount-column");
+  assert.equal(plan?.crops[0].rowCount, 2);
+  assert.equal(cellIncludes(plan.crops[0], serialFree[1]), true);
+  assert.equal(cellIncludes(plan.crops[0], serialFree.at(-1)), false, "summary total stays masked");
+});
+
+test("non-table pages are omitted and retain their original PDF page numbers", () => {
+  const plan = planVisualDerivative({ pages: [safeTable, [token("Terms only", 50, 700, 80)]], pageSizes: [pageSize, pageSize], merchant: "Blinkit", itemCount: 2 });
+  assert.deepEqual(plan?.crops.map(crop => crop.pageNumber), [1]);
+  assert.equal(plan?.known, true);
+});
+
 test("unfamiliar but coherent geometry requires local approval", () => {
   const plan = planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant: "Neighbourhood Grocer", itemCount: 2 });
   assert.equal(plan?.known, false);
@@ -56,13 +79,11 @@ test("unfamiliar but coherent geometry requires local approval", () => {
   assert.match(plan?.layoutKey || "", /:new:/);
 });
 
-test("broken, private, or discontinuous layouts fail closed", () => {
+test("broken, private, or materially incomplete layouts fail closed", () => {
   const privateRow = safeTable.map(value => ({ ...value }));
   privateRow[2].text = "Delivery address: 359 Example Street";
-  const discontinuous = safeTable.map(value => ({ ...value }));
-  discontinuous[5].text = "4";
   assert.equal(planVisualDerivative({ pages: [privateRow], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 2 }), undefined);
-  assert.equal(planVisualDerivative({ pages: [discontinuous], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 2 }), undefined);
+  assert.equal(planVisualDerivative({ pages: [safeTable], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 8 }), undefined);
   assert.equal(planVisualDerivative({ pages: [[token("Milk", 70, 600, 80)]], pageSizes: [pageSize], merchant: "Blinkit", itemCount: 1 }), undefined);
   assert.equal(planVisualDerivative({ pages: [safeTable], pageSizes: [{ width: 0, height: 800 }], merchant: "Blinkit", itemCount: 2 }), undefined);
 });
