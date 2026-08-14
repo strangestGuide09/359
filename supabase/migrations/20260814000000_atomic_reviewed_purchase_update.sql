@@ -120,19 +120,24 @@ begin
     if item_unit_price is not null and (item_unit_price<0 or item_unit_price>9999999999.99) then raise exception 'Reviewed item unit price is invalid'; end if;
     if item_line_total is null or item_line_total<0 or item_line_total>9999999999.99 then raise exception 'Reviewed item line total is invalid'; end if;
     if item_order is null or item_order<0 or item_order>=jsonb_array_length(p_items) then raise exception 'Reviewed item display order is invalid'; end if;
-    if item_order=any(submitted_orders) then raise exception 'Reviewed item display order must be unique'; end if;
+    if item_order = any (submitted_orders) then raise exception 'Reviewed item display order must be unique'; end if;
     submitted_orders := array_append(submitted_orders,item_order);
     if item_is_personal and item_is_restock then raise exception 'Personal items cannot be tracked for household restock'; end if;
 
     if item_id is not null then
-      if item_id=any(submitted_ids) then raise exception 'Reviewed item id must be unique'; end if;
+      if item_id = any (submitted_ids) then raise exception 'Reviewed item id must be unique'; end if;
       if not exists(select 1 from public.purchase_items where id=item_id and purchase_id=target.id) then
         raise exception 'Reviewed item does not belong to this receipt';
       end if;
       submitted_ids := array_append(submitted_ids,item_id);
       select coalesce(sum(amount),0) into allocated_item_total
       from public.settlement_allocations where purchase_item_id=item_id;
-      if allocated_item_total>case when item_is_personal then 0 else round(item_line_total/2,2) end then
+      if allocated_item_total > (
+        case
+          when item_is_personal then 0::numeric
+          else round(item_line_total / 2, 2)
+        end
+      ) then
         raise exception 'Reviewed item change would exceed its receipt-backed settlement allocation';
       end if;
     end if;
@@ -150,7 +155,7 @@ begin
   if exists(
     select 1 from public.settlement_allocations a
     where a.purchase_id=target.id and a.purchase_item_id is not null
-      and not (a.purchase_item_id=any(submitted_ids))
+      and not (a.purchase_item_id = any (submitted_ids))
   ) then raise exception 'An allocated reviewed item cannot be removed'; end if;
   select coalesce(sum(amount),0) into allocated_total
   from public.settlement_allocations where purchase_id=target.id;
@@ -192,7 +197,7 @@ begin
     end if;
   end loop;
   delete from public.purchase_items
-  where purchase_id=target.id and not (id=any(submitted_ids));
+  where purchase_id=target.id and not (id = any (submitted_ids));
 
   update public.purchases set
     label=trim(p_label),category=p_category,purchased_on=p_purchased_on,
