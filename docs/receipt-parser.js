@@ -94,21 +94,7 @@ function reconcileReceiptDiscount(items, total, lines) {
   const discount = itemTotal - total;
   const hasExplicitDiscount = lines.some(line => /\b(?:discount|coupon|promo|savings?)\b/i.test(line));
   if (!hasExplicitDiscount || discount / itemTotal > .5) return { items, notice: "", mismatch: true };
-  const fees = items.filter(item => item.item_kind === "fee").reduce((sum, item) => sum + Number(item.line_total || 0), 0);
-  const products = items.filter(item => item.item_kind !== "fee");
-  const productTotal = products.reduce((sum, item) => sum + Number(item.line_total || 0), 0);
-  const discountedProductTotal = total - fees;
-  if (!products.length || discountedProductTotal < 0) return { items, notice: "", mismatch: true };
-  let allocated = 0;
-  let productIndex = 0;
-  const adjusted = items.map(item => {
-    if (item.item_kind === "fee") return item;
-    const lineTotal = productIndex === products.length - 1 ? Number((discountedProductTotal - allocated).toFixed(2)) : Number((Number(item.line_total || 0) * discountedProductTotal / productTotal).toFixed(2));
-    allocated += lineTotal;
-    productIndex += 1;
-    return { ...item, line_total: lineTotal, unit_price: item.quantity ? Number((lineTotal / item.quantity).toFixed(2)) : item.unit_price };
-  });
-  return { items: adjusted, notice: `Receipt-wide discount of ₹${discount.toFixed(2)} was allocated across item totals. Review before saving.`, mismatch: false };
+  return { items, notice: `Receipt-wide discount of ₹${discount.toFixed(2)} was detected but was not applied to product lines. Add or verify the discount explicitly before saving.`, mismatch: true };
 }
 
 function merchantFrom(lines) {

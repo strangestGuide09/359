@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { purchaseDateTimeline } from "../purchase-timeline.js";
+import { householdRhythmTimeline, purchaseDateTimeline } from "../purchase-timeline.js";
 
 test("timeline follows purchase dates across upload gaps", () => {
   const purchases = [
@@ -22,27 +22,53 @@ test("multiple uploads on one purchase date count once in navigation", () => {
   assert.equal(timeline.dates[0].receiptCount, 2);
 });
 
+test("household rhythm connects historical purchases to today and upcoming days", () => {
+  const purchases = [{ purchased_on: "2026-07-03" }, { purchased_on: "2026-08-13" }];
+  const timeline = householdRhythmTimeline(purchases, "2026-08-13");
+  assert.deepEqual(timeline.dates.map(item => item.date), ["2026-07-03", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16"]);
+  assert.equal(timeline.selectedDate, "2026-08-13");
+  assert.equal(timeline.dates[1].isToday, true);
+  assert.equal(timeline.dates[2].isFuture, true);
+  assert.equal(timeline.dates[0].receiptCount, 1);
+  assert.equal(timeline.dates[2].receiptCount, 0);
+});
+
 test("home explains purchase-date chronology and does not duplicate receipts", async () => {
-  const [app, style] = await Promise.all([
+  const [app, homeView, style] = await Promise.all([
     readFile(new URL("../app.js", import.meta.url), "utf8"),
+    readFile(new URL("../home-rhythm-view.js", import.meta.url), "utf8"),
     readFile(new URL("../style.css", import.meta.url), "utf8")
   ]);
-  assert.match(app, /Scroll through actual purchase dates\. Upload day does not change receipt chronology/);
+  assert.match(homeView, /Today and upcoming days show the household rhythm without changing receipt chronology/);
   assert.match(app, /Purchase-dated receipts and linked payments/);
   assert.match(app, /Uploaded \$\{fmt\(uploaded\)\}/);
   assert.doesNotMatch(app, /function renderOpenReceipts/);
   assert.match(app, /const needsAttention = renderNeedsAttention\(balance, archived\)/);
   assert.match(style, /\.purchase-date-strip/);
+  assert.match(style, /\.purchase-date-strip\.is-sparse \.week-day \{ flex:1 1 180px/);
+  assert.match(style, /\.purchase-date-strip\.is-compact \.week-day \{ flex:1 1 150px/);
   assert.match(style, /\.rhythm-record-grid\.has-attention/);
 });
 
 test("balance action is a compact single-purpose payment control", async () => {
-  const [app, style] = await Promise.all([
+  const [app, homeView, style] = await Promise.all([
     readFile(new URL("../app.js", import.meta.url), "utf8"),
+    readFile(new URL("../home-rhythm-view.js", import.meta.url), "utf8"),
     readFile(new URL("../style.css", import.meta.url), "utf8")
   ]);
-  assert.match(app, />Record payment<\/button>/);
-  assert.match(app, /<b>Next action<\/b>/);
+  assert.match(homeView, />Record payment<\/button>/);
+  assert.match(homeView, /<b>Next action<\/b>/);
   assert.match(style, /\.balance-next button \{[^}]*white-space:nowrap/);
   assert.match(style, /\.balance-card \{ display:grid;/);
+  assert.match(style, /\.balance-card \{ display:grid; grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(style, /\.rhythm-money \{ grid-template-areas:"balance" "actions"/);
+  assert.match(style, /\.command-actions \{ grid-area:actions; display:grid; grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\) auto/);
+  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.command-actions \{ grid-template-columns:1fr;/);
+});
+
+test("mobile masthead stacks the readable household title above compact members", async () => {
+  const style = await readFile(new URL("../style.css", import.meta.url), "utf8");
+  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.household-masthead \{ flex-direction:column; align-items:stretch; gap:8px; \}/);
+  assert.match(style, /\.household-title h1 \{ min-width:0; overflow-wrap:normal; word-break:normal; \}/);
+  assert.match(style, /\.member-blocks \{ width:100%; justify-content:flex-start;/);
 });

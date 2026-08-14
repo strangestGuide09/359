@@ -102,17 +102,17 @@ test("clean bootstrap enforces the approved two-person lifecycle", async () => {
 });
 
 test("local PDF privacy and duplicate safeguards remain present", async () => {
-  const [app, feedback, duplicate, restock, sql, duplicateSql] = await Promise.all([read("docs/app.js"), read("docs/import-feedback.js"), read("docs/invoice-duplicate.js"), read("docs/restock.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql"), read("supabase/migrations/20260809020000_invoice_import_purchase_link.sql")]);
+  const [app, itemState, purchaseStore, feedback, duplicate, restock, sql, duplicateSql] = await Promise.all([read("docs/app.js"), read("docs/reviewed-item-state.js"), read("docs/reviewed-purchase-store.js"), read("docs/import-feedback.js"), read("docs/invoice-duplicate.js"), read("docs/restock.js"), read("supabase/migrations/20260715000000_clean_bootstrap.sql"), read("supabase/migrations/20260809020000_invoice_import_purchase_link.sql")]);
   assert.match(app, /Reading this PDF locally\. It will not be uploaded or stored/);
   assert.match(app, /exactHash/);
   assert.match(app, /contentHash/);
-  assert.match(app, /import_reviewed_purchase/);
+  assert.match(purchaseStore, /import_reviewed_purchase/);
   assert.match(app, /p_items: items/);
-  assert.match(app, /purchase_items\(\*\)/);
+  assert.match(purchaseStore, /purchase_items\(\*\)/);
   assert.match(restock, /for \(const item of purchase\.purchase_items \|\| \[\]\)/);
-  assert.match(app, /is_personal: !!item\.is_personal/);
-  assert.match(app, /display_order/);
-  assert.match(app, /Reviewed item totals must match the receipt total/);
+  assert.match(itemState, /is_personal: !!item\.is_personal/);
+  assert.match(itemState, /display_order/);
+  assert.match(app, /Products and explicitly included fees must exactly match the receipt total/);
   assert.match(app, /parserWarning/);
   assert.match(app, /parserNotice/);
   assert.match(app, /const lookupContentHash = fingerprint\.contentHashReliable === false \? fingerprint\.exactHash : fingerprint\.contentHash/);
@@ -167,21 +167,21 @@ test("mixed reviewed receipts use shared item totals for balances and restock", 
 });
 
 test("itemized review is editable and retains failed drafts", async () => {
-  const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
+  const [page, app, state, view, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/reviewed-item-state.js"), read("docs/reviewed-item-view.js"), read("docs/style.css")]);
   assert.match(page, /id="item-rows"/);
   assert.match(page, /id="add-item"/);
   assert.match(page, /Only these reviewed fields will sync/);
-  assert.match(app, /class="plain remove-item"/);
-  assert.match(app, /class="item-checklist-row"/);
+  assert.match(view, /class="plain remove-item"/);
+  assert.match(view, /class="item-checklist-row"/);
   assert.match(page, /id="confirm-receipt-review" type="checkbox"/);
   assert.doesNotMatch(app, /data-reviewed type="checkbox"/);
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{/);
   assert.match(app, /Your draft is still here; check your connection and retry/);
-  assert.match(app, /is_tracked_for_restock: fee \|\| personal \|\| !merchandise \? false : values\.is_tracked_for_restock \?\? true/);
+  assert.match(state, /is_tracked_for_restock: fee \|\| personal \|\| !merchandise \? false : values\.is_tracked_for_restock \?\? true/);
   assert.match(app, /if \(field === "is_personal"\) reviewedItems\[index\]\.is_tracked_for_restock = !input\.checked && isRestockMerchandise/);
-  assert.match(app, /is_tracked_for_restock: item\.item_kind !== "fee" && !item\.is_personal && isRestockMerchandise\(item\.name\)/);
-  assert.match(app, /class="secondary edit-item" aria-expanded=/);
+  assert.match(state, /is_tracked_for_restock: item\.item_kind !== "fee" && !item\.is_personal && isRestockMerchandise\(item\.name\)/);
+  assert.match(view, /class="secondary edit-item" aria-expanded=/);
   assert.match(style, /\.item-primary \{ display:grid;/);
   assert.match(style, /\.item-secondary-fields \{ display:grid;/);
   assert.match(style, /\.item-review-summary \{ position:sticky;/);
@@ -190,7 +190,7 @@ test("itemized review is editable and retains failed drafts", async () => {
 });
 
 test("authenticated workspace has four accessible areas and one main landmark", async () => {
-  const [page, app, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/style.css")]);
+  const [page, app, homeView, style] = await Promise.all([read("docs/index.html"), read("docs/app.js"), read("docs/home-rhythm-view.js"), read("docs/style.css")]);
   assert.equal((page.match(/<main(?:\s[^>]*)?>/g) || []).length, 1);
   assert.equal((app.match(/function renderDashboard\(\)/g) || []).length, 1);
   assert.equal((app.match(/bindDashboard\(balance\);/g) || []).length, 1);
@@ -208,17 +208,17 @@ test("authenticated workspace has four accessible areas and one main landmark", 
   assert.match(app, /function mountDashboardNavigation/);
   assert.match(app, /tools\.insertAdjacentElement\("beforebegin", navigation\)/);
   assert.match(app, /document\.querySelector\("header \.app-navigation"\)\?\.remove\(\)/);
-  assert.match(app, /Household rhythm/);
-  assert.match(app, /purchaseDateTimeline\(ledger\.purchases, rhythmSelectedDate\)/);
+  assert.match(homeView, /Household rhythm/);
+  assert.match(app, /householdRhythmTimeline\(ledger\.purchases, today\(\), rhythmSelectedDate\)/);
   assert.match(app, /Household record/);
   assert.doesNotMatch(app, /<h2>Open receipts<\/h2>/);
   assert.match(app, /function renderNeedsAttention/);
-  assert.ok(app.indexOf("rhythm-week") < app.indexOf("rhythm-focus-grid"));
+  assert.match(app, /\$\{renderWeekStrip\(\)\}<section class="rhythm-focus-grid">/);
   assert.ok(app.indexOf("rhythm-focus-grid") < app.indexOf("rhythm-record-grid"));
   assert.doesNotMatch(app, /<main class=/);
-  assert.match(app, /class="command-actions primary-actions"/);
-  assert.match(app, /id="open-settings" class="settings-action" aria-controls="view-household">Household settings/);
-  assert.match(style, /\.command-actions \.settings-action \{ grid-column:1\/-1; width:auto; min-height:43px; justify-self:center;/);
+  assert.match(homeView, /class="command-actions primary-actions"/);
+  assert.match(homeView, /id="open-settings" class="settings-action" aria-controls="view-household">Household settings/);
+  assert.match(style, /\.command-actions \.settings-action \{ grid-column:auto; width:auto; min-height:43px; justify-self:end;/);
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.match(app, /id="household-settings" class="panel settings"/);

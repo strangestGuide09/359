@@ -16,7 +16,10 @@ test("a classification-only value becomes empty and cannot masquerade as a produ
 });
 
 test("reviewed import persistence cleans names and retains empty-name validation", async () => {
-  const app = await readFile(new URL("../app.js", import.meta.url), "utf8");
-  assert.match(app, /name: cleanImportedItemName\(item\.name\)/);
+  const [app, state] = await Promise.all([
+    readFile(new URL("../app.js", import.meta.url), "utf8"),
+    readFile(new URL("../reviewed-item-state.js", import.meta.url), "utf8")
+  ]);
+  assert.match(state, /name: cleanImportedItemName\(item\.name\)/);
   assert.match(app, /if \(!items\.length \|\| items\.some\(item => !item\.name\)\)/);
 });

@@ -21,18 +21,22 @@ import { AI_EXPECTED_TIME_COPY, AI_MAX_RETRY_AFTER_SECONDS, AI_POLL_ATTEMPTS, ai
 import { createFlattenedVisualDerivative, hasRememberedVisualLayout, planVisualDerivative, rememberVisualLayout, revokeVisualDerivativePreview } from "./ai-visual-derivative.js";
 import { hasUnidentifiedAiItems, reconcileAiItemNames } from "./ai-item-names.js";
 import { resolveAiReceiptTotal } from "./ai-receipt-total.js";
-import { cleanImportedItemName } from "./imported-item-name.js";
 import { withItemSumReviewAmount } from "./receipt-review-total.js";
 import { chronologicalBalance } from "./balance.js";
 import { receiptSettlementAllocations } from "./settlement-allocations.js";
-import { purchaseDateTimeline } from "./purchase-timeline.js";
+import { householdRhythmTimeline } from "./purchase-timeline.js";
+import { renderBalanceSummary, renderCommandActions, renderHouseholdRhythm } from "./home-rhythm-view.js";
+import { normalizeReviewedItem, reviewedItemsForSave as itemsForSave, savedPurchaseItemsForReview } from "./reviewed-item-state.js";
+import { renderReviewedItemRows } from "./reviewed-item-view.js";
+import { importReviewedPurchase, loadReviewedPurchases, updateReviewedPurchase } from "./reviewed-purchase-store.js";
+import { duplicateRestoreAction } from "./duplicate-restore-action.js";
 
 const authStorage = createResilientAuthStorage(window.localStorage);
 const AI_IDLE_MESSAGE = "AI processing is ready to begin.";
 document.querySelector("footer").textContent = "Original PDFs stay local · only an explicitly reviewed private derivative may be sent for Private AI processing · no payment method, address, card, or UPI details persist";
 document.querySelector("#pdf-items > .dialog-help").textContent = "Edit or remove anything the selected processing method got wrong. Only these reviewed fields will sync.";
 document.querySelector("#visual-ai-preview .dialog-help").textContent = "Only the original item-table pixels shown below will be sent. Everything outside approved item cells was masked locally; the original receipt remains on this device.";
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+const supabase = globalThis.__GROCERY_LEDGER_TEST_CLIENT__ || createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: authStorage }
 });
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.mjs";
@@ -135,8 +139,8 @@ function showDuplicateImport(result, fingerprint) {
   lastPdfFeedback = { exactHash: fingerprint?.exactHash, contentHash: fingerprint?.contentHash, contentHashReliable: fingerprint?.contentHashReliable, message, result };
   const restoreId = isExactDuplicate(result) ? restorableDuplicatePurchaseId(result) : null;
   const orphaned = duplicateState(result) === "legacy_unlinked";
-  const action = restoreId ? { label: "Restore removed receipt", ariaLabel: `Restore ${existing?.label || "removed receipt"} to the ledger`, onClick: async event => { event.currentTarget.disabled = true; if (!await restoreRemovedReceipt(restoreId, "duplicate")) event.currentTarget.disabled = false; } }
-    : orphaned ? { label: "Check and reimport", ariaLabel: "Ask the ledger to verify and release this orphaned import reservation", onClick: async event => {
+  const action = duplicateRestoreAction({ restoreId, existingLabel: existing?.label, restore: id => restoreRemovedReceipt(id, "duplicate") })
+    || (orphaned ? { label: "Check and reimport", ariaLabel: "Ask the ledger to verify and release this orphaned import reservation", onClick: async event => {
       event.currentTarget.disabled = true;
       const release = await releaseOrphanedImport(fingerprint);
       if (release.error || !release.released) { showImportFeedback(`This reservation could not be released safely. ${release.error?.message || "The database did not approve it."}`, "error", { durationMs: 0 }); return; }
@@ -144,7 +148,7 @@ function showDuplicateImport(result, fingerprint) {
       clearImportFeedback(document);
       openImportChoice(fingerprint);
       note("The orphaned reservation was released. Choose how to process this invoice; nothing has been saved yet.");
-    } } : undefined;
+    } } : undefined);
   return showImportFeedback(message, "duplicate", action ? { durationMs: 0, action } : undefined);
 }
 function inviteCodeFromUrl() {
@@ -485,10 +489,9 @@ function renderPreview(rows, { id, limit, noun, empty }) {
 function renderBalance(balance, archived) {
   const otherName = displayedMemberName(partner());
   const currentName = displayedMemberName(members.find(member => member.user_id === session.user.id));
-  const balanceText = Math.abs(balance) < .005 ? `You and ${esc(otherName)} are settled` : balance > 0 ? `${esc(otherName)} owes you ${money(balance)}` : `You owe ${esc(otherName)} ${money(-balance)}`;
+  const balanceText = Math.abs(balance) < .005 ? `You and ${otherName} are settled` : balance > 0 ? `${otherName} owes you ${money(balance)}` : `You owe ${otherName} ${money(-balance)}`;
   const settlement = settlementState(balance, currentName, otherName);
-  const guidance = settlement.kind === "settled" ? "" : `<div class="balance-next"><span><b>Next action</b>${esc(settlement.guidance)}</span>${settlement.actionLabel ? `<button id="settle" aria-label="${esc(settlement.actionLabel)} ${money(settlement.amount)}">Record payment</button>` : ""}</div>`;
-  return `<section class="balance-card" aria-labelledby="balance-title"><div class="balance-summary"><small id="balance-title">Current balance</small><strong>${balanceText}</strong><span>Shared items split equally</span></div>${archived ? "" : guidance}</section>`;
+  return renderBalanceSummary({ balanceText, guidance: settlement.kind === "settled" ? "" : settlement.guidance, actionLabel: settlement.actionLabel, actionAmount: money(settlement.amount), archived });
 }
 function renderSettings(balance, archived, recoveryOpen, expanded = false) {
   const ownerControls = isOwner() ? archived ? `<div class="danger-zone">${recoveryOpen ? `<button id="restore-household" class="secondary">Restore household</button><small>Recovery is available until ${fmt(current.purge_after)}.</small>` : `<button id="delete-household" class="danger">Permanently delete</button><small>The 30-day recovery period has ended.</small>`}</div>` : `<div class="danger-zone"><b>Close household</b><small>${Math.abs(balance) >= .005 ? "Settle the balance before closing." : "Starts a 30-day recovery period."}</small><button id="archive-household" class="danger"${Math.abs(balance) >= .005 ? " disabled" : ""}>Close household</button></div>` : "";
@@ -519,15 +522,9 @@ function mountDashboardNavigation() {
   if (navigation && tools) tools.insertAdjacentElement("beforebegin", navigation);
 }
 function renderWeekStrip() {
-  const timeline = purchaseDateTimeline(ledger.purchases, rhythmSelectedDate);
+  const timeline = householdRhythmTimeline(ledger.purchases, today(), rhythmSelectedDate);
   rhythmSelectedDate = timeline.selectedDate;
-  if (!timeline.dates.length) return `<section class="rhythm-week" aria-labelledby="rhythm-title"><div class="section-heading"><div><p>PURCHASE DATES</p><h2 id="rhythm-title">Household rhythm</h2></div></div><p class="rhythm-explainer">Saved receipts appear here by purchase date, not upload date.</p><p class="empty-state">Import or add a receipt to start the timeline.</p></section>`;
-  const range = `${fmt(timeline.dates[0].date)} – ${fmt(timeline.latestDate)}`;
-  return `<section class="rhythm-week" aria-labelledby="rhythm-title"><div class="section-heading rhythm-heading"><div><p>PURCHASE DATES</p><h2 id="rhythm-title">Household rhythm</h2></div><span>${timeline.dates.length} receipt date${timeline.dates.length === 1 ? "" : "s"} · ${range}</span></div><div class="rhythm-navigation" aria-label="Navigate receipt purchase dates"><button type="button" class="secondary" data-rhythm-jump="${timeline.previousDate || ""}"${timeline.previousDate ? "" : " disabled"}>Previous date</button><span>Selected: <b>${fmt(timeline.selectedDate)}</b></span><button type="button" class="secondary" data-rhythm-jump="${timeline.nextDate || ""}"${timeline.nextDate ? "" : " disabled"}>Next date</button><button type="button" class="plain" data-rhythm-jump="${timeline.latestDate}"${timeline.selectedDate === timeline.latestDate ? " disabled" : ""}>Latest receipt</button></div><p class="rhythm-explainer">Scroll through actual purchase dates. Upload day does not change receipt chronology.</p><ol class="week-strip purchase-date-strip">${timeline.dates.map(entry => {
-    const date = new Date(`${entry.date}T12:00:00`);
-    const gap = entry.gapDays > 1 ? `<small class="date-gap">${entry.gapDays} days after previous receipt</small>` : "";
-    return `<li class="week-day${entry.selected ? " is-selected" : ""}"${entry.selected ? ' aria-current="date"' : ""}>${gap}<button type="button" data-rhythm-date="${entry.date}" aria-label="Show ${entry.receiptCount} receipt${entry.receiptCount === 1 ? "" : "s"} purchased on ${fmt(entry.date)}"><time datetime="${entry.date}"><span>${new Intl.DateTimeFormat("en-IN", { weekday: "short", month: "short" }).format(date)}</span><b>${date.getDate()}</b></time><small>${entry.receiptCount} receipt${entry.receiptCount === 1 ? "" : "s"}</small></button></li>`;
-  }).join("")}</ol></section>`;
+  return renderHouseholdRhythm(timeline, fmt);
 }
 function uploadDateNote(item) {
   const uploaded = String(item.created_at || "").slice(0, 10);
@@ -563,7 +560,7 @@ function renderDashboard() {
   const restock = suggestionCards();
   const restockPanel = renderPreview(restock.cards, { id: "restock-preview", limit: 4, noun: "suggestions", empty: restock.empty });
   const settlementPanel = renderPreview(settlementRows, { id: "settlement-preview", limit: 3, noun: "settlements", empty: '<p class="empty-state">No settlements recorded.</p>' });
-  const actions = archived ? "" : `<nav class="command-actions primary-actions" aria-label="Ledger actions"><button id="import-pdf">Import receipt</button><button id="add" class="secondary">Add expense</button><button id="open-settings" class="settings-action" aria-controls="view-household">Household settings</button></nav>`;
+  const actions = renderCommandActions(archived);
   const archiveBanner = archived ? `<p class="archive-banner">This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}</p>` : "";
   const homeSuggestions = restock.cards.slice(0, 3).join("") || restock.empty;
   const receiptActions = archived ? "" : `<div class="view-actions"><button type="button" data-import-pdf>Import receipt</button><button type="button" class="secondary" data-add-expense>Add expense</button></div>`;
@@ -655,10 +652,10 @@ async function loadLedger() {
   renderLoading("Syncing reviewed expenses and items…");
   const [memberResult, purchaseResult, settlementResult, allocationResult, archivedPurchaseResult, archivedSettlementResult] = await Promise.all([
     supabase.from("household_members").select("user_id,role,display_name").eq("household_id", current.id),
-    supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).is("archived_at", null),
+    loadReviewedPurchases(supabase, current.id),
     supabase.from("receipt_backed_settlement_history").select("*").eq("household_id", current.id),
     supabase.from("settlement_allocations").select("settlement_id,purchase_id,purchase_item_id,amount"),
-    supabase.from("purchases").select("*,purchase_items(*)").eq("household_id", current.id).not("archived_at", "is", null),
+    loadReviewedPurchases(supabase, current.id, true),
     supabase.from("settlements").select("*").eq("household_id", current.id).not("archived_at", "is", null)
   ]);
   const error = memberResult.error || purchaseResult.error || settlementResult.error || allocationResult.error || archivedPurchaseResult.error || archivedSettlementResult.error;
@@ -679,27 +676,13 @@ async function loadLedger() {
 }
 
 function emptyReviewedItem(values = {}) {
-  const personal = !!values.is_personal;
-  const merchandise = isRestockMerchandise(values.name);
-  const fee = values.item_kind === "fee";
-  return { id: values.id || null, name: values.name || "", quantity: values.quantity ?? 1, unit: values.unit || "", unit_price: values.unit_price ?? null, line_total: values.line_total ?? null, is_personal: personal, is_tracked_for_restock: fee || personal || !merchandise ? false : values.is_tracked_for_restock ?? true, estimated_use_by: values.estimated_use_by || "", item_kind: fee ? "fee" : "product", include_in_total: fee ? values.include_in_total === true : true };
-}
-function reviewedItemPayload(item, display_order, includeId = false) {
-  const payload = { name: cleanImportedItemName(item.name), quantity: item.quantity === "" ? null : Number(item.quantity), unit: item.unit.trim() || null, unit_price: item.unit_price === "" || item.unit_price == null ? null : Number(item.unit_price), line_total: item.line_total === "" || item.line_total == null ? null : Number(item.line_total), is_personal: !!item.is_personal, is_tracked_for_restock: item.item_kind !== "fee" && !item.is_personal && isRestockMerchandise(item.name) && !!item.is_tracked_for_restock, estimated_use_by: item.estimated_use_by || null, display_order };
-  if (includeId && item.id) payload.id = item.id;
-  return payload;
+  return normalizeReviewedItem(values);
 }
 function reviewedItemsForSave(includeIds = false) {
-  return reviewedItems.filter(item => item.item_kind !== "fee" || item.include_in_total).map((item, index) => reviewedItemPayload(item, index, includeIds));
+  return itemsForSave(reviewedItems, includeIds);
 }
 function renderItemRows() {
-  $("item-rows").innerHTML = reviewedItems.map((item, index) => {
-    const restockAllowed = !item.is_personal && isRestockMerchandise(item.name);
-    const expanded = expandedItemIndex === index;
-    const allocation = item.item_kind === "fee" ? `Fee · ${item.include_in_total ? "included" : "not included"} · Restock off` : item.is_personal ? "Personal · Restock off" : `Shared · Restock ${item.is_tracked_for_restock && restockAllowed ? "on" : "off"}`;
-    const feeDecision = item.item_kind === "fee" ? `<label class="check fee-decision"><input data-field="include_in_total" type="checkbox"${item.include_in_total ? " checked" : ""}> Include this fee in the ledger total</label>` : "";
-    return `<article class="item-row${item.item_kind === "fee" ? " fee-row" : ""}" data-item="${index}" aria-labelledby="item-name-${index}"><div class="item-checklist-row"><span class="item-number" aria-hidden="true">${index + 1}</span><div class="item-compact-name"><b id="item-name-${index}">${esc(item.name) || "Unnamed item"}</b><small>${esc(allocation)}</small></div><span class="item-compact-value"><small>Qty</small><b>${esc(item.quantity ?? "—")}</b></span><span class="item-compact-value item-compact-total"><small>Total</small><b>${item.line_total == null || item.line_total === "" ? "—" : money(item.line_total)}</b></span><button type="button" class="secondary edit-item" aria-expanded="${expanded}" aria-controls="item-editor-${index}">${expanded ? "Close" : "Edit"}</button></div><div id="item-editor-${index}" class="item-editor"${expanded ? "" : " hidden"}>${feeDecision}<div class="item-primary"><label class="item-name">Item name<input data-field="name" maxlength="160" value="${esc(item.name)}" required></label><label>Qty<input data-field="quantity" inputmode="decimal" value="${item.quantity ?? ""}" placeholder="1"></label><label>Line total (₹)<input data-field="line_total" inputmode="decimal" value="${item.line_total ?? ""}" placeholder="0.00"></label></div><div class="item-flags"><label class="check"><input data-field="is_personal" type="checkbox"${item.is_personal ? " checked" : ""}${item.item_kind === "fee" ? " disabled" : ""}> Personal</label><label class="check"><input data-field="is_tracked_for_restock" type="checkbox"${item.is_tracked_for_restock && restockAllowed ? " checked" : ""}${restockAllowed ? "" : " disabled"}> Track for restock</label></div><div class="item-secondary-fields"><label>Unit<input data-field="unit" maxlength="30" value="${esc(item.unit)}" placeholder="e.g. kg"></label><label>Unit price (₹)<input data-field="unit_price" inputmode="decimal" value="${item.unit_price ?? ""}" placeholder="0.00"></label><label>Use-by (optional)<input data-field="estimated_use_by" type="date" value="${item.estimated_use_by}"></label><button type="button" class="plain remove-item"${reviewedItems.length === 1 ? " disabled" : ""}>Remove item</button></div></div></article>`;
-  }).join("");
+  $("item-rows").innerHTML = renderReviewedItemRows(reviewedItems, money, expandedItemIndex);
   bindItemRows();
   updateItemTotal();
 }
@@ -1237,8 +1220,8 @@ $("entry-form").onsubmit = async event => {
         if (items.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0)) { errorBox.textContent = "Every item quantity must be above zero."; button.disabled = false; button.textContent = "Update receipt"; return; }
         if (items.some(item => [item.unit_price, item.line_total].some(value => value != null && (!Number.isFinite(value) || value < 0)))) { errorBox.textContent = "Item prices and line totals cannot be negative."; button.disabled = false; button.textContent = "Update receipt"; return; }
         const reviewedTotal = items.reduce((total, item) => total + (item.line_total || 0), 0);
-        if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Reviewed item totals must match the receipt total before updating."; button.disabled = false; button.textContent = "Update receipt"; return; }
-        ({ error } = await supabase.rpc("update_reviewed_purchase", { p_purchase_id: editingPurchase.id, p_label: label, p_category: $("category").value, p_purchased_on: $("date").value, p_items: items }));
+        if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Products and explicitly included fees must exactly match the receipt total. Product prices were not adjusted; correct the wrong line total or fee selection, then review again."; button.disabled = false; button.textContent = "Update receipt"; return; }
+        ({ error } = await updateReviewedPurchase(supabase, { p_purchase_id: editingPurchase.id, p_label: label, p_category: $("category").value, p_purchased_on: $("date").value, p_items: items }));
       } else {
         const changes = receiptEditChanges(editingPurchase, { label, category: $("category").value, paidBy, purchasedOn: $("date").value, amount, personal });
         let request = supabase.from("purchases").update(changes).eq("id", editingPurchase.id).eq("household_id", current.id);
@@ -1255,9 +1238,9 @@ $("entry-form").onsubmit = async event => {
       if (items.some(item => item.quantity != null && (!Number.isFinite(item.quantity) || item.quantity <= 0))) { errorBox.textContent = "Item quantities must be above zero."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => [item.unit_price, item.line_total].some(value => value != null && (!Number.isFinite(value) || value < 0)))) { errorBox.textContent = "Item prices and line totals cannot be negative."; button.disabled = false; button.textContent = "Save"; return; }
       const reviewedTotal = items.reduce((total, item) => total + (item.line_total || 0), 0);
-      if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Reviewed item totals must match the receipt total before saving."; button.disabled = false; button.textContent = "Save"; return; }
+      if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Products and explicitly included fees must exactly match the receipt total. Product prices were not adjusted; correct the wrong line total or fee selection, then review again."; button.disabled = false; button.textContent = "Save"; return; }
       const allPersonal = items.every(item => item.is_personal);
-      ({ error } = await supabase.rpc("import_reviewed_purchase", { p_household_id: current.id, p_paid_by: paidBy, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_content_hash_reliable: pendingPdfImport.contentHashReliable !== false, p_label: label, p_category: $("category").value, p_amount: amount, p_purchased_on: $("date").value, p_is_personal: allPersonal, p_items: items }));
+      ({ error } = await importReviewedPurchase(supabase, { p_household_id: current.id, p_paid_by: paidBy, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_content_hash_reliable: pendingPdfImport.contentHashReliable !== false, p_label: label, p_category: $("category").value, p_amount: amount, p_purchased_on: $("date").value, p_is_personal: allPersonal, p_items: items }));
     } else {
       ({ error } = await supabase.from("purchases").insert({ household_id: current.id, label, category: $("category").value, amount, paid_by: paidBy, purchased_on: $("date").value, is_personal: personal, is_tracked_for_restock: false, estimated_use_by: null }));
     }
@@ -1406,10 +1389,7 @@ function editReceipt(id) {
   if (!canManageReceipt(purchase, session.user.id, isOwner(), active())) return;
   editingPurchase = purchase;
   const itemized = !!purchase.purchase_items?.length;
-  const savedItems = itemized ? [...purchase.purchase_items].sort((a, b) => Number(a.display_order || 0) - Number(b.display_order || 0)).map(item => {
-    const fee = /\b(?:delivery|handling|platform|packing|service|convenience|other)\s+(?:fee|fees|charge|charges)\b/i.test(item.name);
-    return { ...item, item_kind: fee ? "fee" : "product", include_in_total: true };
-  }) : [];
+  const savedItems = itemized ? savedPurchaseItemsForReview(purchase.purchase_items) : [];
   openEntry("edit", { label: purchase.label, category: purchase.category, paid_by: purchase.paid_by, amount: purchase.amount, date: purchase.purchased_on, personal: purchase.is_personal }, itemized ? { items: savedItems, amountSource: "item-sum", savedEdit: true } : undefined);
   editingPurchase = purchase;
   $("dialog-kicker").textContent = "SAVED RECEIPT";

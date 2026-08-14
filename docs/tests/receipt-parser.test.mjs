@@ -153,7 +153,7 @@ test("semantic total chooses the plausible payable column after an isolated fee 
   assert.equal(parsed.totalConfidence, "high");
 });
 
-test("receipt-level discount is allocated across items to the final payable total", () => {
+test("receipt-level discounts never rewrite parsed product line totals", () => {
   const parsed = parseReceipt([[
     { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
     { y: 700, text: "Milk 1 NOS 0401 400.00" },
@@ -162,10 +162,34 @@ test("receipt-level discount is allocated across items to the final payable tota
     { y: 120, text: "Final Amount Payable ₹737.02 Reference 144" }
   ]], "2026-07-16");
 
-  assert.equal(parsed.defaults.amount, "737.02");
-  assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 737.02);
-  assert.match(parsed.parserNotice, /discount of ₹133\.98 was allocated/);
-  assert.equal(parsed.parserWarning, "");
+  assert.equal(parsed.defaults.amount, "");
+  assert.deepEqual(parsed.items.map(item => item.line_total), [400, 471]);
+  assert.match(parsed.parserNotice, /discount of ₹133\.98 was detected but was not applied/);
+  assert.match(parsed.parserWarning, /do not reconcile/i);
+});
+
+test("multi-invoice products retain Boondi and tea invoice values without redistribution", () => {
+  const parsed = parseReceipt([
+    [
+      { y: 800, text: "Tax Invoice Seller One" },
+      { y: 700, text: "1. Boondi, Made in 1 NOS 2106 75.00" },
+      { y: 680, text: "Other seller one groceries 1 NOS 2106 652.00" },
+      { y: 120, text: "Invoice Value 727.00" }
+    ],
+    [
+      { y: 800, text: "Tax Invoice Seller Two" },
+      { y: 700, text: "2. Calm Chamomile Tea 1 NOS 0902 69.00" },
+      { y: 680, text: "Other seller two groceries 1 NOS 0902 75.00" },
+      { y: 120, text: "Invoice Value 144.00" }
+    ]
+  ], "2026-08-13");
+  const boondi = parsed.items.find(item => /Boondi/.test(item.name));
+  const tea = parsed.items.find(item => /Chamomile Tea/.test(item.name));
+  assert.equal(boondi.line_total, 75);
+  assert.equal(tea.line_total, 69);
+  assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 871);
+  assert.equal(parsed.defaults.amount, "871.00");
+  assert.doesNotMatch(parsed.parserNotice, /allocated across item totals/i);
 });
 
 test("Instamart operational charges remain explicit untracked lines and summary rows are filtered", () => {

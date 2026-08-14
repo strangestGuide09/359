@@ -6,8 +6,9 @@ const root = new URL("../../", import.meta.url);
 const read = path => readFile(new URL(path, root), "utf8");
 
 test("receipt deletion is audited, reversible, and payer-or-owner-gated", async () => {
-  const [app, page, style, migration] = await Promise.all([
+  const [app, purchaseStore, page, style, migration] = await Promise.all([
     read("docs/app.js"),
+    read("docs/reviewed-purchase-store.js"),
     read("docs/index.html"),
     read("docs/style.css"),
     read("supabase/migrations/20260809000000_receipt_soft_delete_audit.sql")
@@ -39,7 +40,7 @@ test("receipt deletion is audited, reversible, and payer-or-owner-gated", async 
   assert.match(app, /if \(!isOwner\(\)\) request = request\.eq\("paid_by", session\.user\.id\)/);
   assert.match(app, /This receipt can only be edited by its payer or the household owner/);
   assert.match(app, /Review every saved item before updating/);
-  assert.match(app, /update_reviewed_purchase/);
+  assert.match(purchaseStore, /update_reviewed_purchase/);
   assert.match(app, /\$\("amount"\)\.readOnly = itemized/);
   assert.match(app, /Discard your unsaved receipt changes/);
   assert.doesNotMatch(app, /confirm\("Remove this receipt/);

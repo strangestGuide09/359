@@ -7,7 +7,7 @@ const read = path => readFile(new URL(path, root), "utf8");
 
 test("saved itemized receipts reopen the compact reviewed-item workflow", async () => {
   const app = await read("docs/app.js");
-  assert.match(app, /const savedItems = itemized \? \[\.\.\.purchase\.purchase_items\]\.sort/);
+  assert.match(app, /const savedItems = itemized \? savedPurchaseItemsForReview\(purchase\.purchase_items\) : \[\]/);
   assert.match(app, /openEntry\("edit",[\s\S]*itemized \? \{ items: savedItems, amountSource: "item-sum", savedEdit: true \}/);
   assert.match(app, /Review every saved item before updating/);
   assert.match(app, /Saved fee rows remain included unless you explicitly exclude them/);
@@ -18,13 +18,14 @@ test("saved itemized receipts reopen the compact reviewed-item workflow", async 
 });
 
 test("itemized edits preserve item identity and use one atomic RPC", async () => {
-  const app = await read("docs/app.js");
-  assert.match(app, /if \(includeId && item\.id\) payload\.id = item\.id/);
+  const [app, state, store] = await Promise.all([read("docs/app.js"), read("docs/reviewed-item-state.js"), read("docs/reviewed-purchase-store.js")]);
+  assert.match(state, /if \(includeId && item\.id\) payload\.id = item\.id/);
   assert.match(app, /reviewedItemsForSave\(true\)/);
-  assert.match(app, /supabase\.rpc\("update_reviewed_purchase", \{ p_purchase_id: editingPurchase\.id, p_label: label, p_category: \$\("category"\)\.value, p_purchased_on: \$\("date"\)\.value, p_items: items \}\)/);
-  assert.doesNotMatch(app, /update_reviewed_purchase"[\s\S]{0,220}p_paid_by/);
+  assert.match(app, /updateReviewedPurchase\(supabase, \{ p_purchase_id: editingPurchase\.id, p_label: label, p_category: \$\("category"\)\.value, p_purchased_on: \$\("date"\)\.value, p_items: items \}\)/);
+  assert.match(store, /client\.rpc\("update_reviewed_purchase", values\)/);
+  assert.doesNotMatch(app, /updateReviewedPurchase\([\s\S]{0,220}p_paid_by/);
   assert.doesNotMatch(app, /editingPurchase\.purchase_items[\s\S]{0,500}supabase\.from\("purchase_items"\)/);
-  assert.match(app, /Reviewed item totals must match the receipt total before updating/);
+  assert.match(app, /Products and explicitly included fees must exactly match the receipt total/);
 });
 
 test("saved item changes reset confirmation and discard safely", async () => {
