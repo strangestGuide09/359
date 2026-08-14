@@ -92,10 +92,10 @@ begin
   end if;
 
   for item in select value from jsonb_array_elements(p_items) loop
-    if jsonb_typeof(item)<>'object' or item-array[
+    if jsonb_typeof(item)<>'object' or (item - array[
       'id','name','quantity','unit','unit_price','line_total','is_personal',
       'is_tracked_for_restock','estimated_use_by','display_order'
-    ]<>'{}'::jsonb then raise exception 'Reviewed item contains unsupported fields'; end if;
+    ]::text[]) <> '{}'::jsonb then raise exception 'Reviewed item contains unsupported fields'; end if;
 
     begin
       item_id := nullif(item->>'id','')::uuid;
