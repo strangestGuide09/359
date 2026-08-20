@@ -80,7 +80,7 @@ test("multi-seller pages are checked independently before review", () => {
   assert.equal(parsed.totalConfidence, "low");
 });
 
-test("operational fees remain separate and require an explicit inclusion decision", () => {
+test("operational fees remain separate paid shared lines and never restock", () => {
   const parsed = parseReceipt([[
     { y: 800, text: "Blinkit Tax Invoice" },
     { y: 700, text: "Fresh oranges 100.00" },
@@ -90,10 +90,11 @@ test("operational fees remain separate and require an explicit inclusion decisio
 
   assert.deepEqual(parsed.items.map(item => ({ name: item.name, kind: item.item_kind, included: item.include_in_total, tracked: item.is_tracked_for_restock })), [
     { name: "Fresh oranges", kind: "product", included: true, tracked: true },
-    { name: "Handling fee", kind: "fee", included: false, tracked: false }
+    { name: "Handling fee", kind: "fee", included: true, tracked: false }
   ]);
   assert.equal(parsed.feeTotal, 10);
-  assert.match(parsed.parserNotice, /Choose whether to include each fee during review/);
+  assert.equal(parsed.defaults.amount, "110.00");
+  assert.match(parsed.parserNotice, /included as shared receipt lines/);
 });
 
 test("local parsing strips HSN labels while preserving sizes and rejects HSN-only rows", () => {
@@ -124,11 +125,32 @@ test("Instamart name cleanup removes list numbering but preserves product number
   assert.equal(cleanInstamartItemName("Fresh Milk 500 ml"), "Fresh Milk 500 ml");
   assert.equal(cleanInstamartItemName("Basmati Rice 2 kg"), "Basmati Rice 2 kg");
   assert.equal(cleanInstamartItemName("7UP 750 ml"), "7UP 750 ml");
+  assert.equal(cleanInstamartItemName("and other Desi Tomato (Pack) revised GST rates made effective by Govt."), "Desi Tomato (Pack)");
+  assert.equal(cleanInstamartItemName("and other Akshayakalpa Malai Paneer (Pack) and other"), "Akshayakalpa Malai Paneer (Pack)");
+});
+
+test("purchase date extraction is label-aware and never falls back to upload day", () => {
+  assert.equal(receiptDate("Date of Invoice: 03-07-2026 Category B2C", "2026-08-20"), "2026-07-03");
+  assert.equal(receiptDate("Invoice Date: 1 Jul 2026", "2026-08-20"), "2026-07-01");
+  assert.equal(receiptDate("Purchase Date: July 5, 2026", "2026-08-20"), "2026-07-05");
+  assert.equal(receiptDate("revised GST rates effective 22 Sep 2025", "2026-08-20"), "");
+});
+
+test("fee row cannot absorb a footer year as quantity", () => {
+  const parsed = parseReceipt([[
+    { page:1,x:10,y:800,width:20,text:"Sr No" }, { page:1,x:80,y:800,width:100,text:"Description of Goods" }, { page:1,x:300,y:800,width:30,text:"Qty" }, { page:1,x:480,y:800,width:50,text:"Total" },
+    { page:1,x:10,y:750,width:10,text:"1" }, { page:1,x:80,y:750,width:80,text:"Handling fee" }, { page:1,x:300,y:750,width:30,text:"2025" }, { page:1,x:480,y:750,width:40,text:"11.99" },
+    { page:1,x:10,y:100,width:80,text:"Invoice Date:" }, { page:1,x:100,y:100,width:80,text:"06-07-2026" }
+  ]]);
+  assert.equal(parsed.items[0].name, "Handling fee");
+  assert.equal(parsed.items[0].quantity, 1);
+  assert.equal(parsed.items[0].is_tracked_for_restock, false);
 });
 
 test("payable total uses the amount beside its semantic label, not a later number", () => {
   const parsed = parseReceipt([[
     { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 780, text: "Invoice Date: 16-07-2026" },
     { y: 700, text: "Milk 1 NOS 0401 144.00" },
     { y: 680, text: "Rice 1 NOS 1006 593.02" },
     { y: 120, text: "Invoice Value ₹737.02 HSN Summary 144" }
@@ -151,6 +173,7 @@ test("semantic total chooses the plausible payable column after an isolated fee 
   assert.equal(parsed.defaults.amount, "228.99");
   assert.equal(parsed.items.reduce((sum, item) => sum + item.line_total, 0), 228.99);
   assert.equal(parsed.totalConfidence, "high");
+  assert.match(parsed.parserWarning, /purchase date/);
 });
 
 test("receipt-level discounts never rewrite parsed product line totals", () => {
@@ -162,10 +185,31 @@ test("receipt-level discounts never rewrite parsed product line totals", () => {
     { y: 120, text: "Final Amount Payable ₹737.02 Reference 144" }
   ]], "2026-07-16");
 
-  assert.equal(parsed.defaults.amount, "");
-  assert.deepEqual(parsed.items.map(item => item.line_total), [400, 471]);
-  assert.match(parsed.parserNotice, /discount of ₹133\.98 was detected but was not applied/);
-  assert.match(parsed.parserWarning, /do not reconcile/i);
+  assert.equal(parsed.defaults.amount, "737.02");
+  assert.deepEqual(parsed.items.filter(item => item.item_kind === "product").map(item => item.line_total), [400, 471]);
+  assert.deepEqual(parsed.items.find(item => item.item_kind === "discount"), {
+    name: "Order discount", quantity: 1, unit: "", unit_price: null,
+    line_total: -133.98, shared_line_total: -133.98, is_personal: false, is_tracked_for_restock: false,
+    estimated_use_by: "", item_kind: "discount", include_in_total: true
+  });
+  assert.match(parsed.parserNotice, /separate signed reviewed line; product prices were not changed/);
+  assert.match(parsed.parserWarning, /purchase date/);
+});
+
+test("separately additive tax and rounding are explicit signed components only when they exactly reconcile", () => {
+  const tax = parseReceipt([["Corner shop", "Rice 100.00", "GST 18.00", "Amount payable 118.00"]], "");
+  assert.equal(tax.items.find(item => item.item_kind === "product").line_total, 100);
+  assert.deepEqual(tax.items.find(item => item.item_kind === "tax"), {
+    name: "Separately additive tax", quantity: 1, unit: "", unit_price: 18,
+    line_total: 18, shared_line_total: 18, is_personal: false, is_tracked_for_restock: false,
+    estimated_use_by: "", item_kind: "tax", include_in_total: true
+  });
+  assert.equal(tax.components.tax, 18);
+  assert.equal(tax.components.final, 118);
+
+  const unexplained = parseReceipt([["Corner shop", "Rice 100.00", "Amount payable 118.00"]], "");
+  assert.equal(unexplained.items.some(item => ["discount", "credit", "rounding", "tax"].includes(item.item_kind)), false);
+  assert.match(unexplained.parserWarning, /do not reconcile/i);
 });
 
 test("multi-invoice products retain Boondi and tea invoice values without redistribution", () => {
@@ -195,6 +239,7 @@ test("multi-invoice products retain Boondi and tea invoice values without redist
 test("Instamart operational charges remain explicit untracked lines and summary rows are filtered", () => {
   const parsed = parseReceipt([[
     { y: 800, text: "Ekta Dhan Greenmania Modern Retails Pvt Ltd -" },
+    { y: 780, text: "Invoice Date: 16-07-2026" },
     { y: 720, text: "Fresh Milk 500 ml" },
     { y: 700, text: "1 NOS 0401 100.00" },
     { y: 660, text: "Basmati Rice 2 kg" },
@@ -333,7 +378,7 @@ test("positioned invoice columns retain multiline descriptions and calculate a c
 
   assert.equal(parsed.defaults.amount, "2360.04");
   assert.equal(parsed.totalConfidence, "calculated");
-  assert.match(parsed.parserNotice, /calculated from the labelled Total column/i);
+  assert.match(parsed.parserNotice, /calculated from complete product and fee rows using the labelled Total column/i);
   assert.equal(parsed.items.length, 23);
   assert.deepEqual(parsed.items.filter(item => item.name.startsWith("Akshayakalpa")).map(item => [item.name, item.line_total]), [
     ["Akshayakalpa Organic Artisanal Organic Set Cup Curd (Cup)", 80],
@@ -370,6 +415,6 @@ test("an incomplete positioned serial sequence cannot synthesize a receipt total
   assert.match(parsed.parserWarning, /enter it from the receipt/i);
 });
 
-test("receipt dates use an explicit fallback when absent", () => {
-  assert.equal(receiptDate("no date", "2026-07-16"), "2026-07-16");
+test("receipt dates remain unresolved when absent", () => {
+  assert.equal(receiptDate("no date", "2026-07-16"), "");
 });

@@ -35,7 +35,9 @@ export function householdRhythmTimeline(purchases, todayDate, requestedDate, fut
     dates.add(date.toISOString().slice(0, 10));
   }
   const ordered = [...dates].sort();
-  const selectedDate = ordered.includes(requestedDate) ? requestedDate : todayKey;
+  // On first render, anchor the household record to real activity. Today is
+  // retained only when the user explicitly chose it (or no receipts exist).
+  const selectedDate = ordered.includes(requestedDate) ? requestedDate : receiptTimeline.latestDate || todayKey;
   const selectedIndex = ordered.indexOf(selectedDate);
   const receiptCounts = new Map(receiptTimeline.dates.map(item => [item.date, item.receiptCount]));
   return {

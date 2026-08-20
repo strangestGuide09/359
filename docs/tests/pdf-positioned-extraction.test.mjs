@@ -77,7 +77,7 @@ test("visual derivatives mask the page and copy only approved original-pixel cel
 
 test("an unknown receipt total is not rendered as zero or a negative difference", async () => {
   const app = await read("docs/app.js");
-  assert.match(app, /Receipt total: needs confirmation · Difference unavailable/);
+  assert.match(app, /Final total: needs confirmation · Difference unavailable/);
   assert.match(app, /if \(!rawReceiptTotal\)/);
   assert.doesNotMatch(app, /const receiptTotal = Number\(\$\("amount"\)\.value\) \|\| 0/);
 });

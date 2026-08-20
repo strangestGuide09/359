@@ -47,21 +47,23 @@ test("compact checklist has dense desktop geometry and explicit mobile reflow", 
   assert.match(style, /\.item-checklist-row \.edit-item \{ grid-column:1\/-1; width:100%; \}/);
 });
 
-test("parsed fees require an explicit inclusion decision and never become restock items", async () => {
+test("parsed paid fees stay explicit, shared by default, and never become restock items", async () => {
   const [app, state, view, style] = await Promise.all([read("app.js"), read("reviewed-item-state.js"), read("reviewed-item-view.js"), read("style.css")]);
-  assert.match(state, /item_kind: fee \? "fee" : "product"/);
-  assert.match(view, /Include this fee in the ledger total/);
-  assert.match(app, /item\.item_kind === "fee" && item\.include_in_total/);
-  assert.match(app, /filter\(item => item\.item_kind !== "fee" \|\| item\.include_in_total\)\.map/);
-  assert.match(state, /item\.item_kind !== "fee" && !item\.is_personal/);
-  assert.match(app, /Products: \$\{money\(productSum\)\} · Included fees:/);
+  assert.match(state, /const kinds = new Set\(\["product", "fee", "tax", "discount", "credit", "rounding", "informational"\]\)/);
+  assert.match(view, /const kindLabel = \(\{ fee: "Paid fee", tax: "Tax", discount: "Discount", credit: "Credit", rounding: "Rounding", informational: "Information" \}\)/);
+  assert.doesNotMatch(view, /Include this fee in the ledger total/);
+  assert.match(state, /include_in_total: normalized\.include_in_total/);
+  assert.match(state, /return items\.map/);
+  assert.match(state, /normalized\.item_kind === "product" && normalized\.include_in_total && !normalized\.is_personal/);
+  assert.match(app, /Products: \$\{money\(productSum\)\} · Fees: \$\{money\(feeSum\)\} · Tax:/);
   assert.match(style, /\.item-row\.fee-row/);
-  assert.match(style, /\.fee-decision/);
+  assert.doesNotMatch(view, /is_personal[^>]+disabled/);
 });
 
 test("mismatched review blocks save without silently changing product prices", async () => {
   const app = await readFile(new URL("../app.js", import.meta.url), "utf8");
-  assert.match(app, /Products and explicitly included fees must exactly match the receipt total/);
-  assert.match(app, /Product prices were not adjusted; correct the wrong line total or fee selection/);
+  assert.match(app, /Products, fees, taxes, discounts, and rounding must reconcile/);
+  assert.match(app, /Product prices were not adjusted; resolve the displayed difference/);
   assert.doesNotMatch(app, /line_total\s*=.*difference|difference.*line_total/);
+  assert.match(app, /Check component signs: products, fees, and additive tax are positive/);
 });

@@ -103,18 +103,27 @@ struct RemotePurchaseItem: Codable, Equatable, Sendable {
     let displayOrder: Int
     let name: String
     let quantity: Decimal?
+    let unit: String?
+    let unitPrice: Decimal?
     let lineTotal: Decimal?
     let isPersonal: Bool
     let isTrackedForRestock: Bool
     let estimatedUseBy: LedgerDate?
+    let itemKind: String?
+    let includeInTotal: Bool?
+    let sharedLineTotal: Decimal?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, quantity
+        case id, name, quantity, unit
+        case unitPrice = "unit_price"
         case displayOrder = "display_order"
         case lineTotal = "line_total"
         case isPersonal = "is_personal"
         case isTrackedForRestock = "is_tracked_for_restock"
         case estimatedUseBy = "estimated_use_by"
+        case itemKind = "item_kind"
+        case includeInTotal = "include_in_total"
+        case sharedLineTotal = "shared_line_total"
     }
 }
 
@@ -192,6 +201,7 @@ struct RemoteLedgerSnapshot: Equatable, Sendable {
     let purchases: [RemotePurchase]
     let settlements: [RemoteSettlement]
     let settlementAllocations: [RemoteSettlementAllocation]
+    let supportsReviewedComponentContract: Bool
 }
 
 enum NativeSyncStatus: Equatable, Sendable {
@@ -304,18 +314,33 @@ struct SupabaseLedgerAPI: Sendable {
         let id = membership.householdID.uuidString
         async let householdData = get("/rest/v1/households?select=id,name,archived_at,purge_after&id=eq.\(id)", token: token)
         async let membersData = get("/rest/v1/household_members?select=household_id,user_id,display_name,role&household_id=eq.\(id)", token: token)
-        async let purchasesData = get("/rest/v1/purchases?select=id,household_id,label,category,amount,paid_by,purchased_on,created_at,purchase_items(id,display_order,name,quantity,line_total,is_personal,is_tracked_for_restock,estimated_use_by)&household_id=eq.\(id)&archived_at=is.null", token: token)
+        async let purchaseBundle = loadPurchases(householdID: id, token: token)
         async let settlementBundle = loadSettlementHistory(householdID: id, token: token)
         let households = try SupabaseJSON.decoder.decode([RemoteHousehold].self, from: await householdData)
         guard let household = households.first else { throw SupabaseClientError.noHousehold }
         let remoteSettlements = try await settlementBundle
+        let remotePurchases = try await purchaseBundle
         return try await RemoteLedgerSnapshot(
             household: household,
             memberships: SupabaseJSON.decoder.decode([RemoteMembership].self, from: membersData),
-            purchases: SupabaseJSON.decoder.decode([RemotePurchase].self, from: purchasesData),
+            purchases: SupabaseJSON.decoder.decode([RemotePurchase].self, from: remotePurchases.data),
             settlements: SupabaseJSON.decoder.decode([RemoteSettlement].self, from: remoteSettlements.history),
-            settlementAllocations: SupabaseJSON.decoder.decode([RemoteSettlementAllocation].self, from: remoteSettlements.allocations)
+            settlementAllocations: SupabaseJSON.decoder.decode([RemoteSettlementAllocation].self, from: remoteSettlements.allocations),
+            supportsReviewedComponentContract: remotePurchases.supportsContract
         )
+    }
+
+    private func loadPurchases(householdID: String, token: String) async throws -> (data: Data, supportsContract: Bool) {
+        let base = "/rest/v1/purchases?select=id,household_id,label,category,amount,paid_by,purchased_on,created_at,"
+        do {
+            let data = try await get(base + "purchase_items(id,display_order,name,quantity,unit,unit_price,line_total,is_personal,is_tracked_for_restock,estimated_use_by,item_kind,include_in_total,shared_line_total)&household_id=eq.\(householdID)&archived_at=is.null", token: token)
+            return (data, true)
+        } catch let error as SupabaseClientError {
+            guard case .server(let status, let message) = error, status == 400,
+                  message.localizedCaseInsensitiveContains("column") || message.localizedCaseInsensitiveContains("schema cache") else { throw error }
+            let data = try await get(base + "purchase_items(id,display_order,name,quantity,unit,unit_price,line_total,is_personal,is_tracked_for_restock,estimated_use_by)&household_id=eq.\(householdID)&archived_at=is.null", token: token)
+            return (data, false)
+        }
     }
 
     private func loadSettlementHistory(householdID: String, token: String) async throws -> (history: Data, allocations: Data) {
@@ -335,6 +360,11 @@ struct SupabaseLedgerAPI: Sendable {
     func importReviewed(_ payload: ReviewedImportRPCPayload, token: String) async throws {
         let body = try JSONSerialization.jsonObject(with: SupabaseJSON.encoder.encode(payload))
         _ = try await request(path: "/rest/v1/rpc/import_reviewed_purchase", method: "POST", body: body, authenticatedBy: token)
+    }
+
+    func updateReviewed(_ payload: ReviewedUpdateRPCPayload, token: String) async throws {
+        let body = try JSONSerialization.jsonObject(with: SupabaseJSON.encoder.encode(payload))
+        _ = try await request(path: "/rest/v1/rpc/update_reviewed_purchase", method: "POST", body: body, authenticatedBy: token)
     }
 
     func findInvoiceDuplicate(householdID: UUID, exactPDFHash: String, contentHash: String, token: String) async throws -> InvoiceDuplicateResult {
@@ -433,6 +463,9 @@ final class SupabaseLedgerController {
 
     func uploadReviewedPurchase(_ payload: ReviewedImportRPCPayload) async throws {
         guard let session else { throw SupabaseClientError.noSession }
+        guard snapshot?.supportsReviewedComponentContract == true else {
+            throw SharedDataMappingError.reviewedComponentMigrationRequired
+        }
         let duplicate = try await api.findInvoiceDuplicate(
             householdID: payload.householdID, exactPDFHash: payload.exactPDFHash,
             contentHash: payload.contentHash, token: session.accessToken
@@ -441,6 +474,15 @@ final class SupabaseLedgerController {
             throw SupabaseClientError.server(status: 409, message: duplicate.userMessage)
         }
         try await api.importReviewed(payload, token: session.accessToken)
+        await reload()
+    }
+
+    func uploadReviewedUpdate(_ payload: ReviewedUpdateRPCPayload) async throws {
+        guard let session else { throw SupabaseClientError.noSession }
+        guard snapshot?.supportsReviewedComponentContract == true else {
+            throw SharedDataMappingError.reviewedComponentMigrationRequired
+        }
+        try await api.updateReviewed(payload, token: session.accessToken)
         await reload()
     }
 

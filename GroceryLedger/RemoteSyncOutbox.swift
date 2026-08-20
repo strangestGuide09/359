@@ -11,11 +11,16 @@ enum RemoteSyncOutbox {
         do {
             let pendingPurchases = try context.fetch(FetchDescriptor<Purchase>(predicate: #Predicate { $0.needsRemoteSync }))
             for purchase in pendingPurchases {
-                guard let exact = purchase.exactPDFHash, let content = purchase.contentHash else { continue }
                 let bundle = try SharedDataMapper.purchase(purchase, householdID: snapshot.household.id, memberIDs: memberIDs)
-                let payload = try SharedDataMapper.reviewedImport(from: bundle, exactPDFHash: exact, contentHash: content)
-                try await sync.uploadReviewedPurchase(payload)
-                context.delete(purchase)
+                if purchase.isRemoteBacked {
+                    try await sync.uploadReviewedUpdate(SharedDataMapper.reviewedUpdate(from: bundle))
+                    purchase.needsRemoteSync = false
+                } else {
+                    guard let exact = purchase.exactPDFHash, let content = purchase.contentHash else { continue }
+                    let payload = try SharedDataMapper.reviewedImport(from: bundle, exactPDFHash: exact, contentHash: content)
+                    try await sync.uploadReviewedPurchase(payload)
+                    context.delete(purchase)
+                }
                 try context.save()
             }
 

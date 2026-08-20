@@ -110,9 +110,9 @@ test("local PDF privacy and duplicate safeguards remain present", async () => {
   assert.match(app, /p_items: items/);
   assert.match(purchaseStore, /purchase_items\(\*\)/);
   assert.match(restock, /for \(const item of purchase\.purchase_items \|\| \[\]\)/);
-  assert.match(itemState, /is_personal: !!item\.is_personal/);
+  assert.match(itemState, /is_personal: normalized\.is_personal/);
   assert.match(itemState, /display_order/);
-  assert.match(app, /Products and explicitly included fees must exactly match the receipt total/);
+  assert.match(app, /Products, fees, taxes, discounts, and rounding must reconcile/);
   assert.match(app, /parserWarning/);
   assert.match(app, /parserNotice/);
   assert.match(app, /const lookupContentHash = fingerprint\.contentHashReliable === false \? fingerprint\.exactHash : fingerprint\.contentHash/);
@@ -157,9 +157,9 @@ test("production client uses the validated hosted project public credentials", a
 test("mixed reviewed receipts use shared item totals for balances and restock", async () => {
   const [app, restock] = await Promise.all([read("docs/app.js"), read("docs/restock.js")]);
   assert.match(app, /function sharedPurchaseAmount/);
-  assert.match(app, /item\.is_personal \? 0/);
+  assert.match(app, /item\.shared_line_total \?\? \(item\.is_personal \? 0 : item\.line_total\)/);
   assert.match(restock, /if \(item\.is_personal\)/);
-  assert.match(restock, /if \(!isRestockMerchandise\(item\.name\)\)/);
+  assert.match(restock, /item\.item_kind !== "product"/);
   assert.match(app, /restockEmptyGuidance\(groups, stats\)/);
   assert.match(restock, /Possible Buys needs the same item on 2 different dates/);
   assert.match(app, /chronologicalBalance\(expenses, settlements\)/);
@@ -178,9 +178,9 @@ test("itemized review is editable and retains failed drafts", async () => {
   assert.match(app, /Your draft is still here/);
   assert.match(app, /if \(error\) \{/);
   assert.match(app, /Your draft is still here; check your connection and retry/);
-  assert.match(state, /is_tracked_for_restock: fee \|\| personal \|\| !merchandise \? false : values\.is_tracked_for_restock \?\? true/);
-  assert.match(app, /if \(field === "is_personal"\) reviewedItems\[index\]\.is_tracked_for_restock = !input\.checked && isRestockMerchandise/);
-  assert.match(state, /is_tracked_for_restock: item\.item_kind !== "fee" && !item\.is_personal && isRestockMerchandise\(item\.name\)/);
+  assert.match(state, /is_tracked_for_restock: merchandise && !personal \? values\.is_tracked_for_restock \?\? true : false/);
+  assert.match(app, /reviewedItems\[index\]\.is_tracked_for_restock = reviewedItems\[index\]\.item_kind === "product"/);
+  assert.match(state, /is_tracked_for_restock: normalized\.item_kind === "product" && normalized\.include_in_total/);
   assert.match(view, /class="secondary edit-item" aria-expanded=/);
   assert.match(style, /\.item-primary \{ display:grid;/);
   assert.match(style, /\.item-secondary-fields \{ display:grid;/);
@@ -212,13 +212,13 @@ test("authenticated workspace has four accessible areas and one main landmark", 
   assert.match(app, /householdRhythmTimeline\(ledger\.purchases, today\(\), rhythmSelectedDate\)/);
   assert.match(app, /Household record/);
   assert.doesNotMatch(app, /<h2>Open receipts<\/h2>/);
-  assert.match(app, /function renderNeedsAttention/);
+  assert.doesNotMatch(app, /function renderNeedsAttention/);
   assert.match(app, /\$\{renderWeekStrip\(\)\}<section class="rhythm-focus-grid">/);
   assert.ok(app.indexOf("rhythm-focus-grid") < app.indexOf("rhythm-record-grid"));
   assert.doesNotMatch(app, /<main class=/);
   assert.match(homeView, /class="command-actions primary-actions"/);
   assert.match(homeView, /id="open-settings" class="settings-action" aria-controls="view-household">Household settings/);
-  assert.match(style, /\.command-actions \.settings-action \{ grid-column:auto; width:auto; min-height:43px; justify-self:end;/);
+  assert.match(style, /\.command-actions \.settings-action \{ grid-column:1\/-1; width:auto; min-height:43px; justify-self:center;/);
   assert.doesNotMatch(app, /class="privacy-disclosure"/);
   assert.match(page, /<footer>Original PDFs stay local/);
   assert.match(app, /id="household-settings" class="panel settings"/);

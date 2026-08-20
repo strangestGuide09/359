@@ -4,10 +4,11 @@ const cleanDisplayName = value => cleanImportedItemName(value)
   .replace(/^\s*\d{1,2}\.\s+/, "")
   .replace(/^\d{4,8}\s+(?=[A-Za-z])/, "")
   .replace(/(?:\s+-?\d+(?:,\d{3})*(?:\.\d+)?){2,}\s*$/, "")
+  .replace(/\s+(?:and\s+other\s+(?:charges?|fees?)|revised\s+gst\s+rates?|made\s+effective\s+by|delivery\s+confirmation|wherever\s+applicable)\b[\s\S]*$/i, "")
   .replace(/\s*\(\s*pack\s*\)\s*/gi, " ")
   .replace(/\s+/g, " ").trim();
 const brandPrefix = /^(?:akshayakalpa|anveshan|amul|mother dairy|tata sampann|tata|fortune|aashirvaad|everyday)\b\s*/;
-const nonMerchandise = /\b(?:delivery|shipping|handling|platform|convenience|packing|service)\s*(?:fee|fees|charge|charges)?\b|\b(?:fee|fees|charges?|tax|gst|cgst|sgst|cess|subtotal|total|amount payable|amount paid|discount|savings?)\b/i;
+const nonMerchandise = /\b(?:delivery|shipping|handling|platform|convenience|packing|service|delivery\s+and\s+other)\s*(?:fee|fees|charge|charges)?\b|\b(?:fee|fees|charges?|tax|gst|cgst|sgst|cess|subtotal|total|amount payable|amount paid|discount|savings?|revised gst rates?|made effective by)\b/i;
 const localAlias = /\([^)]*\b(?:hasiru|menasinakaayi|nimbe|hannu|nellikaayi|dappa|soutekaayi|bendekaayi|baalehannu|hagalakaayi)\b[^)]*\)/gi;
 
 export function isRestockMerchandise(value) {
@@ -46,7 +47,7 @@ export function restockEligibility(purchases) {
     if (purchase.category && purchase.category !== "Groceries") { stats.excludedCategory += (purchase.purchase_items || []).length; continue; }
     for (const item of purchase.purchase_items || []) {
       if (item.is_personal) { stats.excludedPersonal += 1; continue; }
-      if (!isRestockMerchandise(item.name)) { stats.excludedFees += 1; continue; }
+      if ((item.item_kind && item.item_kind !== "product") || item.include_in_total === false || !isRestockMerchandise(item.name)) { stats.excludedFees += 1; continue; }
       if (!item.is_tracked_for_restock) { stats.excludedUntracked += 1; continue; }
       const key = canonicalRestockKey(item.name);
       if (!key) continue;

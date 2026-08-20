@@ -33,6 +33,12 @@ test("household rhythm connects historical purchases to today and upcoming days"
   assert.equal(timeline.dates[2].receiptCount, 0);
 });
 
+test("first render selects the latest receipt when today has no activity", () => {
+  const timeline = householdRhythmTimeline([{ purchased_on: "2026-07-03" }, { purchased_on: "2026-08-13" }], "2026-08-20");
+  assert.equal(timeline.selectedDate, "2026-08-13");
+  assert.equal(householdRhythmTimeline([{ purchased_on: "2026-08-13" }], "2026-08-20", "2026-08-20").selectedDate, "2026-08-20");
+});
+
 test("home explains purchase-date chronology and does not duplicate receipts", async () => {
   const [app, homeView, style] = await Promise.all([
     readFile(new URL("../app.js", import.meta.url), "utf8"),
@@ -40,14 +46,16 @@ test("home explains purchase-date chronology and does not duplicate receipts", a
     readFile(new URL("../style.css", import.meta.url), "utf8")
   ]);
   assert.match(homeView, /Today and upcoming days show the household rhythm without changing receipt chronology/);
-  assert.match(app, /Purchase-dated receipts and linked payments/);
+  assert.match(app, /Selected purchase date/);
   assert.match(app, /Uploaded \$\{fmt\(uploaded\)\}/);
   assert.doesNotMatch(app, /function renderOpenReceipts/);
-  assert.match(app, /const needsAttention = renderNeedsAttention\(balance, archived\)/);
+  assert.doesNotMatch(app, /renderNeedsAttention/);
+  assert.match(app, /This household has \$\{ledger\.purchases\.length\} receipt/);
+  assert.match(app, /data-show-all-history/);
   assert.match(style, /\.purchase-date-strip/);
   assert.match(style, /\.purchase-date-strip\.is-sparse \.week-day \{ flex:1 1 180px/);
   assert.match(style, /\.purchase-date-strip\.is-compact \.week-day \{ flex:1 1 150px/);
-  assert.match(style, /\.rhythm-record-grid\.has-attention/);
+  assert.match(style, /\.record-empty-context/);
 });
 
 test("balance action is a compact single-purpose payment control", async () => {
@@ -62,8 +70,9 @@ test("balance action is a compact single-purpose payment control", async () => {
   assert.match(style, /\.balance-card \{ display:grid;/);
   assert.match(style, /\.balance-card \{ display:grid; grid-template-columns:minmax\(0,1fr\)/);
   assert.match(style, /\.rhythm-money \{ grid-template-areas:"balance" "actions"/);
-  assert.match(style, /\.command-actions \{ grid-area:actions; display:grid; grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\) auto/);
-  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.command-actions \{ grid-template-columns:1fr;/);
+  assert.match(style, /\.command-actions \{ grid-area:actions; display:grid; grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/);
+  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.command-actions \{ grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);/);
+  assert.match(style, /@media \(max-width:700px\)[\s\S]*\.command-actions \.settings-action \{ grid-column:1\/-1; width:auto; justify-self:center;/);
 });
 
 test("mobile masthead stacks the readable household title above compact members", async () => {

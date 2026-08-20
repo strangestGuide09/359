@@ -38,7 +38,7 @@ enum LedgerEngine {
     }
 
     static func sharedTotal(for purchase: Purchase) -> Decimal {
-        purchase.items.filter { !$0.isPersonal }.reduce(0) { $0 + $1.amount }
+        purchase.items.filter(\.includeInTotal).reduce(0) { $0 + $1.resolvedSharedLineTotal }
     }
 
     static func summary(purchases: [Purchase], settlements: [Settlement]) -> BalanceSummary {
@@ -111,7 +111,7 @@ enum LedgerEngine {
         let trackedItems = purchases
             .filter { restockCategories.contains($0.category) }
             .flatMap(\.items)
-            .filter { !$0.isPersonal && $0.isTrackedForRestock }
+            .filter { $0.resolvedSharedLineTotal > 0 && $0.includeInTotal && $0.componentKind == ReviewedComponentKind.merchandise.rawValue && !$0.isFee && $0.isTrackedForRestock }
         let grouped = Dictionary(grouping: trackedItems) { normalizedName($0.name) }
         return grouped.compactMap { key, items in
             // One product may appear more than once on an invoice. Collapse those
@@ -162,6 +162,7 @@ enum LedgerEngine {
 
     private static func normalizedName(_ name: String) -> String {
         name.lowercased()
+            .replacingOccurrences(of: "\\s+(?:and\\s+other|other\\s+terms|terms\\s+and\\s+conditions).*$", with: "", options: .regularExpression)
             .replacingOccurrences(of: "(pack)", with: "")
             .replacingOccurrences(of: "(pouch)", with: "")
             .replacingOccurrences(of: "(box)", with: "")

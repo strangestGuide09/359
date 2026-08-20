@@ -145,6 +145,201 @@ final class GroceryLedgerCoreTests: XCTestCase {
         XCTAssertNil(invoice.items.first?.estimatedUseBy)
     }
 
+    func testParserReadsNumericAndMonthNameReceiptDatesWithoutUsingUploadDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
+        let numeric = try InvoiceParser.parse(text: """
+        BLINK COMMERCE
+        Invoice Date: 03/07/2025
+        """)
+        let named = try InvoiceParser.parse(text: """
+        BLINK COMMERCE
+        Purchase Date: 13 August 2025
+        """)
+        XCTAssertEqual(numeric.date.map { calendar.dateComponents([.year, .month, .day], from: $0) }, DateComponents(year: 2025, month: 7, day: 3))
+        XCTAssertEqual(named.date.map { calendar.dateComponents([.year, .month, .day], from: $0) }, DateComponents(year: 2025, month: 8, day: 13))
+
+        let missing = try InvoiceParser.parse(text: "BLINK COMMERCE\nNo printed purchase date")
+        XCTAssertNil(missing.date, "a missing receipt date must require review instead of silently becoming today")
+    }
+
+    func testPositionedParserRejectsFooterYearAndKeepsPaidFeeRows() throws {
+        let page = [
+            token("Sr.", 10, 900), token("Description", 140, 900, 80), token("Qty", 430, 900), token("Total", 600, 900, 48),
+            token("1", 10, 860), token("Organic", 140, 860), token("Milk", 205, 860), token("1", 430, 860), token("80.00", 600, 860, 42),
+            token("2", 10, 820), token("Handling", 140, 820), token("fee", 210, 820), token("1", 430, 820), token("10.00", 600, 820, 42),
+            token("3", 10, 780), token("Paneer", 140, 780), token("2025", 430, 755), token("145.00", 600, 780, 48),
+            token("and other terms and conditions", 140, 750, 180)
+        ]
+        let invoice = try InvoiceParser.parse(text: "Invoice Date: 03-Jul-2025", positionedPages: [page])
+        XCTAssertEqual(invoice.items.map(\.name), ["Organic Milk", "Handling fee"])
+        XCTAssertEqual(invoice.items.map(\.quantity), [1, 1])
+        XCTAssertEqual(invoice.items.map(\.isFee), [false, true])
+    }
+
+    func testFourReceiptCorpusIncludesAndDeduplicatesReviewedFees() throws {
+        let scenarios: [(total: Decimal, fee: Decimal)] = [
+            (Decimal(string: "882.99")!, 12), (433, 10), (229, 9), (895, 15)
+        ]
+        for scenario in scenarios {
+            let product = scenario.total - scenario.fee
+            let page = [
+                token("Sr.", 10, 900), token("Description", 140, 900, 80), token("Qty", 430, 900), token("Total", 600, 900, 48),
+                token("1", 10, 860), token("Corpus product", 140, 860, 100), token("1", 430, 860), token(NSDecimalNumber(decimal: product).stringValue, 600, 860, 55)
+            ]
+            let feeText = NSDecimalNumber(decimal: scenario.fee).stringValue
+            let invoice = try InvoiceParser.parse(text: """
+            BLINK COMMERCE
+            Invoice Date: 03-Jul-2025
+            Invoice Value ₹\(NSDecimalNumber(decimal: scenario.total).stringValue)
+            Handling fee ₹\(feeText)
+            Annexure tax breakdown
+            Handling fee ₹\(feeText)
+            """, positionedPages: [page])
+
+            XCTAssertEqual(InvoiceReviewPolicy.itemTotal(invoice.items), scenario.total)
+            XCTAssertEqual(invoice.suggestedTotal, scenario.total)
+            XCTAssertEqual(invoice.items.filter(\.isFee).count, 1, "annexure fee must not be counted twice")
+            XCTAssertEqual(invoice.items.first(where: \.isFee)?.amount, scenario.fee)
+        }
+    }
+
+    func testReviewedSignedComponentEquationBlocksUnresolvedDifference() {
+        let components = [
+            ParsedInvoiceItem(name: "Tax-inclusive merchandise", amount: 421, quantity: 1),
+            ParsedInvoiceItem(name: "Handling fee", amount: 12, quantity: 1, isFee: true, componentKind: .fee),
+            ParsedInvoiceItem(name: "Order coupon", amount: -10, quantity: 1, componentKind: .discount),
+            ParsedInvoiceItem(name: "Round off", amount: Decimal(string: "0.01")!, quantity: 1, componentKind: .rounding)
+        ]
+        XCTAssertEqual(InvoiceReviewPolicy.itemTotal(components), Decimal(string: "423.01"))
+        XCTAssertTrue(InvoiceReviewPolicy.reconciles(items: components, finalOrderTotal: Decimal(string: "423.01")))
+        XCTAssertFalse(InvoiceReviewPolicy.reconciles(items: components, finalOrderTotal: 433))
+        XCTAssertTrue(components.allSatisfy(InvoiceReviewPolicy.validSignedAmount))
+
+        var invalidDiscount = components[2]
+        invalidDiscount.amount = 10
+        XCTAssertFalse(InvoiceReviewPolicy.validSignedAmount(invalidDiscount))
+        var zeroRounding = components[3]
+        zeroRounding.amount = 0
+        XCTAssertFalse(InvoiceReviewPolicy.validSignedAmount(zeroRounding))
+    }
+
+    func testAuthoritativeComponentPayloadCarriesSignedSharedAllocationAndInformationalZero() throws {
+        let householdID = UUID(), ektaID = UUID()
+        let purchase = Purchase(merchant: "Mixed reviewed order", category: .groceries, paidBy: .ekta)
+        let sharedProduct = PurchaseItem(name: "Shared groceries", amount: 200, quantity: 2, unit: "kg", unitPrice: 100, displayOrder: 0)
+        let personalProduct = PurchaseItem(name: "Personal snack", amount: 100, displayOrder: 1, isPersonal: true)
+        let discount = PurchaseItem(name: "Order coupon", amount: -30, displayOrder: 2, componentKind: .discount)
+        discount.sharedLineTotal = -20
+        let information = PurchaseItem(name: "UPI tender", amount: 999, displayOrder: 3, componentKind: .informational, includeInTotal: false)
+        information.sharedLineTotal = 0
+        for item in [sharedProduct, personalProduct, discount, information] { item.purchase = purchase; purchase.items.append(item) }
+
+        let bundle = try SharedDataMapper.purchase(purchase, householdID: householdID, memberIDs: [.ekta: ektaID])
+        let payload = try SharedDataMapper.reviewedImport(
+            from: bundle, exactPDFHash: String(repeating: "a", count: 64), contentHash: String(repeating: "b", count: 64)
+        )
+        XCTAssertEqual(payload.amount, 270)
+        XCTAssertEqual(bundle.items.map(\.itemKind), ["product", "product", "discount", "informational"])
+        XCTAssertEqual(bundle.items.map(\.includeInTotal), [true, true, true, false])
+        XCTAssertEqual(bundle.items.map(\.sharedLineTotal), [200, 0, -20, 0])
+        XCTAssertEqual(SharedBalanceCalculator.balance(for: ektaID, memberCount: 2, purchases: [bundle], settlements: []), 90)
+
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: SupabaseJSON.encoder.encode(payload)) as? [String: Any])
+        let items = try XCTUnwrap(object["p_items"] as? [[String: Any]])
+        XCTAssertEqual(items[2]["item_kind"] as? String, "discount")
+        XCTAssertEqual((items[2]["shared_line_total"] as? NSNumber)?.decimalValue, -20)
+        XCTAssertEqual(items[3]["include_in_total"] as? Bool, false)
+        XCTAssertEqual((items[3]["shared_line_total"] as? NSNumber)?.decimalValue, 0)
+
+        let update = SharedDataMapper.reviewedUpdate(from: bundle)
+        let updateObject = try XCTUnwrap(JSONSerialization.jsonObject(with: SupabaseJSON.encoder.encode(update)) as? [String: Any])
+        XCTAssertEqual(Set(updateObject.keys), ["p_purchase_id", "p_label", "p_category", "p_purchased_on", "p_items"])
+        let updateItems = try XCTUnwrap(updateObject["p_items"] as? [[String: Any]])
+        XCTAssertEqual(updateItems[2]["item_kind"] as? String, "discount")
+        XCTAssertEqual((updateItems[2]["shared_line_total"] as? NSNumber)?.decimalValue, -20)
+        XCTAssertTrue(Set(updateObject.keys).isDisjoint(with: ["pdf", "raw_text", "extracted_text", "file_path", "file_name", "address", "payment_credentials"]))
+        XCTAssertEqual(updateItems[0]["unit"] as? String, "kg")
+        XCTAssertEqual((updateItems[0]["unit_price"] as? NSNumber)?.decimalValue, 100)
+        XCTAssertEqual(ReviewedComponentKind.credit.title, "Order credit")
+    }
+
+    func testPaymentTenderAndEmbeddedGSTDoNotChangeFinalObligation() throws {
+        let page = [
+            token("Sr.", 10, 900), token("Description", 140, 900, 80), token("Qty", 430, 900), token("Total", 600, 900, 48),
+            token("1", 10, 860), token("Tax-inclusive product", 140, 860, 120), token("1", 430, 860), token("216.00", 600, 860, 50)
+        ]
+        let invoice = try InvoiceParser.parse(text: """
+        Invoice Date: 03-Jul-2025
+        Taxable value 205.71 CGST 5.14 SGST 5.15 Item discount 20
+        Handling fee ₹13
+        UPI paid ₹100
+        Wallet credit applied ₹129
+        Cashback earned ₹25
+        Amount Paid ₹229
+        """, positionedPages: [page])
+        XCTAssertEqual(invoice.items.map(\.amount), [216, 13])
+        XCTAssertEqual(InvoiceReviewPolicy.itemTotal(invoice.items), 229)
+        XCTAssertEqual(invoice.suggestedTotal, 229)
+        XCTAssertFalse(invoice.items.contains { $0.name.localizedCaseInsensitiveContains("UPI") || $0.name.localizedCaseInsensitiveContains("GST") || $0.name.localizedCaseInsensitiveContains("cashback") })
+    }
+
+    func testDistinctSellerInvoicesAreAdditiveEvenWhenRowNumbersRestart() throws {
+        func sellerPage(page: Int, name: String, amount: String) -> [PositionedInvoiceToken] {
+            [
+                token("Sr.", 10, 900), token("Description", 140, 900, 80), token("Qty", 430, 900), token("Total", 600, 900, 48),
+                PositionedInvoiceToken(text: "1", x: 10, y: 860, width: 40, page: page),
+                PositionedInvoiceToken(text: name, x: 140, y: 860, width: 120, page: page),
+                PositionedInvoiceToken(text: "1", x: 430, y: 860, width: 40, page: page),
+                PositionedInvoiceToken(text: amount, x: 600, y: 860, width: 50, page: page)
+            ].map { token in var value = token; value.page = page; return value }
+        }
+        let invoice = try InvoiceParser.parse(
+            text: "Invoice Date: 13-Aug-2025\nAmount Payable ₹895",
+            positionedPages: [sellerPage(page: 0, name: "Seller A goods", amount: "292"), sellerPage(page: 1, name: "Seller B goods", amount: "603")]
+        )
+        XCTAssertEqual(invoice.items.map(\.amount), [292, 603])
+        XCTAssertEqual(InvoiceReviewPolicy.itemTotal(invoice.items), 895)
+        XCTAssertEqual(invoice.suggestedTotal, 895)
+    }
+
+    func testReviewedFeeContributesToSharedBalanceButNeverRestock() {
+        let receipt = Purchase(merchant: "Receipt with fee", category: .groceries, paidBy: .ekta)
+        let product = PurchaseItem(name: "Milk", amount: 200, isTrackedForRestock: true)
+        let fee = PurchaseItem(name: "Delivery fee", amount: 20, isTrackedForRestock: true, isFee: true)
+        for item in [product, fee] { item.purchase = receipt; receipt.items.append(item) }
+        let later = Purchase(merchant: "Later receipt", category: .groceries, purchasedAt: receipt.purchasedAt.addingTimeInterval(86_400), paidBy: .ekta)
+        let laterProduct = PurchaseItem(name: "Milk", amount: 210, isTrackedForRestock: true)
+        let laterFee = PurchaseItem(name: "Delivery fee", amount: 25, isTrackedForRestock: true, isFee: true)
+        for item in [laterProduct, laterFee] { item.purchase = later; later.items.append(item) }
+
+        XCTAssertEqual(LedgerEngine.sharedTotal(for: receipt), 220)
+        XCTAssertEqual(LedgerEngine.summary(purchases: [receipt], settlements: []).ekta, 110)
+        let suggestions = LedgerEngine.possibleBuys(from: [receipt, later])
+        XCTAssertEqual(suggestions.map(\.name), ["Milk"])
+
+        let parsedFee = ParsedInvoiceItem(name: "Platform fee", amount: 5, quantity: 1, isTrackedForRestock: true, isFee: true)
+        XCTAssertFalse(InvoiceReviewPolicy.shouldTrackForRestock(item: parsedFee, category: .groceries))
+        var personalFee = parsedFee
+        personalFee.isPersonal = true
+        XCTAssertEqual(InvoiceReviewPolicy.itemTotal([personalFee]), 5, "personal/shared review must not remove the paid fee from receipt amount")
+    }
+
+    func testRepeatedProductsAcrossReceiptDatesSurviveFooterLabelNoise() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
+        let july3 = calendar.date(from: DateComponents(year: 2025, month: 7, day: 3))!
+        let august13 = calendar.date(from: DateComponents(year: 2025, month: 8, day: 13))!
+        let clean = purchase(name: "Organic Milk", date: july3)
+        let noisy = purchase(name: "Organic Milk and other terms and conditions", date: august13)
+
+        let suggestions = LedgerEngine.possibleBuys(from: [noisy, clean], referenceDate: august13)
+        XCTAssertEqual(suggestions.count, 1)
+        XCTAssertEqual(suggestions.first?.purchaseCount, 2)
+        XCTAssertEqual(suggestions.first?.usualIntervalDays, 41)
+        XCTAssertEqual(suggestions.first?.lastBought, august13)
+    }
+
     func testPositionedItemDescriptionTablePreservesMultilineSameBrandProducts() throws {
         let page = [
             token("Sr.", 10, 900), token("Description", 140, 900, 80), token("Qty", 430, 900), token("Total", 600, 900, 48),
@@ -282,7 +477,7 @@ final class GroceryLedgerCoreTests: XCTestCase {
                 .init(householdID: householdID, userID: ektaID, displayName: "Ekta", role: .owner),
                 .init(householdID: householdID, userID: riteshID, displayName: "Ritesh", role: .partner)
             ],
-            purchases: [], settlements: [], settlementAllocations: []
+            purchases: [], settlements: [], settlementAllocations: [], supportsReviewedComponentContract: true
         )
         try RemoteLedgerImporter.apply(snapshot, to: context)
 
@@ -317,16 +512,18 @@ final class GroceryLedgerCoreTests: XCTestCase {
         let remotePurchase = RemotePurchase(
             id: purchaseID, householdID: householdID, label: "Current", category: .groceries,
             amount: 80, paidBy: ektaID, purchasedOn: LedgerDate(.now), createdAt: .now,
-            items: [.init(id: keptID, displayOrder: 0, name: "Kept", quantity: 1, lineTotal: 80, isPersonal: false, isTrackedForRestock: false, estimatedUseBy: nil)]
+            items: [.init(id: keptID, displayOrder: 0, name: "Kept", quantity: 1, unit: "kg", unitPrice: 80, lineTotal: 80, isPersonal: false, isTrackedForRestock: false, estimatedUseBy: nil, itemKind: "product", includeInTotal: true, sharedLineTotal: 80)]
         )
         let snapshot = RemoteLedgerSnapshot(
             household: .init(id: householdID, name: "Home", archivedAt: nil, purgeAfter: nil),
             memberships: [.init(householdID: householdID, userID: ektaID, displayName: "Ekta", role: .owner), .init(householdID: householdID, userID: riteshID, displayName: "Ritesh", role: .partner)],
-            purchases: [remotePurchase], settlements: [], settlementAllocations: []
+            purchases: [remotePurchase], settlements: [], settlementAllocations: [], supportsReviewedComponentContract: true
         )
         try RemoteLedgerImporter.apply(snapshot, to: context)
         let current = try XCTUnwrap(context.fetch(FetchDescriptor<Purchase>()).first)
         XCTAssertEqual(current.items.map(\.id), [keptID])
+        XCTAssertEqual(current.items.first?.unit, "kg")
+        XCTAssertEqual(current.items.first?.unitPrice, 80)
         XCTAssertTrue(try context.fetch(FetchDescriptor<Settlement>()).isEmpty)
         XCTAssertEqual(LedgerEngine.summary(purchases: [current], settlements: []).ekta, 40)
     }
@@ -404,7 +601,7 @@ final class GroceryLedgerCoreTests: XCTestCase {
         let encodedItems = try XCTUnwrap(object["p_items"] as? [[String: Any]])
         let allowedItemKeys: Set<String> = [
             "name", "quantity", "unit", "unit_price", "line_total", "is_personal",
-            "is_tracked_for_restock", "estimated_use_by", "display_order"
+            "is_tracked_for_restock", "estimated_use_by", "display_order", "item_kind", "include_in_total", "shared_line_total"
         ]
         XCTAssertTrue(encodedItems.allSatisfy { Set($0.keys).isSubset(of: allowedItemKeys) })
         XCTAssertEqual(encodedItems.map { $0["display_order"] as? Int }, [0, 1])

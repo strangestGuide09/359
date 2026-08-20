@@ -52,21 +52,38 @@ final class PurchaseItem {
     var name: String
     var amount: Decimal
     var quantity: Decimal
+    var unit: String?
+    var unitPrice: Decimal?
     var displayOrder: Int = 0
     var isPersonal: Bool
     var isTrackedForRestock: Bool
     var estimatedUseBy: Date?
+    var isFee: Bool = false
+    var componentKind: String = "product"
+    var includeInTotal: Bool = true
+    var sharedLineTotal: Decimal?
     var purchase: Purchase?
 
-    init(id: UUID = UUID(), name: String, amount: Decimal, quantity: Decimal = 1, displayOrder: Int = 0, isPersonal: Bool = false, isTrackedForRestock: Bool = false, estimatedUseBy: Date? = nil) {
+    init(id: UUID = UUID(), name: String, amount: Decimal, quantity: Decimal = 1, unit: String? = nil, unitPrice: Decimal? = nil, displayOrder: Int = 0, isPersonal: Bool = false, isTrackedForRestock: Bool = false, estimatedUseBy: Date? = nil, isFee: Bool = false, componentKind: ReviewedComponentKind = .merchandise, includeInTotal: Bool = true) {
         self.id = id
         self.name = name
         self.amount = amount
         self.quantity = quantity
+        self.unit = unit
+        self.unitPrice = unitPrice
         self.displayOrder = displayOrder
         self.isPersonal = isPersonal
         self.isTrackedForRestock = isTrackedForRestock
         self.estimatedUseBy = estimatedUseBy
+        self.isFee = isFee
+        self.componentKind = isFee ? ReviewedComponentKind.fee.rawValue : componentKind.rawValue
+        self.includeInTotal = includeInTotal
+        self.sharedLineTotal = includeInTotal ? (isPersonal ? 0 : amount) : 0
+    }
+
+    var resolvedSharedLineTotal: Decimal {
+        guard includeInTotal else { return 0 }
+        return sharedLineTotal ?? (isPersonal ? 0 : amount)
     }
 }
 

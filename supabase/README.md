@@ -317,3 +317,95 @@ for review, not evidence of the correct product name, quantity, or price.
 No repair SQL is supplied by this audit because its output intentionally omits
 item UUIDs. Create a separately reviewed repair script only after the user has
 identified the exact rows and supplied the trustworthy corrected values.
+
+## Reviewed receipt totals and fee rollout
+
+Migration `20260820000000_reviewed_import_contract_hardening.sql` makes the
+reviewed item array authoritative for both import and later atomic editing.
+`purchase_items.item_kind` is one of `product`, `fee`, `tax`, `discount`,
+`credit`, `rounding`, or `informational`; `include_in_total` records the user's
+reviewed decision. `shared_line_total` is the bounded signed portion assigned
+to shared household spend. The server recomputes `purchases.amount` from all
+included signed line totals and recomputes shared balance/settlement capacity
+from included signed shared totals. It does not trust either client header.
+
+Products, separately additive fees, and separately additive taxes are positive.
+Order-level discounts and credits actually applied to this order are negative.
+A rounding component must be nonzero and no more than one rupee in magnitude.
+Payment tenders are not component kinds and cannot reduce the expense. Tax or
+discount breakdown columns already embedded in a final merchandise total, fee
+allocations repeated in an annexure, and other explanatory rows must be saved
+as excluded `informational` rows if retained at all. Only merchandise products
+can be tracked for restock. Fees remain user-reviewable as personal or shared.
+
+For a mixed personal/shared order, every included signed discount, credit, or
+rounding component must carry an explicit `shared_line_total`; the server rejects
+implicit allocation. This prevents a client from silently assigning the whole
+discount to shared or personal spend. The submitted final payable header must
+match the signed component equation at paise precision; unexplained differences
+block the atomic write and leave no fingerprint reservation.
+
+The old item payload remains accepted: omitted `item_kind` means `product`, and
+omitted `include_in_total` means `true`. This prevents an older web or iPhone
+build from failing immediately. It cannot safely infer that a legacy row is a
+fee or allocate a mixed-order discount. Before relying on durable components,
+coordinate clients so both import and `update_reviewed_purchase` send and read
+`item_kind`, `include_in_total`, and `shared_line_total`. Until that rollout,
+excluded parser candidates must continue to be omitted, fee rows must continue
+to send `is_tracked_for_restock=false`, and clients must not submit signed mixed-
+allocation adjustments.
+
+Post-purchase refunds are deliberately not editable invoice components. They
+need a separately authorized, append-only adjustment/event table and RPC linked
+to the original purchase, with settlement-cap checks and archive/purge rules.
+Implement that as its own reviewed migration before enabling refund entry;
+rewriting the original reviewed receipt would destroy the historical obligation.
+
+### Frozen reviewed-component payload
+
+Both clients must send the following snake_case object for every element of
+`p_items`; the edit RPC may additionally send the existing row `id`:
+
+| Field | Contract |
+| --- | --- |
+| `name` | Required trimmed text, 1–160 characters, no control characters. |
+| `quantity` | Required positive number, at most 9,999,999.999. |
+| `unit` | Optional trimmed text, at most 30 characters. |
+| `unit_price` | Optional nonnegative amount. It must be null for discount, credit, rounding, and informational components. |
+| `line_total` | Required signed amount. Product, fee, and tax are positive; discount and credit are negative; rounding is nonzero and between -1 and 1. |
+| `is_personal` | User-reviewed allocation. For an included signed component it must be true exactly when `shared_line_total` is zero. |
+| `is_tracked_for_restock` | May be true only for an included, non-personal product. Always false for every other kind. |
+| `estimated_use_by` | Optional date; retained as reviewed metadata. |
+| `display_order` | Required unique zero-based integer within the submitted array. |
+| `item_kind` | Exactly `product`, `fee`, `tax`, `discount`, `credit`, `rounding`, or `informational`. |
+| `include_in_total` | Informational rows must be false. Included signed rows participate in the authoritative equation. Excluded rows have zero shared allocation. |
+| `shared_line_total` | Required for signed adjustments on mixed personal/shared receipts. It is bounded between zero and a positive total, or between a negative total and zero. For positive rows the server derives and verifies it from `is_personal`. |
+
+The client header `p_amount` is the reviewed final customer obligation and must
+equal the rounded sum of included signed `line_total` values. `p_is_personal`
+must equal the server-derived receipt classification. Clients must not send a
+generic `adjustment` kind or a payment tender. They must resolve a signed row to
+`discount`, `credit`, or `rounding` before saving. A separately additive tax is
+`tax`; an explanatory GST breakdown is excluded `informational`.
+
+Clients must read these same fields from `purchase_items` when reopening a saved
+receipt: `id`, all payload fields above, and the server timestamps as needed.
+They must preserve `id` during edits so settlement-linked rows are updated rather
+than replaced. All three public import overloads and
+`update_reviewed_purchase(uuid,text,text,date,jsonb)` use the same private
+validator and server recomputation path.
+
+Legacy compatibility is intentionally narrow: missing `item_kind` defaults to
+`product`, missing `include_in_total` defaults to true, and a missing positive
+`shared_line_total` is derived from `is_personal`. This keeps old positive-only
+receipts working. It does not permit generic signed adjustments, partial shared
+allocation, or restoration of excluded component metadata; those require the
+coordinated Website and Native payload rollout.
+
+Deploy the migration before the coordinated client build and wait for its
+included `notify pgrst,'reload schema'` to refresh PostgREST. Then run
+`tests/012_reviewed_import_contract_hardening.sql` in an isolated/local test
+database. Do not use this migration to remove the known legacy unallocated
+settlement. That record needs a separate owner-reviewed transaction which first
+exports its ID/amount/date, archives it reversibly, verifies the new balance,
+and only then considers permanent removal.

@@ -20,6 +20,6 @@ test("reviewed import persistence cleans names and retains empty-name validation
     readFile(new URL("../app.js", import.meta.url), "utf8"),
     readFile(new URL("../reviewed-item-state.js", import.meta.url), "utf8")
   ]);
-  assert.match(state, /name: cleanImportedItemName\(item\.name\)/);
+  assert.match(state, /name: cleanImportedItemName\(normalized\.name\)/);
   assert.match(app, /if \(!items\.length \|\| items\.some\(item => !item\.name\)\)/);
 });

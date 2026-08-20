@@ -43,9 +43,17 @@ enum RemoteLedgerImporter {
                 item.name = remoteItem.name
                 item.amount = remoteItem.lineTotal ?? 0
                 item.quantity = remoteItem.quantity ?? 1
+                item.unit = remoteItem.unit
+                item.unitPrice = remoteItem.unitPrice
                 item.displayOrder = remoteItem.displayOrder
                 item.isPersonal = remoteItem.isPersonal
                 item.isTrackedForRestock = !remoteItem.isPersonal && remoteItem.isTrackedForRestock
+                item.isFee = remoteItem.itemKind == "fee" || InvoiceParser.isFeeLabel(remoteItem.name)
+                item.componentKind = remoteItem.itemKind.flatMap(ReviewedComponentKind.init(rawValue:))?.rawValue
+                    ?? (item.isFee ? ReviewedComponentKind.fee.rawValue : ReviewedComponentKind.merchandise.rawValue)
+                item.includeInTotal = remoteItem.includeInTotal ?? true
+                item.sharedLineTotal = remoteItem.sharedLineTotal ?? (remoteItem.isPersonal ? 0 : (remoteItem.lineTotal ?? 0))
+                if item.isFee { item.isTrackedForRestock = false }
                 item.estimatedUseBy = remoteItem.isPersonal ? nil : remoteItem.estimatedUseBy?.value
                 if itemByID[remoteItem.id] == nil {
                     item.purchase = purchase

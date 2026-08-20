@@ -77,9 +77,11 @@ struct ImportInvoiceView: View {
     @State private var merchant = ""
     @State private var category: ExpenseCategory = .groceries
     @State private var purchaseDate = Date.now
+    @State private var purchaseDateConfirmed = false
     @State private var paidBy: LedgerPerson = .ekta
     @State private var parsedItems: [ParsedInvoiceItem] = []
     @State private var suggestedTotal: Decimal?
+    @State private var reviewedFinalTotal: Decimal?
     @State private var parsingNote: String?
     @State private var hasImportedPDF = false
     @State private var isSaving = false
@@ -96,16 +98,23 @@ struct ImportInvoiceView: View {
     }
 
     private var reconciliationDifference: Decimal? {
-        InvoiceReviewPolicy.reconciliationDifference(items: parsedItems, invoiceTotal: suggestedTotal)
+        InvoiceReviewPolicy.reconciliationDifference(items: parsedItems, invoiceTotal: reviewedFinalTotal)
+    }
+
+    private var reconciles: Bool {
+        InvoiceReviewPolicy.reconciles(items: parsedItems, finalOrderTotal: reviewedFinalTotal)
     }
 
     private var isValidDraft: Bool {
         hasImportedPDF &&
+            purchaseDateConfirmed &&
+            reconciles &&
+            (reviewedFinalTotal ?? 0) > 0 &&
             !merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !parsedItems.isEmpty &&
             parsedItems.allSatisfy {
                 !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                    $0.amount >= 0 && $0.quantity > 0
+                    InvoiceReviewPolicy.validSignedAmount($0) && InvoiceReviewPolicy.validSharedAllocation($0) && $0.quantity > 0
             }
     }
 
@@ -240,6 +249,11 @@ struct ImportInvoiceView: View {
                 ForEach(ExpenseCategory.allCases) { Text($0.rawValue).tag($0) }
             }
             DatePicker("Purchase date", selection: $purchaseDate, displayedComponents: .date)
+                .onChange(of: purchaseDate) { _, _ in purchaseDateConfirmed = true }
+            if !purchaseDateConfirmed {
+                Label("Purchase date was not found. Choose the date printed on the receipt before saving.", systemImage: "calendar.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+            }
             Picker("Paid by", selection: $paidBy) {
                 ForEach(LedgerPerson.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -252,10 +266,23 @@ struct ImportInvoiceView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     TextField("Item name", text: $item.name)
                         .font(.headline)
+                    if item.isFee { Label("Paid fee", systemImage: "receipt").font(.caption).foregroundStyle(.secondary) }
+                    Picker("Component", selection: $item.componentKind) {
+                        ForEach(ReviewedComponentKind.allCases) { kind in Text(kind.title).tag(kind) }
+                    }
+                    .onChange(of: item.componentKind) { _, kind in item.setComponentKind(kind) }
                     HStack {
                         TextField("Amount", value: $item.amount, format: .number)
-                            .keyboardType(.decimalPad)
+                            .keyboardType(item.componentKind.requiresNegativeAmount || item.componentKind == .rounding ? .numbersAndPunctuation : .decimalPad)
                         TextField("Quantity", value: $item.quantity, format: .number)
+                            .keyboardType(.decimalPad)
+                    }
+                    HStack {
+                        TextField("Unit (optional)", text: Binding(
+                            get: { item.unit ?? "" },
+                            set: { item.unit = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                        ))
+                        TextField("Unit price", value: $item.unitPrice, format: .number)
                             .keyboardType(.decimalPad)
                     }
                     Picker("Allocation", selection: $item.isPersonal) {
@@ -264,12 +291,27 @@ struct ImportInvoiceView: View {
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: item.isPersonal) { _, isPersonal in
+                        item.sharedLineTotal = item.includeInTotal ? (isPersonal ? 0 : item.amount) : 0
                         if isPersonal {
                             item.isTrackedForRestock = false
                             item.estimatedUseBy = nil
                         }
                     }
-                    if supportsRestock && !item.isPersonal {
+                    if item.includeInTotal && (item.componentKind == .discount || item.componentKind == .credit || item.componentKind == .rounding) {
+                        TextField("Shared allocation", value: $item.sharedLineTotal, format: .number)
+                            .keyboardType(.numbersAndPunctuation)
+                        Text("Choose how much of this signed adjustment changes the shared balance. The remainder is personal.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if item.componentKind == .informational {
+                        Text("Shown for review only · contributes ₹0 to total and balance")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if item.componentKind == .credit {
+                        Text("An order credit applied at checkout reduces this receipt. A later refund is a separate linked event and is not represented here.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if supportsRestock && !item.isPersonal && item.componentKind.canRestock && !item.isFee {
                         Toggle("Track for restock", isOn: $item.isTrackedForRestock)
                         if item.isTrackedForRestock {
                             Toggle("Add estimated use-by", isOn: Binding(
@@ -305,22 +347,21 @@ struct ImportInvoiceView: View {
 
     private var reconciliationSection: some View {
         Section("Total check") {
-            LabeledContent("Reviewed item total", value: money(reviewedTotal))
-            if let suggestedTotal {
-                LabeledContent("Total read from PDF", value: money(suggestedTotal))
-                if let difference = reconciliationDifference {
-                    Label {
-                        Text(difference == 0
-                             ? "Reviewed items match the PDF total."
-                             : "Difference: \(money(difference)). Check discounts, fees, and parsed rows before saving.")
-                    } icon: {
-                        Image(systemName: difference == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    }
-                    .foregroundStyle(difference == 0 ? .green : .orange)
+            LabeledContent("Reviewed signed components", value: money(reviewedTotal))
+            TextField("Final amount paid or payable", value: $reviewedFinalTotal, format: .number)
+                .keyboardType(.decimalPad)
+            if let suggestedTotal { LabeledContent("Final total read from PDF", value: money(suggestedTotal)) }
+            if let difference = reconciliationDifference {
+                Label {
+                    Text(abs(difference) <= Decimal(string: "0.01")!
+                         ? "Components reconcile to the final customer obligation."
+                         : "Unresolved difference: \(money(difference)). Add or correct a fee, order discount, additive tax, or rounding row. Product prices will not be altered automatically.")
+                } icon: {
+                    Image(systemName: reconciles ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 }
+                .foregroundStyle(reconciles ? .green : .orange)
             } else {
-                LabeledContent("Receipt total", value: "Needs confirmation")
-                Text("Difference unavailable until a payable receipt total is confirmed. Verify every parsed row and amount before saving.")
+                Text("Confirm the final amount paid or payable. Payment methods and future cashback do not reduce this expense.")
                     .foregroundStyle(.orange)
             }
         }
@@ -383,9 +424,16 @@ struct ImportInvoiceView: View {
             let invoice = try InvoiceParser.parse(url: url)
             merchant = invoice.merchant
             category = invoice.category
-            purchaseDate = invoice.date
+            if let parsedDate = invoice.date {
+                purchaseDate = parsedDate
+                purchaseDateConfirmed = true
+            } else {
+                purchaseDate = .now
+                purchaseDateConfirmed = false
+            }
             if let buyer = invoice.buyer { paidBy = buyer }
             suggestedTotal = invoice.suggestedTotal
+            reviewedFinalTotal = invoice.suggestedTotal
             parsingNote = invoice.note
             parsedItems = invoice.items
             if parsedItems.isEmpty {
@@ -421,9 +469,11 @@ struct ImportInvoiceView: View {
         merchant = ""
         category = .groceries
         purchaseDate = .now
+        purchaseDateConfirmed = false
         paidBy = .ekta
         parsedItems = []
         suggestedTotal = nil
+        reviewedFinalTotal = nil
         parsingNote = nil
         exactPDFHash = nil
         contentHash = nil
@@ -466,11 +516,19 @@ struct ImportInvoiceView: View {
                 name: reviewedItem.name.trimmingCharacters(in: .whitespacesAndNewlines),
                 amount: reviewedItem.amount,
                 quantity: reviewedItem.quantity,
+                unit: reviewedItem.unit,
+                unitPrice: reviewedItem.unitPrice,
                 displayOrder: displayOrder,
                 isPersonal: reviewedItem.isPersonal,
                 isTrackedForRestock: tracksForRestock,
-                estimatedUseBy: tracksForRestock ? reviewedItem.estimatedUseBy : nil
+                estimatedUseBy: tracksForRestock ? reviewedItem.estimatedUseBy : nil,
+                isFee: reviewedItem.isFee,
+                componentKind: reviewedItem.componentKind,
+                includeInTotal: true
             )
+            item.includeInTotal = reviewedItem.includeInTotal
+            item.sharedLineTotal = reviewedItem.includeInTotal
+                ? (reviewedItem.sharedLineTotal ?? (reviewedItem.isPersonal ? 0 : reviewedItem.amount)) : 0
             item.purchase = purchase
             purchase.items.append(item)
         }
@@ -488,6 +546,7 @@ struct ImportInvoiceView: View {
             errorMessage = "The reviewed purchase could not be saved: \(error.localizedDescription)"
         }
     }
+
 }
 
 enum InvoiceFingerprint {

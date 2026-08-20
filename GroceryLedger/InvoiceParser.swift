@@ -1,20 +1,61 @@
 import Foundation
 import PDFKit
 
+enum ReviewedComponentKind: String, Codable, CaseIterable, Identifiable, Sendable {
+    case merchandise = "product"
+    case fee, tax, discount, rounding
+    case credit
+    case informational
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .merchandise: "Merchandise"
+        case .fee: "Fee or charge"
+        case .tax: "Additive tax"
+        case .discount: "Order discount"
+        case .rounding: "Rounding adjustment"
+        case .credit: "Order credit"
+        case .informational: "Informational only"
+        }
+    }
+    var canRestock: Bool { self == .merchandise }
+    var requiresNegativeAmount: Bool { self == .discount || self == .credit }
+}
+
 struct ParsedInvoiceItem: Identifiable {
     let id = UUID()
     var name: String
     var amount: Decimal
     var quantity: Decimal
+    var unit: String?
+    var unitPrice: Decimal?
     var isPersonal: Bool = false
     var isTrackedForRestock: Bool = false
     var estimatedUseBy: Date?
+    var isFee: Bool = false
+    var componentKind: ReviewedComponentKind = .merchandise
+    var sourcePage: Int?
+    var includeInTotal: Bool = true
+    /// Explicit signed amount assigned to the shared household balance. Positive
+    /// rows derive this from personal/shared; signed adjustments require review.
+    var sharedLineTotal: Decimal?
+
+    mutating func setComponentKind(_ kind: ReviewedComponentKind) {
+        componentKind = kind
+        isFee = kind == .fee
+        if !kind.canRestock { isTrackedForRestock = false; estimatedUseBy = nil }
+        if kind == .informational { includeInTotal = false; sharedLineTotal = 0 }
+        else {
+            includeInTotal = true
+            if sharedLineTotal == nil { sharedLineTotal = isPersonal ? 0 : amount }
+        }
+    }
 }
 
 struct ParsedInvoice {
     var merchant: String
     var category: ExpenseCategory
-    var date: Date
+    var date: Date?
     var buyer: LedgerPerson?
     var suggestedTotal: Decimal?
     var items: [ParsedInvoiceItem]
@@ -31,16 +72,44 @@ struct PositionedInvoiceToken {
 
 enum InvoiceReviewPolicy {
     static func itemTotal(_ items: [ParsedInvoiceItem]) -> Decimal {
-        items.reduce(0) { $0 + $1.amount }
+        items.filter(\.includeInTotal).reduce(0) { $0 + $1.amount }
     }
 
     static func reconciliationDifference(items: [ParsedInvoiceItem], invoiceTotal: Decimal?) -> Decimal? {
         invoiceTotal.map { itemTotal(items) - $0 }
     }
 
+    static func reconciles(items: [ParsedInvoiceItem], finalOrderTotal: Decimal?) -> Bool {
+        guard let difference = reconciliationDifference(items: items, invoiceTotal: finalOrderTotal),
+              (finalOrderTotal ?? 0) > 0 else { return false }
+        return abs(difference) <= Decimal(string: "0.01")!
+    }
+
+    static func validSignedAmount(_ item: ParsedInvoiceItem) -> Bool {
+        switch item.componentKind {
+        case .discount, .credit: item.amount < 0
+        case .rounding: item.amount != 0 && item.amount >= -1 && item.amount <= 1
+        case .merchandise, .fee, .tax: item.amount > 0
+        case .informational: !item.includeInTotal
+        }
+    }
+
+    static func validSharedAllocation(_ item: ParsedInvoiceItem) -> Bool {
+        guard item.includeInTotal else { return item.sharedLineTotal == nil || item.sharedLineTotal == 0 }
+        let shared = item.sharedLineTotal ?? (item.isPersonal ? 0 : item.amount)
+        switch item.componentKind {
+        case .merchandise, .fee, .tax:
+            return shared == (item.isPersonal ? 0 : item.amount)
+        case .discount, .credit, .rounding:
+            return item.amount >= 0 ? shared >= 0 && shared <= item.amount : shared >= item.amount && shared <= 0
+        case .informational:
+            return shared == 0
+        }
+    }
+
     static func shouldTrackForRestock(item: ParsedInvoiceItem, category: ExpenseCategory) -> Bool {
         let supportedCategory = category == .groceries || category == .household
-        return supportedCategory && !item.isPersonal && item.isTrackedForRestock
+        return supportedCategory && !item.isPersonal && item.componentKind.canRestock && !item.isFee && item.isTrackedForRestock
     }
 }
 
@@ -82,8 +151,8 @@ enum InvoiceParser {
 
         let buyerName = capture("(?:Invoice To:\\s*|Customer Name:\\s*|Name\\s*:\\s*)(Ekta(?:\\s+Dhan)?|Ritesh(?:\\s+Kumar)?)", in: text)
         let buyer = buyerName?.localizedCaseInsensitiveContains("Ritesh") == true ? LedgerPerson.ritesh : buyerName == nil ? nil : .ekta
-        let parsedDate = foodOrderDate(in: text) ?? dateCapture("(?:Date\\s+of\\s+Invoice|Invoice\\s+Date|Date)\\s*:?\\s*([0-9]{2}[-/][A-Za-z0-9]{2,3}[-/][0-9]{2,4})", in: text) ?? .now
-        let items: [ParsedInvoiceItem]
+        let parsedDate = reviewedPurchaseDate(in: text)
+        var items: [ParsedInvoiceItem]
         let structured = positionedTableItems(from: positionedPages)
         if category == .food {
             items = foodItems(in: text)
@@ -94,6 +163,8 @@ enum InvoiceParser {
         } else {
             items = blinkitItems(in: text)
         }
+        items = mergePaidFees(items, with: paidFeeItems(in: text))
+        items = mergeSignedAdjustments(items, with: signedAdjustmentItems(in: text))
         let itemTotal = InvoiceReviewPolicy.itemTotal(items)
         let labelledTotal = confidentlyLabelledTotal(in: text, itemTotal: itemTotal)
         let total = labelledTotal ?? (structured?.isComplete == true ? itemTotal : nil)
@@ -150,15 +221,21 @@ enum InvoiceParser {
                 }.sorted { $0.y == $1.y ? $0.x < $1.x : $0.y > $1.y }
                     .map(\.text).joined(separator: " ")
                 let quantityToken = row.filter {
-                    abs($0.x - schema.quantityX) <= 38 && decimal(in: $0.text) != nil
+                    abs($0.x - schema.quantityX) <= 38 && abs($0.y - serial.token.y) <= 18 &&
+                    decimal(in: $0.text).map { $0 > 0 && $0 <= 100 } == true
                 }.min { abs($0.x - schema.quantityX) < abs($1.x - schema.quantityX) }
                 let totalToken = row.filter {
-                    $0.x >= schema.totalX - 45 && decimal(in: $0.text) != nil
+                    $0.x >= schema.totalX - 45 && abs($0.y - serial.token.y) <= 18 && decimal(in: $0.text) != nil
                 }.min { abs(($0.x + $0.width) - schema.totalRight) < abs(($1.x + $1.width) - schema.totalRight) }
                 let name = cleanName(description)
+                guard !isFooter(name) else { continue }
                 guard !name.isEmpty, let quantityToken, let quantity = decimal(in: quantityToken.text), quantity > 0,
                       let totalToken, let amount = decimal(in: totalToken.text), amount >= 0 else { continue }
-                rows.append((serial.serial, serial.token.page, ParsedInvoiceItem(name: name, amount: amount, quantity: quantity)))
+                rows.append((serial.serial, serial.token.page, ParsedInvoiceItem(
+                    name: name, amount: amount, quantity: quantity,
+                    isFee: isFeeLabel(name), componentKind: isFeeLabel(name) ? .fee : .merchandise,
+                    sourcePage: serial.token.page
+                )))
             }
         }
         guard sawSchema, !rows.isEmpty else { return nil }
@@ -306,10 +383,90 @@ enum InvoiceParser {
 
     private static func cleanName(_ value: String) -> String {
         value.components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).allSatisfy { $0.isNumber } }
+            .filter {
+                let line = $0.trimmingCharacters(in: .whitespaces)
+                return !line.allSatisfy { $0.isNumber } && !isFooterFragment(line)
+            }
             .joined(separator: " ")
             .replacingOccurrences(of: "  ", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isFooterFragment(_ value: String) -> Bool {
+        value.range(of: "^(?:and\\s+other|other\\s+terms|terms\\s+and\\s+conditions|page\\s+\\d+|financial\\s+year)\\b", options: [.caseInsensitive, .regularExpression]) != nil
+    }
+
+    static func isFeeLabel(_ value: String) -> Bool {
+        value.range(of: "^(?:delivery|handling|platform|convenience|service|small\\s+cart|surge|packaging)(?:\\s+(?:fee|charge)s?)?\\b", options: [.caseInsensitive, .regularExpression]) != nil
+    }
+
+    private static func isFooter(_ value: String) -> Bool { isFooterFragment(value) }
+
+    private static func paidFeeItems(in text: String) -> [ParsedInvoiceItem] {
+        let lines = text.components(separatedBy: .newlines)
+        return lines.compactMap { line in
+            let cleaned = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isFeeLabel(cleaned),
+                  cleaned.range(of: "(?:₹|rs\\.?\\s*)?[0-9][0-9,]*(?:\\.[0-9]{1,2})?\\s*$", options: [.caseInsensitive, .regularExpression]) != nil,
+                  let amount = decimalValues(in: cleaned).last, amount >= 0 else { return nil }
+            let label = cleaned.replacingOccurrences(
+                of: "\\s+(?:₹|rs\\.?\\s*)?[0-9][0-9,]*(?:\\.[0-9]{1,2})?\\s*$",
+                with: "", options: [.caseInsensitive, .regularExpression]
+            )
+            return ParsedInvoiceItem(name: cleanName(label), amount: amount, quantity: 1, isFee: true, componentKind: .fee)
+        }
+    }
+
+    private static func mergePaidFees(_ parsed: [ParsedInvoiceItem], with extracted: [ParsedInvoiceItem]) -> [ParsedInvoiceItem] {
+        var result: [ParsedInvoiceItem] = []
+        var seenFees = Set<String>()
+        var positionedFeeBases = Set<String>()
+        for item in parsed + extracted {
+            guard item.isFee || isFeeLabel(item.name) else { result.append(item); continue }
+            var fee = item
+            fee.isFee = true
+            fee.componentKind = .fee
+            fee.isTrackedForRestock = false
+            fee.estimatedUseBy = nil
+            let base = fee.name.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                + "|" + NSDecimalNumber(decimal: fee.amount).stringValue
+            if fee.sourcePage == nil && positionedFeeBases.contains(base) { continue }
+            let key = base + (fee.sourcePage.map { "|page:\($0)" } ?? "")
+            if fee.sourcePage != nil { positionedFeeBases.insert(base) }
+            if seenFees.insert(key).inserted { result.append(fee) }
+        }
+        return result
+    }
+
+    private static func signedAdjustmentItems(in text: String) -> [ParsedInvoiceItem] {
+        text.components(separatedBy: .newlines).compactMap { rawLine in
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            let kind: ReviewedComponentKind
+            if line.range(of: "^(?:order[- ]level\\s+)?(?:discount|coupon|promo(?:tion)?|savings?)\\b", options: [.caseInsensitive, .regularExpression]) != nil {
+                kind = .discount
+            } else if line.range(of: "^round(?:ing|ed)?[- ]?off\\b", options: [.caseInsensitive, .regularExpression]) != nil {
+                kind = .rounding
+            } else { return nil }
+            guard let match = line.range(of: "[-+]?\\s*(?:₹|rs\\.?\\s*)?[0-9][0-9,]*(?:\\.[0-9]{1,2})?\\s*$", options: [.caseInsensitive, .regularExpression]) else { return nil }
+            let amountText = String(line[match]).replacingOccurrences(of: "₹", with: "")
+                .replacingOccurrences(of: "Rs.", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: " ", with: "").replacingOccurrences(of: ",", with: "")
+            guard var amount = Decimal(string: amountText, locale: Locale(identifier: "en_US_POSIX")) else { return nil }
+            if kind == .discount { amount = -abs(amount) }
+            let name = String(line[..<match.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return ParsedInvoiceItem(name: name, amount: amount, quantity: 1, componentKind: kind, sharedLineTotal: amount)
+        }
+    }
+
+    private static func mergeSignedAdjustments(_ parsed: [ParsedInvoiceItem], with extracted: [ParsedInvoiceItem]) -> [ParsedInvoiceItem] {
+        var result = parsed
+        var seen = Set(parsed.filter { $0.componentKind == .discount || $0.componentKind == .rounding }
+            .map { $0.componentKind.rawValue + "|" + NSDecimalNumber(decimal: $0.amount).stringValue })
+        for item in extracted {
+            let key = item.componentKind.rawValue + "|" + NSDecimalNumber(decimal: item.amount).stringValue
+            if seen.insert(key).inserted { result.append(item) }
+        }
+        return result
     }
 
     private static func capture(_ pattern: String, in text: String) -> String? { captures(pattern, in: text).first }
@@ -324,11 +481,18 @@ enum InvoiceParser {
     private static func decimalCapture(_ pattern: String, in text: String) -> Decimal? { capture(pattern, in: text).flatMap { Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) } }
     private static func dateCapture(_ pattern: String, in text: String) -> Date? {
         guard let value = capture(pattern, in: text) else { return nil }
-        for format in ["dd-MM-yyyy", "dd-MMM-yyyy", "dd/MM/yyyy"] {
+        for format in ["dd-MM-yyyy", "d-M-yyyy", "dd-MMM-yyyy", "d-MMM-yyyy", "dd/MM/yyyy", "d/M/yyyy", "dd MMM yyyy", "d MMM yyyy", "dd MMMM yyyy", "d MMMM yyyy"] {
             let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = format
             if let date = formatter.date(from: value) { return date }
         }
         return nil
+    }
+
+    private static func reviewedPurchaseDate(in text: String) -> Date? {
+        foodOrderDate(in: text) ?? dateCapture(
+            "(?:Date\\s+of\\s+Invoice|Invoice\\s+Date|Order\\s+Date|Purchase\\s+Date|Date)\\s*:?\\s*([0-9]{1,2}(?:[-/]\\s*[A-Za-z0-9]{1,9}\\s*[-/]|\\s+[A-Za-z]{3,9}\\s+)[0-9]{4})",
+            in: text
+        )
     }
 
     private static func foodOrderDate(in text: String) -> Date? {

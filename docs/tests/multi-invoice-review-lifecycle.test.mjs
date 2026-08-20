@@ -59,3 +59,30 @@ test("₹871 two-invoice values and flags survive review, RPC payload, load, and
   assert.match(html, /Personal · Restock off/);
   assert.doesNotMatch(html, /114\.29|142\.86/);
 });
+
+test("multi-invoice products and paid fee survive review/save/reopen without price redistribution", () => {
+  const parsedProducts = parseReceipt(pages, "2026-07-03").items;
+  const review = [...parsedProducts, normalizeReviewedItem({
+    name: "Handling fee", quantity: 1, unit_price: 11.99, line_total: 11.99,
+    item_kind: "fee", is_personal: false, is_tracked_for_restock: true
+  })].map(normalizeReviewedItem);
+  const payload = reviewedItemsForSave(review);
+  const boondi = payload.find(item => /Boondi/.test(item.name));
+  const tea = payload.find(item => /Chamomile/.test(item.name));
+  const fee = payload.find(item => item.item_kind === "fee");
+
+  assert.equal(boondi.line_total, 75);
+  assert.equal(tea.line_total, 69);
+  assert.deepEqual(fee, {
+    name: "Handling fee", quantity: 1, unit: null, unit_price: 11.99,
+    line_total: 11.99, shared_line_total: 11.99, is_personal: false, is_tracked_for_restock: false,
+    estimated_use_by: null, item_kind: "fee", include_in_total: true,
+    display_order: 11
+  });
+  assert.equal(payload.reduce((sum, item) => sum + item.line_total, 0), 882.99);
+
+  fee.is_personal = true;
+  const reopened = savedPurchaseItemsForReview(payload.map((item, index) => ({ ...item, id: `item-${index}` })));
+  assert.equal(reopened.at(-1).item_kind, "fee");
+  assert.equal(reopened.at(-1).is_tracked_for_restock, false);
+});

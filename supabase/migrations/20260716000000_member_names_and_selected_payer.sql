@@ -4,11 +4,15 @@
 
 begin;
 
-alter table public.household_members add column display_name text;
+alter table public.household_members add column if not exists display_name text;
 update public.household_members
-set display_name = case role when 'owner' then 'Household owner' else 'Household partner' end;
+set display_name = case role when 'owner' then 'Household owner' else 'Household partner' end
+where display_name is null;
 alter table public.household_members
-  alter column display_name set not null,
+  alter column display_name set not null;
+alter table public.household_members
+  drop constraint if exists household_members_display_name_check;
+alter table public.household_members
   add constraint household_members_display_name_check
     check (char_length(trim(display_name)) between 1 and 80 and display_name !~ '[[:cntrl:]]');
 

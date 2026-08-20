@@ -58,6 +58,7 @@ const esc = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;",
 const retryKey = "grocery-ledger-email-retry-at";
 const rememberedEmailKey = "grocery-ledger-last-email";
 const dialog = $("entry");
+let entryInvoker = null;
 const discardPdfDraftDialog = $("discard-pdf-draft");
 const visualAiPreviewDialog = $("visual-ai-preview");
 const importChoiceDialog = $("import-choice");
@@ -96,6 +97,7 @@ let restorePromise;
 let verifyingOtp = false;
 let dashboardView = "home";
 let rhythmSelectedDate;
+let rhythmShowAll = false;
 
 document.addEventListener("input", event => { if (event.target.closest?.("form")) formDirty = true; });
 document.addEventListener("change", event => { if (event.target.closest?.("form")) formDirty = true; });
@@ -273,7 +275,7 @@ function roleName() { return isOwner() ? "Owner" : "Partner"; }
 function sharedPurchaseAmount(purchase) {
   const items = purchase.purchase_items || [];
   if (!items.length) return purchase.is_personal ? 0 : Number(purchase.amount);
-  return items.reduce((total, item) => total + (item.is_personal ? 0 : Number(item.line_total) || 0), 0);
+  return items.reduce((total, item) => total + (item.include_in_total === false ? 0 : Number(item.shared_line_total ?? (item.is_personal ? 0 : item.line_total)) || 0), 0);
 }
 function settlementAllocations(receiver, amount, settledOn) {
   return receiptSettlementAllocations({
@@ -530,15 +532,15 @@ function uploadDateNote(item) {
   const uploaded = String(item.created_at || "").slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(uploaded) && uploaded !== item.purchased_on ? ` · Uploaded ${fmt(uploaded)}` : "";
 }
-function renderHouseholdRecord() {
-  const events = [...ledger.purchases.map(item => ({ date: item.purchased_on, kind: "receipt", id: item.id, title: item.label, detail: `${memberName(item.paid_by)} paid · ${money(item.amount)}${uploadDateNote(item)}` })), ...ledger.settlements.map(item => ({ date: item.settled_on, kind: "payment", title: `${memberName(item.payer)} paid ${memberName(item.receiver)}`, detail: `${money(item.amount)} · ${item.allocation_count || 0} active receipt allocation${item.allocation_count === 1 ? "" : "s"}` }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
-  if (!events.length) return '<p class="empty-state">Your first saved receipt will start the household record.</p>';
+function renderHouseholdRecord(selectedDate = rhythmSelectedDate) {
+  const allEvents = [...ledger.purchases.map(item => ({ date: item.purchased_on, kind: "receipt", id: item.id, title: item.label, detail: `${memberName(item.paid_by)} paid · ${money(item.amount)}${uploadDateNote(item)}` })), ...ledger.settlements.map(item => ({ date: item.settled_on, kind: "payment", title: `${memberName(item.payer)} paid ${memberName(item.receiver)}`, detail: `${money(item.amount)} · ${item.allocation_count || 0} active receipt allocation${item.allocation_count === 1 ? "" : "s"}` }))];
+  const events = allEvents.filter(event => rhythmShowAll || !selectedDate || event.date === selectedDate).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  if (!events.length && !allEvents.length) return `<p class="empty-state">No receipts yet. Import or add the first receipt to start the household record.</p>`;
+  if (!events.length) {
+    const latest = [...ledger.purchases].sort((a, b) => b.purchased_on.localeCompare(a.purchased_on))[0]?.purchased_on;
+    return `<div class="record-empty-context"><p>No activity on ${fmt(selectedDate)}. This household has ${ledger.purchases.length} receipt${ledger.purchases.length === 1 ? "" : "s"} on other purchase dates.</p><div><button type="button" class="secondary" data-rhythm-jump="${latest || ""}">Jump to latest receipt</button><button type="button" class="plain" data-show-all-history>Show all history</button></div></div>`;
+  }
   return `<ol class="household-timeline">${events.map(event => `<li><span class="timeline-mark ${event.kind}" aria-hidden="true"></span><div><b>${esc(event.title)}</b><span>${esc(event.detail)}</span></div><time datetime="${event.date}">${fmt(event.date)}</time>${event.kind === "receipt" ? `<button type="button" class="plain timeline-link" data-open-receipt="${event.id}">View receipt</button>` : ""}</li>`).join("")}</ol>`;
-}
-function renderNeedsAttention(balance, archived) {
-  if (archived || balance <= .005) return "";
-  const otherName = displayedMemberName(partner());
-  return `<aside class="panel needs-attention" aria-labelledby="attention-title"><div class="section-heading"><div><p>NEEDS ATTENTION</p><h2 id="attention-title">Payment expected</h2></div></div><p>${esc(otherName)} owes you ${money(balance)}. They must sign in to record a payment.</p><button type="button" class="plain" data-go-view="household">View payment history</button></aside>`;
 }
 function showDashboardView(view, focus = false) {
   dashboardView = ["home", "receipts", "shopping", "household"].includes(view) ? view : "home";
@@ -564,8 +566,7 @@ function renderDashboard() {
   const archiveBanner = archived ? `<p class="archive-banner">This household is archived and read-only. ${recoveryOpen ? `It can be restored until ${fmt(current.purge_after)}.` : "Its recovery period has ended."}</p>` : "";
   const homeSuggestions = restock.cards.slice(0, 3).join("") || restock.empty;
   const receiptActions = archived ? "" : `<div class="view-actions"><button type="button" data-import-pdf>Import receipt</button><button type="button" class="secondary" data-add-expense>Add expense</button></div>`;
-  const needsAttention = renderNeedsAttention(balance, archived);
-  setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}${renderAppNavigation()}<section id="view-home" class="ledger-view household-rhythm" data-dashboard-panel="home"${dashboardView === "home" ? "" : " hidden"} aria-labelledby="rhythm-title">${renderWeekStrip()}<section class="rhythm-focus-grid"><section class="command-bar rhythm-money">${renderBalance(balance, archived)}${actions}</section><section class="panel rhythm-shopping"><div class="section-heading"><div><p>SHOPPING NEXT</p><h2>Possible buys</h2></div><button type="button" class="plain" data-go-view="shopping">View shopping</button></div>${homeSuggestions}</section></section>${renderRemovalUndo()}<section class="rhythm-record-grid${needsAttention ? " has-attention" : ""}"><section class="panel household-record"><div class="section-heading"><div><p>CHRONOLOGY</p><h2>Household record</h2></div><span>Purchase-dated receipts and linked payments</span></div>${renderHouseholdRecord()}</section>${needsAttention}</section></section><section id="view-receipts" class="ledger-view" data-dashboard-panel="receipts"${dashboardView === "receipts" ? "" : " hidden"} aria-labelledby="receipts-title"><section class="panel expenses-panel"><div class="heading"><div><p>RECEIPTS</p><h2 id="receipts-title" tabindex="-1">Recent expenses</h2></div>${receiptActions || `<span>${ledger.purchases.length} saved</span>`}</div><div class="ledger-columns" aria-hidden="true"><span>Merchant</span><span>Paid by</span><span>Date</span><span>Reviewed items</span><span>Amount</span><span>Actions</span></div><div>${purchases}</div></section></section><section id="view-shopping" class="ledger-view" data-dashboard-panel="shopping"${dashboardView === "shopping" ? "" : " hidden"} aria-labelledby="shopping-title"><section class="panel insight-card restock-panel"><div class="heading"><div><p>SHOPPING</p><h2 id="shopping-title" tabindex="-1">Possible buys</h2></div></div>${restockPanel}</section></section><section id="view-household" class="ledger-view household-view" data-dashboard-panel="household"${dashboardView === "household" ? "" : " hidden"} aria-labelledby="household-title"><div class="household-view-heading"><div><p>HOUSEHOLD</p><h2 id="household-title" tabindex="-1">People, payments and recovery</h2></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></div><section class="panel settlements-panel"><div class="heading"><div><p>LINKED PAYMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section>${renderSettings(balance, archived, recoveryOpen, true)}</section></section>`);
+  setScreen(`<section class="dashboard-shell"><section class="household-masthead"><div class="household-title"><p>HOUSEHOLD</p><h1 tabindex="-1">${esc(current.name)}</h1></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></section>${archiveBanner}${renderAppNavigation()}<section id="view-home" class="ledger-view household-rhythm" data-dashboard-panel="home"${dashboardView === "home" ? "" : " hidden"} aria-labelledby="rhythm-title">${renderWeekStrip()}<section class="rhythm-focus-grid"><section class="command-bar rhythm-money">${renderBalance(balance, archived)}${actions}</section><section class="panel rhythm-shopping"><div class="section-heading"><div><p>SHOPPING NEXT</p><h2>Possible buys</h2></div><button type="button" class="plain" data-go-view="shopping">View shopping</button></div>${homeSuggestions}</section></section>${renderRemovalUndo()}<section class="rhythm-record-grid"><section class="panel household-record"><div class="section-heading"><div><p>CHRONOLOGY</p><h2>Household record</h2></div><span>${rhythmShowAll ? "All recent purchase dates" : `Selected purchase date · ${fmt(rhythmSelectedDate)}`}</span></div>${renderHouseholdRecord()}</section></section></section><section id="view-receipts" class="ledger-view" data-dashboard-panel="receipts"${dashboardView === "receipts" ? "" : " hidden"} aria-labelledby="receipts-title"><section class="panel expenses-panel"><div class="heading"><div><p>RECEIPTS</p><h2 id="receipts-title" tabindex="-1">Recent expenses</h2></div>${receiptActions || `<span>${ledger.purchases.length} saved</span>`}</div><div class="ledger-columns" aria-hidden="true"><span>Merchant</span><span>Paid by</span><span>Date</span><span>Reviewed items</span><span>Amount</span><span>Actions</span></div><div>${purchases}</div></section></section><section id="view-shopping" class="ledger-view" data-dashboard-panel="shopping"${dashboardView === "shopping" ? "" : " hidden"} aria-labelledby="shopping-title"><section class="panel insight-card restock-panel"><div class="heading"><div><p>SHOPPING</p><h2 id="shopping-title" tabindex="-1">Possible buys</h2></div></div>${restockPanel}</section></section><section id="view-household" class="ledger-view household-view" data-dashboard-panel="household"${dashboardView === "household" ? "" : " hidden"} aria-labelledby="household-title"><div class="household-view-heading"><div><p>HOUSEHOLD</p><h2 id="household-title" tabindex="-1">People, payments and recovery</h2></div><div class="member-blocks" aria-label="Household members">${renderMembers()}</div></div><section class="panel settlements-panel"><div class="heading"><div><p>LINKED PAYMENTS</p><h2>Payment history</h2></div></div>${settlementPanel}</section>${renderSettings(balance, archived, recoveryOpen, true)}</section></section>`);
   mountDashboardNavigation();
   bindDashboard(balance);
 }
@@ -573,9 +574,11 @@ function bindDashboard(balance) {
   document.querySelectorAll("[data-rhythm-date],[data-rhythm-jump]").forEach(button => button.onclick = () => {
     if (!button.dataset.rhythmDate && !button.dataset.rhythmJump) return;
     rhythmSelectedDate = button.dataset.rhythmDate || button.dataset.rhythmJump;
+    rhythmShowAll = false;
     renderDashboard();
     requestAnimationFrame(() => document.querySelector(`[data-rhythm-date="${rhythmSelectedDate}"]`)?.focus());
   });
+  document.querySelector("[data-show-all-history]")?.addEventListener("click", () => { rhythmShowAll = true; renderDashboard(); });
   document.querySelectorAll("[data-dashboard-view]").forEach(button => button.onclick = () => showDashboardView(button.dataset.dashboardView, true));
   document.querySelectorAll("[data-go-view]").forEach(button => button.onclick = () => showDashboardView(button.dataset.goView, true));
   document.querySelectorAll("[data-open-receipt]").forEach(button => button.onclick = () => {
@@ -696,11 +699,20 @@ function bindItemRows() {
     };
     rowElement.querySelectorAll("[data-field]").forEach(input => input.oninput = () => {
       const field = input.dataset.field;
+      const previousLineTotal = Number(reviewedItems[index].line_total);
+      const previousSharedTotal = Number(reviewedItems[index].shared_line_total);
       const wasMerchandise = isRestockMerchandise(reviewedItems[index].name);
       reviewedItems[index][field] = input.type === "checkbox" ? input.checked : input.value;
-      if (field === "is_personal") reviewedItems[index].is_tracked_for_restock = !input.checked && isRestockMerchandise(reviewedItems[index].name);
+      if (field === "line_total" && previousSharedTotal === previousLineTotal) reviewedItems[index].shared_line_total = input.value;
+      if (field === "item_kind") {
+        reviewedItems[index].include_in_total = input.value !== "informational";
+        reviewedItems[index].unit_price = ["discount", "credit", "rounding", "informational"].includes(input.value) ? null : reviewedItems[index].unit_price;
+      }
+      if (field === "include_in_total" && !input.checked) reviewedItems[index].shared_line_total = 0;
+      if (field === "is_personal") reviewedItems[index].shared_line_total = input.checked ? 0 : reviewedItems[index].line_total;
+      reviewedItems[index].is_tracked_for_restock = reviewedItems[index].item_kind === "product" && reviewedItems[index].include_in_total && !reviewedItems[index].is_personal && isRestockMerchandise(reviewedItems[index].name) && (field === "is_tracked_for_restock" ? input.checked : reviewedItems[index].is_tracked_for_restock ?? true);
       if (field === "name") reviewedItems[index].is_tracked_for_restock = isRestockMerchandise(input.value) && (reviewedItems[index].is_tracked_for_restock || !wasMerchandise);
-      if (field === "is_personal") renderItemRows();
+      if (["is_personal", "item_kind", "include_in_total"].includes(field)) renderItemRows();
       if (field === "name") { const restock = rowElement.querySelector('[data-field="is_tracked_for_restock"]'); restock.checked = reviewedItems[index].is_tracked_for_restock; restock.disabled = reviewedItems[index].is_personal || !isRestockMerchandise(input.value); }
       resetReceiptReviewConfirmation(true);
       updateItemTotal();
@@ -717,30 +729,33 @@ function resetReceiptReviewConfirmation(recalculateItemSum = false) {
   receiptReviewConfirmed = false;
   $("confirm-receipt-review").checked = false;
   if (recalculateItemSum && pendingPdfImport?.amountSource === "item-sum") {
-    const totals = reviewedItems.filter(item => item.item_kind !== "fee" || item.include_in_total).map(item => item.line_total == null || item.line_total === "" ? NaN : Number(item.line_total));
-    if (totals.length && totals.every(total => Number.isFinite(total) && total >= 0) && totals.some(total => total > 0)) {
+    const totals = reviewedItems.map(item => item.line_total == null || item.line_total === "" ? NaN : Number(item.line_total));
+    if (totals.length && totals.every(total => Number.isFinite(total)) && totals.reduce((sum, total) => sum + total, 0) > 0) {
       $("amount").value = totals.reduce((sum, total) => sum + total, 0).toFixed(2);
     } else pendingPdfImport.amountSource = "needs-review";
   }
 }
 function updateItemTotal() {
   updateReceiptReviewConfirmation();
-  const productSum = reviewedItems.filter(item => item.item_kind !== "fee").reduce((total, item) => total + (Number(item.line_total) || 0), 0);
-  const includedFeeSum = reviewedItems.filter(item => item.item_kind === "fee" && item.include_in_total).reduce((total, item) => total + (Number(item.line_total) || 0), 0);
-  const sum = productSum + includedFeeSum;
+  const included = reviewedItems.filter(item => item.include_in_total !== false);
+  const componentSum = kind => included.filter(item => item.item_kind === kind).reduce((total, item) => total + (Number(item.line_total) || 0), 0);
+  const productSum = componentSum("product"), feeSum = componentSum("fee"), taxSum = componentSum("tax");
+  const discountSum = Math.abs(componentSum("discount")), creditSum = Math.abs(componentSum("credit")), roundingSum = componentSum("rounding");
+  const sum = included.reduce((total, item) => total + (Number(item.line_total) || 0), 0);
+  const componentSummary = `Products: ${money(productSum)} · Fees: ${money(feeSum)} · Tax: ${money(taxSum)} · Discounts: ${money(discountSum)} · Credits: ${money(creditSum)} · Rounding: ${money(roundingSum)}`;
   const rawReceiptTotal = $("amount").value.trim();
   if (!rawReceiptTotal) {
-    $("item-total").textContent = `Products: ${money(productSum)} · Included fees: ${money(includedFeeSum)} · Receipt total: needs confirmation · Difference unavailable`;
+    $("item-total").textContent = `${componentSummary} · Final total: needs confirmation · Difference unavailable`;
     return;
   }
   const receiptTotal = Number(rawReceiptTotal);
   if (!Number.isFinite(receiptTotal)) {
-    $("item-total").textContent = `Products: ${money(productSum)} · Included fees: ${money(includedFeeSum)} · Receipt total: needs confirmation · Difference unavailable`;
+    $("item-total").textContent = `${componentSummary} · Final total: needs confirmation · Difference unavailable`;
     return;
   }
   const difference = receiptTotal - sum;
   const amountLabel = pendingPdfImport?.amountSource === "item-sum" ? "Calculated from item totals — verify against receipt" : pendingPdfImport?.amountSource === "edited" ? "Entered amount" : pendingPdfImport?.amountSource === "needs-review" ? "Amount to verify" : "Receipt total";
-  $("item-total").textContent = `Products: ${money(productSum)} · Included fees: ${money(includedFeeSum)} · ${amountLabel}: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Difference: ${money(difference)}` : " · Totals match"}`;
+  $("item-total").textContent = `${componentSummary} · ${amountLabel}: ${money(receiptTotal)}${Math.abs(difference) > .005 ? ` · Unresolved difference: ${money(difference)}` : " · Reconciled"}`;
 }
 function duplicateRestoreControl() {
   let button = $("restore-duplicate-receipt");
@@ -754,6 +769,7 @@ function duplicateRestoreControl() {
   return button;
 }
 function openEntry(next, defaults = {}, pdfImport) {
+  entryInvoker = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   if (next !== "edit") editingPurchase = undefined;
   mode = next;
   pendingPdfImport = pdfImport;
@@ -780,7 +796,8 @@ function openEntry(next, defaults = {}, pdfImport) {
   $("personal").disabled = !!pdfImport;
   $("amount").readOnly = false;
   $("amount").value = defaults.amount || "";
-  $("date").value = defaults.date || today();
+  $("date").value = defaults.date || (pdfImport ? "" : today());
+  $("date-help").textContent = pdfImport && !defaults.date ? "Purchase date was not found. Choose the date printed on the receipt; upload day is not used." : pdfImport ? "Confirm this is the purchase date printed on the receipt." : "";
   $("dialog-error").textContent = "";
   const restoreDuplicate = duplicateRestoreControl();
   restoreDuplicate.classList.add("hide");
@@ -801,6 +818,11 @@ function finishCloseEntry() {
   receiptReviewConfirmed = false;
   formDirty = false;
   dialog.close();
+  const returnTarget = entryInvoker;
+  entryInvoker = null;
+  requestAnimationFrame(() => {
+    if (returnTarget?.isConnected && !returnTarget.disabled) returnTarget.focus();
+  });
 }
 function keepEditingPdfDraft() {
   discardPdfDraftDialog.close();
@@ -1166,9 +1188,21 @@ function validateAiDraft(draft) {
 $("close").onclick = closeEntry;
 $("cancel").onclick = closeEntry;
 dialog.addEventListener("cancel", event => { event.preventDefault(); closeEntry(); });
+dialog.addEventListener("keydown", event => {
+  if (event.key !== "Escape" || !dialog.open) return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeEntry();
+});
 $("keep-pdf-draft").onclick = keepEditingPdfDraft;
 $("confirm-discard-pdf-draft").onclick = confirmDiscardPdfDraft;
 discardPdfDraftDialog.addEventListener("cancel", event => { event.preventDefault(); keepEditingPdfDraft(); });
+discardPdfDraftDialog.addEventListener("keydown", event => {
+  if (event.key !== "Escape" || !discardPdfDraftDialog.open) return;
+  event.preventDefault();
+  event.stopPropagation();
+  keepEditingPdfDraft();
+});
 $("keep-receipt").onclick = keepReceipt;
 $("confirm-remove-receipt").onclick = confirmRemoveReceipt;
 $("remove-receipt").addEventListener("cancel", event => { event.preventDefault(); keepReceipt(); });
@@ -1218,9 +1252,11 @@ $("entry-form").onsubmit = async event => {
         const items = reviewedItemsForSave(true);
         if (!items.length || items.some(item => !item.name || item.line_total == null)) { errorBox.textContent = "Every reviewed item needs a name and line total."; button.disabled = false; button.textContent = "Update receipt"; return; }
         if (items.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0)) { errorBox.textContent = "Every item quantity must be above zero."; button.disabled = false; button.textContent = "Update receipt"; return; }
-        if (items.some(item => [item.unit_price, item.line_total].some(value => value != null && (!Number.isFinite(value) || value < 0)))) { errorBox.textContent = "Item prices and line totals cannot be negative."; button.disabled = false; button.textContent = "Update receipt"; return; }
-        const reviewedTotal = items.reduce((total, item) => total + (item.line_total || 0), 0);
-        if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Products and explicitly included fees must exactly match the receipt total. Product prices were not adjusted; correct the wrong line total or fee selection, then review again."; button.disabled = false; button.textContent = "Update receipt"; return; }
+        if (items.some(item => item.unit_price != null && (!Number.isFinite(item.unit_price) || item.unit_price < 0))) { errorBox.textContent = "Unit prices cannot be negative."; button.disabled = false; button.textContent = "Update receipt"; return; }
+        if (items.some(item => ["product", "fee", "tax"].includes(item.item_kind) ? !(item.line_total > 0) : ["discount", "credit"].includes(item.item_kind) ? !(item.line_total < 0) : item.item_kind === "rounding" ? !item.line_total || Math.abs(item.line_total) > 1 : item.item_kind === "informational" && item.include_in_total)) { errorBox.textContent = "Check component signs: products, fees, and additive tax are positive; discounts and credits are negative; rounding is non-zero within ₹1; information-only lines stay outside the total."; button.disabled = false; button.textContent = "Update receipt"; return; }
+        if (items.some(item => !Number.isFinite(item.shared_line_total) || (item.line_total >= 0 ? item.shared_line_total < 0 || item.shared_line_total > item.line_total : item.shared_line_total < item.line_total || item.shared_line_total > 0))) { errorBox.textContent = "Each shared effect must be between zero and its signed line total."; button.disabled = false; button.textContent = "Update receipt"; return; }
+        const reviewedTotal = items.filter(item => item.include_in_total).reduce((total, item) => total + (item.line_total || 0), 0);
+        if (Math.abs(reviewedTotal - amount) > .01) { errorBox.textContent = "Products, fees, taxes, discounts, and rounding must reconcile to the final order total within ₹0.01. Product prices were not adjusted; resolve the displayed difference, then review again."; button.disabled = false; button.textContent = "Update receipt"; return; }
         ({ error } = await updateReviewedPurchase(supabase, { p_purchase_id: editingPurchase.id, p_label: label, p_category: $("category").value, p_purchased_on: $("date").value, p_items: items }));
       } else {
         const changes = receiptEditChanges(editingPurchase, { label, category: $("category").value, paidBy, purchasedOn: $("date").value, amount, personal });
@@ -1236,10 +1272,12 @@ $("entry-form").onsubmit = async event => {
       if (hasUnidentifiedAiItems(items)) { errorBox.textContent = "Replace every ‘Unidentified receipt line’ with the item name before saving."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.line_total == null)) { errorBox.textContent = "Every reviewed item needs a line total."; button.disabled = false; button.textContent = "Save"; return; }
       if (items.some(item => item.quantity != null && (!Number.isFinite(item.quantity) || item.quantity <= 0))) { errorBox.textContent = "Item quantities must be above zero."; button.disabled = false; button.textContent = "Save"; return; }
-      if (items.some(item => [item.unit_price, item.line_total].some(value => value != null && (!Number.isFinite(value) || value < 0)))) { errorBox.textContent = "Item prices and line totals cannot be negative."; button.disabled = false; button.textContent = "Save"; return; }
-      const reviewedTotal = items.reduce((total, item) => total + (item.line_total || 0), 0);
-      if (Math.abs(reviewedTotal - amount) > .005) { errorBox.textContent = "Products and explicitly included fees must exactly match the receipt total. Product prices were not adjusted; correct the wrong line total or fee selection, then review again."; button.disabled = false; button.textContent = "Save"; return; }
-      const allPersonal = items.every(item => item.is_personal);
+      if (items.some(item => item.unit_price != null && (!Number.isFinite(item.unit_price) || item.unit_price < 0))) { errorBox.textContent = "Unit prices cannot be negative."; button.disabled = false; button.textContent = "Save"; return; }
+      if (items.some(item => ["product", "fee", "tax"].includes(item.item_kind) ? !(item.line_total > 0) : ["discount", "credit"].includes(item.item_kind) ? !(item.line_total < 0) : item.item_kind === "rounding" ? !item.line_total || Math.abs(item.line_total) > 1 : item.item_kind === "informational" && item.include_in_total)) { errorBox.textContent = "Check component signs: products, fees, and additive tax are positive; discounts and credits are negative; rounding is non-zero within ₹1; information-only lines stay outside the total."; button.disabled = false; button.textContent = "Save"; return; }
+      if (items.some(item => !Number.isFinite(item.shared_line_total) || (item.line_total >= 0 ? item.shared_line_total < 0 || item.shared_line_total > item.line_total : item.shared_line_total < item.line_total || item.shared_line_total > 0))) { errorBox.textContent = "Each shared effect must be between zero and its signed line total."; button.disabled = false; button.textContent = "Save"; return; }
+      const reviewedTotal = items.filter(item => item.include_in_total).reduce((total, item) => total + (item.line_total || 0), 0);
+      if (Math.abs(reviewedTotal - amount) > .01) { errorBox.textContent = "Products, fees, taxes, discounts, and rounding must reconcile to the final order total within ₹0.01. Product prices were not adjusted; resolve the displayed difference, then review again."; button.disabled = false; button.textContent = "Save"; return; }
+      const allPersonal = items.every(item => !item.include_in_total || Number(item.shared_line_total) === 0);
       ({ error } = await importReviewedPurchase(supabase, { p_household_id: current.id, p_paid_by: paidBy, p_exact_pdf_hash: pendingPdfImport.exactHash, p_content_hash: pendingPdfImport.contentHash, p_content_hash_reliable: pendingPdfImport.contentHashReliable !== false, p_label: label, p_category: $("category").value, p_amount: amount, p_purchased_on: $("date").value, p_is_personal: allPersonal, p_items: items }));
     } else {
       ({ error } = await supabase.from("purchases").insert({ household_id: current.id, label, category: $("category").value, amount, paid_by: paidBy, purchased_on: $("date").value, is_personal: personal, is_tracked_for_restock: false, estimated_use_by: null }));
@@ -1394,7 +1432,7 @@ function editReceipt(id) {
   editingPurchase = purchase;
   $("dialog-kicker").textContent = "SAVED RECEIPT";
   $("dialog-title").textContent = "Edit receipt";
-  $("dialog-help").textContent = itemized ? "Review every saved item before updating. Item changes recalculate the receipt total. Personal items stay out of the shared balance; eligible shared products can be tracked for restock. Saved fee rows remain included unless you explicitly exclude them. Paid by stays fixed to preserve the receipt and settlement audit trail." : "Update this manual receipt entry. Changes recalculate the shared ledger immediately.";
+  $("dialog-help").textContent = itemized ? "Review every saved item before updating. Products, paid fees, tax, discounts, and rounding must reconcile to the final order total. Personal lines stay out of the shared balance; only eligible merchandise can be tracked for restock. Paid by stays fixed to preserve the receipt and settlement audit trail." : "Update this manual receipt entry. Changes recalculate the shared ledger immediately.";
   $("amount").readOnly = itemized;
   $("paid-by").disabled = itemized;
   $("personal").disabled = itemized;

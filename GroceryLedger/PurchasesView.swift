@@ -74,6 +74,8 @@ struct PurchasesView: View {
 }
 
 private struct PurchaseDetailView: View {
+    @Environment(SupabaseLedgerController.self) private var sync
+    @Environment(\.modelContext) private var modelContext
     @Bindable var purchase: Purchase
 
     var body: some View {
@@ -89,18 +91,45 @@ private struct PurchaseDetailView: View {
                         ? lhs.id.uuidString < rhs.id.uuidString
                         : lhs.displayOrder < rhs.displayOrder
                 }, id: \.id) { item in
-                    Toggle(isOn: Binding(get: { item.isPersonal }, set: { item.isPersonal = $0 })) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle(isOn: Binding(get: { item.isPersonal }, set: { personal in
+                            item.isPersonal = personal
+                            item.sharedLineTotal = item.includeInTotal ? (personal ? 0 : item.amount) : 0
+                            if personal || item.componentKind != ReviewedComponentKind.merchandise.rawValue {
+                                item.isTrackedForRestock = false
+                                item.estimatedUseBy = nil
+                            }
+                            queueRemoteUpdateIfNeeded()
+                        })) {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(item.name)
                                 if item.isPersonal { Text("Personal — excluded from split").font(.caption).foregroundStyle(.orange) }
+                                if item.componentKind != ReviewedComponentKind.merchandise.rawValue {
+                                    Text(ReviewedComponentKind(rawValue: item.componentKind)?.title ?? "Reviewed component")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                                 if let useBy = item.estimatedUseBy { Text("Estimated use-by: \(useBy.formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary) }
                             }
                             Spacer()
                             Text(item.amount, format: .currency(code: "INR"))
                         }
                     }
-                    .tint(.orange)
+                        .tint(.orange)
+                        HStack {
+                            TextField("Unit", text: Binding(
+                                get: { item.unit ?? "" },
+                                set: { item.unit = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                            ))
+                            .onSubmit { queueRemoteUpdateIfNeeded() }
+                            TextField("Unit price", value: Binding(
+                                get: { item.unitPrice },
+                                set: { item.unitPrice = $0; queueRemoteUpdateIfNeeded() }
+                            ), format: .number)
+                            .keyboardType(.decimalPad)
+                        }
+                        .font(.caption)
+                    }
                 }
             }
             Section {
@@ -110,6 +139,13 @@ private struct PurchaseDetailView: View {
         }
         .navigationTitle("Review purchase")
         .brandScreen()
+    }
+
+    private func queueRemoteUpdateIfNeeded() {
+        guard purchase.isRemoteBacked else { return }
+        purchase.needsRemoteSync = true
+        try? modelContext.save()
+        Task { await RemoteSyncOutbox.flush(using: sync, context: modelContext) }
     }
 }
 

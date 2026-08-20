@@ -115,6 +115,9 @@ struct ReviewedPurchaseItemDTO: Codable, Equatable, Sendable {
     let isPersonal: Bool
     let isTrackedForRestock: Bool
     let estimatedUseBy: LedgerDate?
+    let itemKind: String
+    let includeInTotal: Bool
+    let sharedLineTotal: Decimal
     let createdAt: Date
 
     enum CodingKeys: String, CodingKey {
@@ -126,6 +129,9 @@ struct ReviewedPurchaseItemDTO: Codable, Equatable, Sendable {
         case isPersonal = "is_personal"
         case isTrackedForRestock = "is_tracked_for_restock"
         case estimatedUseBy = "estimated_use_by"
+        case itemKind = "item_kind"
+        case includeInTotal = "include_in_total"
+        case sharedLineTotal = "shared_line_total"
         case createdAt = "created_at"
     }
 }
@@ -189,6 +195,9 @@ struct ReviewedImportItemPayload: Codable, Equatable, Sendable {
     let isTrackedForRestock: Bool
     let estimatedUseBy: LedgerDate?
     let displayOrder: Int
+    let itemKind: String
+    let includeInTotal: Bool
+    let sharedLineTotal: Decimal
 
     enum CodingKeys: String, CodingKey {
         case name, quantity, unit
@@ -198,6 +207,9 @@ struct ReviewedImportItemPayload: Codable, Equatable, Sendable {
         case isTrackedForRestock = "is_tracked_for_restock"
         case estimatedUseBy = "estimated_use_by"
         case displayOrder = "display_order"
+        case itemKind = "item_kind"
+        case includeInTotal = "include_in_total"
+        case sharedLineTotal = "shared_line_total"
     }
 }
 
@@ -228,10 +240,67 @@ struct ReviewedImportRPCPayload: Codable, Equatable, Sendable {
     }
 }
 
-enum SharedDataMappingError: Error, Equatable {
+/// Parameters accepted by update_reviewed_purchase. This deliberately mirrors
+/// the reviewed component contract and cannot carry receipt source material.
+struct ReviewedUpdateItemPayload: Codable, Equatable, Sendable {
+    let id: UUID
+    let name: String
+    let quantity: Decimal?
+    let unit: String?
+    let unitPrice: Decimal?
+    let lineTotal: Decimal?
+    let isPersonal: Bool
+    let isTrackedForRestock: Bool
+    let estimatedUseBy: LedgerDate?
+    let displayOrder: Int
+    let itemKind: String
+    let includeInTotal: Bool
+    let sharedLineTotal: Decimal
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, quantity, unit
+        case unitPrice = "unit_price"
+        case lineTotal = "line_total"
+        case isPersonal = "is_personal"
+        case isTrackedForRestock = "is_tracked_for_restock"
+        case estimatedUseBy = "estimated_use_by"
+        case displayOrder = "display_order"
+        case itemKind = "item_kind"
+        case includeInTotal = "include_in_total"
+        case sharedLineTotal = "shared_line_total"
+    }
+}
+
+struct ReviewedUpdateRPCPayload: Codable, Equatable, Sendable {
+    let purchaseID: UUID
+    let label: String
+    let category: String
+    let purchasedOn: LedgerDate
+    let items: [ReviewedUpdateItemPayload]
+
+    enum CodingKeys: String, CodingKey {
+        case purchaseID = "p_purchase_id"
+        case label = "p_label"
+        case category = "p_category"
+        case purchasedOn = "p_purchased_on"
+        case items = "p_items"
+    }
+}
+
+enum SharedDataMappingError: LocalizedError, Equatable {
     case missingMemberID(LedgerPerson)
     case emptyPurchase
     case invalidFingerprint
+    case reviewedComponentMigrationRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .missingMemberID: "A household member could not be mapped for sync."
+        case .emptyPurchase: "At least one reviewed component is required."
+        case .invalidFingerprint: "The receipt fingerprints are invalid."
+        case .reviewedComponentMigrationRequired: "The server does not yet support authoritative reviewed components and shared allocations. This receipt remains safely pending on this iPhone."
+        }
+    }
 }
 
 struct SharedPurchaseBundle: Equatable, Sendable {
@@ -262,22 +331,25 @@ enum SharedDataMapper {
                 displayOrder: offset,
                 name: item.name,
                 quantity: item.quantity,
-                unit: nil,
-                unitPrice: nil,
+                unit: item.unit,
+                unitPrice: item.unitPrice,
                 lineTotal: item.amount,
                 isPersonal: item.isPersonal,
-                isTrackedForRestock: !item.isPersonal && item.isTrackedForRestock,
+                isTrackedForRestock: !item.isPersonal && !item.isFee && item.isTrackedForRestock,
                 estimatedUseBy: item.isPersonal ? nil : item.estimatedUseBy.map(LedgerDate.init),
+                itemKind: item.componentKind == ReviewedComponentKind.merchandise.rawValue ? "product" : item.componentKind,
+                includeInTotal: item.includeInTotal,
+                sharedLineTotal: item.resolvedSharedLineTotal,
                 createdAt: purchase.createdAt
             )
         }
-        let isPersonal = orderedItems.allSatisfy(\.isPersonal)
+        let isPersonal = orderedItems.allSatisfy { !$0.includeInTotal || $0.sharedLineTotal == 0 }
         let header = ReviewedPurchaseHeaderDTO(
             id: purchase.id,
             householdID: householdID,
             label: purchase.merchant,
             category: purchase.category,
-            amount: purchase.items.reduce(0) { $0 + $1.amount },
+            amount: purchase.items.filter(\.includeInTotal).reduce(0) { $0 + $1.amount },
             paidBy: paidByID,
             purchasedOn: LedgerDate(purchase.purchasedAt),
             isPersonal: isPersonal,
@@ -343,7 +415,30 @@ enum SharedDataMapper {
                     isPersonal: $0.isPersonal,
                     isTrackedForRestock: $0.isTrackedForRestock,
                     estimatedUseBy: $0.estimatedUseBy,
-                    displayOrder: $0.displayOrder
+                    displayOrder: $0.displayOrder,
+                    itemKind: $0.itemKind,
+                    includeInTotal: $0.includeInTotal,
+                    sharedLineTotal: $0.sharedLineTotal
+                )
+            }
+        )
+    }
+
+    static func reviewedUpdate(from bundle: SharedPurchaseBundle) -> ReviewedUpdateRPCPayload {
+        ReviewedUpdateRPCPayload(
+            purchaseID: bundle.header.id,
+            label: bundle.header.label,
+            category: bundle.header.category,
+            purchasedOn: bundle.header.purchasedOn,
+            items: bundle.items.map {
+                ReviewedUpdateItemPayload(
+                    id: $0.id, name: $0.name, quantity: $0.quantity,
+                    unit: $0.unit, unitPrice: $0.unitPrice,
+                    lineTotal: $0.lineTotal, isPersonal: $0.isPersonal,
+                    isTrackedForRestock: $0.isTrackedForRestock,
+                    estimatedUseBy: $0.estimatedUseBy, displayOrder: $0.displayOrder,
+                    itemKind: $0.itemKind, includeInTotal: $0.includeInTotal,
+                    sharedLineTotal: $0.sharedLineTotal
                 )
             }
         )
@@ -367,8 +462,8 @@ enum SharedBalanceCalculator {
         var balance: Decimal = 0
         for purchase in purchases {
             let sharedTotal = purchase.items
-                .filter { !$0.isPersonal }
-                .compactMap(\.lineTotal)
+                .filter(\.includeInTotal)
+                .map(\.sharedLineTotal)
                 .reduce(0, +)
             balance -= sharedTotal / Decimal(memberCount)
             if purchase.header.paidBy == memberID { balance += sharedTotal }
